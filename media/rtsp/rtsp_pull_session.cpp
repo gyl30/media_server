@@ -404,12 +404,12 @@ int rtsp_pull_session::on_setup()
         return -1;
     }
 
-    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
-    if (!media->startup(std::move(descriptions)))
+    // 失败返回 -1 结束读循环，media_ 由 safe_shutdown 清理。
+    media_ = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
+    if (!media_->startup(std::move(descriptions)))
     {
         return -1;
     }
-    media_ = std::move(media);
 
     std::uint64_t npt{};
     const auto result = rtsp_client_play(client_, &npt, nullptr);

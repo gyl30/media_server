@@ -7,7 +7,6 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
@@ -136,28 +135,13 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.rtp_transport = std::make_shared<udp_transport>(worker_.io());
     state.rtcp_transport = std::make_shared<udp_transport>(worker_.io());
 
-    const auto reserved = media_port_pool::instance().acquire();
-    if (!reserved)
+    // 失败返回 -1 使连接关闭，端口与 transport 由 safe_shutdown 清理。
+    state.local_port = media_port_pool::instance().acquire();
+    if (!state.local_port)
     {
-        state.rtp_transport.reset();
-        state.rtcp_transport.reset();
-        state.rtp_endpoint = {};
-        state.rtcp_endpoint = {};
         return -1;
     }
-    const auto local_port = *reserved;
-
-    boost::scope::scope_exit cleanup(
-        [&]()
-        {
-            state.rtp_transport->shutdown();
-            state.rtcp_transport->shutdown();
-            state.rtp_transport.reset();
-            state.rtcp_transport.reset();
-            state.rtp_endpoint = {};
-            state.rtcp_endpoint = {};
-            media_port_pool::instance().release(local_port);
-        });
+    const auto local_port = *state.local_port;
 
     boost::system::error_code network_error;
     state.rtp_transport->startup(bind_address_, local_port, network_error);
@@ -177,8 +161,6 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     {
         return -1;
     }
-    state.local_port = local_port;
-    cleanup.set_active(false);
 
     const auto self = shared_from_this();
     state.rtcp_transport->set_write_callback(

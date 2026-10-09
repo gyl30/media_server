@@ -212,13 +212,11 @@ int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server
     if (self->publish_session_)
     {
         spdlog::debug("rtsp describe rejected while publishing");
-        self->shutdown();
         return -1;
     }
     if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", false))
     {
         spdlog::debug("rtsp describe invalid target: {}", uri != nullptr ? uri : "");
-        self->shutdown();
         return -1;
     }
     return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
@@ -235,7 +233,6 @@ int rtsp_server_connection::setup_callback(
     if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", true))
     {
         spdlog::debug("rtsp setup invalid target: {}", uri != nullptr ? uri : "");
-        self->shutdown();
         return -1;
     }
     return self->play_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
@@ -250,7 +247,6 @@ int rtsp_server_connection::play_callback(
         return self->play_session_->on_play(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
     }
     spdlog::debug("rtsp play rejected without play session");
-    self->shutdown();
     return -1;
 }
 
@@ -266,7 +262,6 @@ int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server
         return self->play_session_->on_teardown(server, uri != nullptr ? uri : "", session != nullptr ? session : "");
     }
     spdlog::debug("rtsp teardown rejected without active session");
-    self->shutdown();
     return -1;
 }
 
@@ -276,7 +271,6 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     if (self->play_session_ || self->publish_session_)
     {
         spdlog::debug("rtsp announce rejected with active session");
-        self->shutdown();
         return -1;
     }
     const auto owner = self->shared_from_this();
@@ -296,7 +290,6 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
     {
         spdlog::debug("rtsp announce rejected");
         publish->shutdown();
-        self->shutdown();
         return -1;
     }
 
@@ -313,7 +306,6 @@ int rtsp_server_connection::record_callback(
         return self->publish_session_->on_record(server, uri != nullptr ? uri : "", session != nullptr ? session : "", npt, scale);
     }
     spdlog::debug("rtsp record rejected without publish session");
-    self->shutdown();
     return -1;
 }
 
@@ -328,7 +320,6 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
     if (!self->publish_session_ && !self->play_session_ && (bytes != 0 || (session != nullptr && session[0] != '\0')))
     {
         spdlog::debug("rtsp get_parameter rejected without active session");
-        self->shutdown();
         return -1;
     }
     return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);

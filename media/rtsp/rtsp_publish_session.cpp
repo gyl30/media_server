@@ -219,12 +219,12 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto media = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_);
-        if (!media->startup(session_id_))
+        // 失败返回 -1 使连接关闭，tcp_media_ 由 safe_shutdown 清理。
+        tcp_media_ = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_);
+        if (!tcp_media_->startup(session_id_))
         {
             return -1;
         }
-        tcp_media_ = std::move(media);
         tcp_track_states_.resize(descriptions_.size());
         return on_tcp_setup(server, track_index, *selected);
     }
