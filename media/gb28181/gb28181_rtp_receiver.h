@@ -66,7 +66,7 @@ class gb28181_rtp_receiver final
     static void stream_callback(void* param, int stream, int codecid, const void* extra, int bytes, int finish);
 
     int on_demuxed_packet(avpacket_t* packet);
-    void on_stream(int codecid, bool finish);
+    void on_stream(int codecid);
     [[nodiscard]] bool apply_topology(const ps_topology& topology);
     [[nodiscard]] int update_track_from_packet(const avpacket_t& packet);
 

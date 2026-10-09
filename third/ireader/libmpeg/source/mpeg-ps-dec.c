@@ -515,7 +515,13 @@ static void ps_demuxer_notify(struct ps_demuxer_t* ps)
     if (!ps->notify.onstream)
         return;
 
-    // media_server: 通知最近一次 PSM 的活动条目，而不是累积的历史表。
+    // media_server: 通知最近一次 PSM 的活动条目，而不是累积的历史表；
+    // 活动集合为空时以 stream=-1 发出一次完成通知，让上层看到空拓扑。
+    if (0 == ps->notified_count)
+    {
+        ps->notify.onstream(ps->notify_param, -1, 0, NULL, 0, 1);
+        return;
+    }
     for (i = 0; i < ps->notified_count; i++)
     {
         pes = NULL;

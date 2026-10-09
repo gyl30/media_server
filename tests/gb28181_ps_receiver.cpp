@@ -17,6 +17,7 @@ extern "C"
 {
 #include "mpeg-ps.h"
 #include "mpeg-proto.h"
+#include "mpeg-util.h"
 #include "rtp-payload.h"
 }
 
@@ -87,8 +88,11 @@ struct rtp_writer
 using audio_frame_source = std::function<std::vector<std::uint8_t>(std::int64_t)>;
 using psm_rewrite = std::function<void(std::vector<std::array<std::uint8_t, 2>>&)>;
 
-// 按 rewrite 改写 PS 包中 PSM 的条目 (stream_type, stream_id)，版本号保持不变；CRC 不被 ireader 校验。
-void rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
+// stream_type 为 invalid_psm_entry 的条目写成 es_info_length 越界的坏条目，用于制造解析失败。
+constexpr std::uint8_t invalid_psm_entry = 0xff;
+
+// 按 rewrite 改写 PS 包中 PSM 的条目 (stream_type, stream_id)，版本号保持不变；返回是否改写。
+bool rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
 {
     for (std::size_t index = 0; index + 4 <= packet.size(); ++index)
     {
@@ -98,7 +102,7 @@ void rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
         }
         const auto length = static_cast<std::size_t>((packet[index + 4] << 8U) | packet[index + 5]);
         const auto info = static_cast<std::size_t>((packet[index + 8] << 8U) | packet[index + 9]);
-        const auto map_begin = index + 10 + info + 2;
+        const auto map_begin = index + 12 + info;
         const auto map_end = index + 6 + length - 4;
         std::vector<std::array<std::uint8_t, 2>> entries;
         for (auto entry = map_begin; entry + 4 <= map_end;)
@@ -112,21 +116,27 @@ void rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
         std::vector<std::uint8_t> map;
         for (const auto& [type, sid] : entries)
         {
-            map.insert(map.end(), {type, sid, 0x00, 0x00});
+            const std::uint8_t info_length = type == invalid_psm_entry ? 0xff : 0x00;
+            map.insert(map.end(), {type, sid, info_length, info_length});
         }
         std::vector<std::uint8_t> psm(packet.begin() + static_cast<std::ptrdiff_t>(index), packet.begin() + static_cast<std::ptrdiff_t>(map_begin));
-        const auto new_length = 6 + info + 2 + map.size() + 4;
+        // program_stream_map_length 计入其后的全部字节：flags(2) + info_length(2) + info + map_length(2) + map + CRC(4)。
+        const auto new_length = 10 + info + map.size();
         psm[4] = static_cast<std::uint8_t>(new_length >> 8U);
         psm[5] = static_cast<std::uint8_t>(new_length);
         psm[map_begin - index - 2] = static_cast<std::uint8_t>(map.size() >> 8U);
         psm[map_begin - index - 1] = static_cast<std::uint8_t>(map.size());
         psm.insert(psm.end(), map.begin(), map.end());
-        psm.insert(psm.end(), 4, 0x00);
-        const auto old_end = index + 6 + length;
-        packet.erase(packet.begin() + static_cast<std::ptrdiff_t>(index), packet.begin() + static_cast<std::ptrdiff_t>(old_end));
+        // 与 ireader psm_write 相同的 CRC 计算与字节序。
+        const auto crc = mpeg_crc32(0xffffffff, psm.data(), static_cast<std::uint32_t>(psm.size()));
+        psm.insert(psm.end(), {static_cast<std::uint8_t>(crc), static_cast<std::uint8_t>(crc >> 8U), static_cast<std::uint8_t>(crc >> 16U),
+                               static_cast<std::uint8_t>(crc >> 24U)});
+        require(psm.size() == 6 + new_length && psm[6] == packet[index + 6], "psm rewrite length or version changed");
+        packet.erase(packet.begin() + static_cast<std::ptrdiff_t>(index), packet.begin() + static_cast<std::ptrdiff_t>(index + 6 + length));
         packet.insert(packet.begin() + static_cast<std::ptrdiff_t>(index), psm.begin(), psm.end());
-        return;
+        return true;
     }
+    return false;
 }
 
 // 生成 frames 帧"视频 IDR + 音频"的 PS 并打包为 RTP；从第 rewrite_from 帧起按 rewrite 改写 PSM。
@@ -159,10 +169,12 @@ std::vector<std::vector<std::uint8_t>> make_rtp(int audio_codec,
     ps_muxer_destroy(muxer);
     if (rewrite)
     {
+        std::size_t rewritten{};
         for (auto index = rewrite_packet; index < ps.packets.size(); ++index)
         {
-            rewrite_psm(ps.packets[index], rewrite);
+            rewritten += rewrite_psm(ps.packets[index], rewrite) ? 1U : 0U;
         }
+        require(rewritten != 0, "psm rewrite found no psm");
     }
 
     rtp_writer rtp;
@@ -379,8 +391,28 @@ void psm_topology_changes()
                                        { std::erase_if(entries, [](const auto& entry) { return entry[0] == PSI_STREAM_AUDIO_G711A; }); }),
                               2);
     require(!removed, "psm audio entry removal not rejected");
-    // 未改写的同一输入作为对照：不会被误判为拓扑变化。
-    require(feed("gb/test/psm_unchanged", make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20), 2).has_value(), "unchanged psm rejected");
+    // PSM 删除全部条目：空活动集合也必须通知上层并结束当前代。
+    const auto emptied = feed("gb/test/psm_emptied",
+                              make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20, 10, [](std::vector<std::array<std::uint8_t, 2>>& entries) { entries.clear(); }),
+                              2);
+    require(!emptied, "empty psm not rejected");
+    // 先把 G.711A 改为 G.722 再接一个坏条目：解析失败不能提交任何改动，已有音视频照常发布。
+    const auto unchanged = feed("gb/test/psm_unchanged", make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20), 2);
+    const auto failed = feed("gb/test/psm_failed_parse",
+                             make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20, 10,
+                                      [](std::vector<std::array<std::uint8_t, 2>>& entries)
+                                      {
+                                          for (auto& entry : entries)
+                                          {
+                                              if (entry[0] == PSI_STREAM_AUDIO_G711A)
+                                              {
+                                                  entry[0] = PSI_STREAM_AUDIO_G722;
+                                              }
+                                          }
+                                          entries.push_back({invalid_psm_entry, 0xc1});
+                                      }),
+                             2);
+    require(unchanged && failed && *failed == *unchanged, "failed psm parse committed partial topology");
     std::cout << "psm_topology_changes: PASS\n";
 }
 }    // namespace

@@ -41,6 +41,7 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 	uint16_t element_stream_map_length;
 	uint16_t element_stream_info_length;
 	uint8_t cid, sid;
+	size_t i, j, added;
 
 	// Table 2-41 - Program stream map(p79)
 	program_stream_map_length = mpeg_bits_read16(reader); // (data[4] << 8)  | data[5];
@@ -75,31 +76,23 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 	element_stream_map_length = program_stream_map_length - program_stream_info_length - 10;
 	end = mpeg_bits_tell(reader) + element_stream_map_length;
 
-	while (0 == mpeg_bits_error(reader) 
-		&& mpeg_bits_tell(reader) + 4 /*element_stream_info_length*/ <= end
-		&& psm->stream_count < sizeof(psm->streams) / sizeof(psm->streams[0]))
+	// media_server: 先把本次条目解析到 active，完整成功后才提交到按 sid 累积的历史表；
+	// 解析不受历史表剩余容量限制，失败时不修改任何已有状态。
+	while (0 == mpeg_bits_error(reader) && mpeg_bits_tell(reader) + 4 /*element_stream_info_length*/ <= end)
 	{
 		cid = mpeg_bits_read8(reader);
 		sid = mpeg_bits_read8(reader);
 		element_stream_info_length = mpeg_bits_read16(reader);
 		if (mpeg_bits_tell(reader) + element_stream_info_length > end)
 			return MPEG_ERROR_INVALID_DATA;
-
-		stream = psm_fetch(psm, sid); // sid
-		if (NULL == stream)
-			continue;
-		stream->codecid = cid;
-		stream->sid = sid;
-		stream->pid = stream->sid; // for ts PID
-		if (psm->active_count < sizeof(psm->active) / sizeof(psm->active[0]))
-		{
-			psm->active[psm->active_count].sid = sid;
-			psm->active[psm->active_count].codecid = cid;
-			psm->active_count++;
-		}
+		if (psm->active_count >= sizeof(psm->active) / sizeof(psm->active[0]))
+			return MPEG_ERROR_INVALID_DATA;
+		psm->active[psm->active_count].sid = sid;
+		psm->active[psm->active_count].codecid = cid;
+		psm->active_count++;
 
 		off = mpeg_bits_tell(reader);
-		if (0xFD == stream->sid && 0 == single_extension_stream_flag)
+		if (0xFD == sid && 0 == single_extension_stream_flag)
 		{
 			if (element_stream_info_length < 3)
 				return MPEG_ERROR_INVALID_DATA;
@@ -116,15 +109,45 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 			mpeg_elment_descriptor(reader);
 		}
 
-		assert(mpeg_bits_tell(reader) == off + element_stream_info_length);
 		mpeg_bits_seek(reader, off + element_stream_info_length); // make sure
 	}
 
 	mpeg_bits_read32(reader); // crc32
-	// assert(j+4 == program_stream_map_length+6);
-	// assert(0 == mpeg_crc32(0xffffffff, data, program_stream_map_length+6));
-	assert(0 == mpeg_bits_error(reader));
-	assert(end + 4 /*crc32*/ == mpeg_bits_tell(reader));
+	if (0 != mpeg_bits_error(reader))
+		return MPEG_ERROR_INVALID_DATA;
+
+	// 新增 sid 超出历史表容量时整体失败，不做部分提交。
+	added = 0;
+	for (i = 0; i < psm->active_count; i++)
+	{
+		for (j = 0; j < psm->stream_count && psm->streams[j].sid != psm->active[i].sid; j++)
+		{
+		}
+		added += j == psm->stream_count ? 1 : 0;
+	}
+	if (psm->stream_count + added > sizeof(psm->streams) / sizeof(psm->streams[0]))
+		return MPEG_ERROR_INVALID_DATA;
+
+	for (i = 0; i < psm->active_count; i++)
+	{
+		stream = psm_fetch(psm, psm->active[i].sid);
+		stream->codecid = psm->active[i].codecid;
+		stream->sid = psm->active[i].sid;
+		stream->pid = stream->sid; // for ts PID
+	}
+
+	// 按 sid 排序，使上层按集合而不是出现顺序比较拓扑。
+	for (i = 1; i < psm->active_count; i++)
+	{
+		for (j = i; j > 0 && psm->active[j - 1].sid > psm->active[j].sid; j--)
+		{
+			sid = psm->active[j].sid;
+			cid = psm->active[j].codecid;
+			psm->active[j] = psm->active[j - 1];
+			psm->active[j - 1].sid = sid;
+			psm->active[j - 1].codecid = cid;
+		}
+	}
 	return MPEG_ERROR_OK;
 }
 

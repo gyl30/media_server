@@ -148,12 +148,22 @@ int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
     return static_cast<gb28181_rtp_receiver*>(param)->on_demuxed_packet(packet);
 }
 
-void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const void*, int, int finish)
+void gb28181_rtp_receiver::stream_callback(void* param, int stream, int codecid, const void*, int, int finish)
 {
-    static_cast<gb28181_rtp_receiver*>(param)->on_stream(codecid, finish != 0);
+    auto* self = static_cast<gb28181_rtp_receiver*>(param);
+    // stream < 0 是 ireader 对空 PSM 的完成通知，不携带条目。
+    if (stream >= 0)
+    {
+        self->on_stream(codecid);
+    }
+    if (finish != 0)
+    {
+        self->announced_topology_ = self->pending_topology_;
+        self->pending_topology_ = {};
+    }
 }
 
-void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
+void gb28181_rtp_receiver::on_stream(int codecid)
 {
     const auto codec = codec_from_ps(codecid);
     if (!codec && mpeg_stream_type_audio(codecid) != 0)
@@ -186,12 +196,6 @@ void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
         {
             pending_topology_.audio = *codec;
         }
-    }
-
-    if (finish)
-    {
-        announced_topology_ = pending_topology_;
-        pending_topology_ = {};
     }
 }
 
