@@ -34,6 +34,7 @@ type config struct {
 	registerRate      int
 	packetLossPercent int
 	seed              uint64
+	answerSSRC        uint
 }
 
 func parseConfig(args []string) (config, error) {
@@ -64,6 +65,7 @@ func parseConfig(args []string) (config, error) {
 	flags.IntVar(&cfg.registerRate, "register-rate", 200, "maximum REGISTER transactions per second; zero sends a burst")
 	flags.IntVar(&cfg.packetLossPercent, "packet-loss-percent", 0, "deterministic RTP packet loss percentage")
 	flags.Uint64Var(&cfg.seed, "seed", 1, "deterministic fault injection seed")
+	flags.UintVar(&cfg.answerSSRC, "answer-ssrc", 0, "device-selected SSRC returned in INVITE 200 OK y= and used for RTP; 0 echoes the platform SSRC")
 	if err := flags.Parse(args); err != nil {
 		return config{}, err
 	}
@@ -94,6 +96,9 @@ func parseConfig(args []string) (config, error) {
 	}
 	if cfg.mediaProfile != "normal" && cfg.mediaProfile != "high" {
 		return config{}, fmt.Errorf("invalid media profile")
+	}
+	if cfg.answerSSRC > 0xffffffff {
+		return config{}, fmt.Errorf("invalid answer SSRC")
 	}
 	if cfg.registerExpiry <= 0 || cfg.registerExpiry%time.Second != 0 {
 		return config{}, fmt.Errorf("invalid registration lifetime")

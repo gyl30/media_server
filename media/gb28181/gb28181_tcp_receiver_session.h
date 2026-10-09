@@ -29,6 +29,7 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     [[nodiscard]] bool startup(boost::asio::ip::tcp::endpoint remote_endpoint);
     [[nodiscard]] bool startup(boost::asio::ip::address bind_address, std::uint16_t listen_port);
     void shutdown();
+    void update_ssrc(std::uint32_t ssrc);
 
    private:
     void run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint, boost::asio::yield_context yield);

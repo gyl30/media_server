@@ -96,6 +96,12 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     return local_port_;
 }
 
+void gb28181_udp_receiver_session::update_ssrc(std::uint32_t ssrc)
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
+}
+
 void gb28181_udp_receiver_session::shutdown()
 {
     const auto self = shared_from_this();

@@ -353,6 +353,23 @@ std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::stri
     return gb28181_receiver_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)};
 }
 
+std::optional<std::pair<gb28181_receiver_identity, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body)
+{
+    const auto object = parse_object(body);
+    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "ssrc"}))
+    {
+        return std::nullopt;
+    }
+    auto stream_id = required_string(*object, "stream_id");
+    auto stream_name = required_string(*object, "stream_name");
+    const auto ssrc = required_ssrc(*object);
+    if (!stream_id || !stream_name || !ssrc)
+    {
+        return std::nullopt;
+    }
+    return std::pair{gb28181_receiver_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)}, *ssrc};
+}
+
 std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body)
 {
     const auto object = parse_object(body);

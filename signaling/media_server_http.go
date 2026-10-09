@@ -127,6 +127,15 @@ func (c *mediaServerHTTPClient) listReceivers(ctx context.Context) ([]mediaRecei
 	return body.Receivers, nil
 }
 
+func (c *mediaServerHTTPClient) updateReceiverSSRC(ctx context.Context, streamID, streamName string, ssrc uint32) error {
+	requestBody := struct {
+		StreamID   string `json:"stream_id"`
+		StreamName string `json:"stream_name"`
+		SSRC       uint32 `json:"ssrc"`
+	}{StreamID: streamID, StreamName: streamName, SSRC: ssrc}
+	return c.post(ctx, c.server.controlURL+"/gb28181/receiver/update", requestBody, http.StatusNoContent, nil)
+}
+
 func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, command rtspPullCreateRequest) error {
 	return c.post(ctx, c.server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
 }

@@ -121,6 +121,27 @@ void check(const char* name, int audio_codec, std::size_t audio_bytes, std::size
     receiver.shutdown();
     std::cout << name << ": PASS\n";
 }
+void device_selected_ssrc()
+{
+    worker_context worker;
+    const std::string stream_name = "gb/test/device_ssrc";
+    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U);
+    require(receiver.startup(), "device ssrc: receiver startup failed");
+    const auto packets = make_rtp(PSI_STREAM_AUDIO_G711A, 320);
+    for (const auto& packet : packets)
+    {
+        require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::ignored, "device ssrc: foreign ssrc accepted");
+    }
+    // 设备在 200 OK 的 y= 中返回自己的 SSRC 后改用该值过滤。
+    receiver.set_expected_ssrc(ssrc);
+    for (const auto& packet : packets)
+    {
+        require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::accepted, "device ssrc: updated ssrc rejected");
+    }
+    require(stream_registry::instance().find(stream_name) != nullptr, "device ssrc: stream not registered");
+    receiver.shutdown();
+    std::cout << "device_selected_ssrc: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -132,6 +153,7 @@ int main()
         check("g722", PSI_STREAM_AUDIO_G722, 160, 1);
         check("g729", PSI_STREAM_AUDIO_G729, 20, 1);
         check("mp3", PSI_STREAM_MP3, 144, 1);
+        device_selected_ssrc();
         return 0;
     }
     catch (const std::exception& error)

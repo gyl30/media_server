@@ -35,6 +35,7 @@ class session_registry final
     [[nodiscard]] std::shared_ptr<session> take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id);
     void remove_receiver_session(std::string_view stream_name, const session& expected);
     [[nodiscard]] std::vector<receiver_identity> receivers() const;
+    [[nodiscard]] std::shared_ptr<session> find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const;
 
     bool add_sender_session(std::string stream_name, std::string sender_id, std::string stream_id, std::shared_ptr<session> session);
     [[nodiscard]] std::shared_ptr<session> take_sender_session(std::string_view stream_name,

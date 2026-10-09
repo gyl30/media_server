@@ -264,12 +264,22 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	if contentType != nil {
 		mediaType, _, _ = mime.ParseMediaType(contentType.Value())
 	}
-	if !strings.EqualFold(mediaType, "application/sdp") || validateLiveUDPAnswer(dialog.InviteResponse.Body(), livePayloadType, ssrc) != nil {
+	answerErr := fmt.Errorf("INVITE answer is not SDP")
+	deviceSSRC := ssrc
+	if strings.EqualFold(mediaType, "application/sdp") {
+		deviceSSRC, answerErr = validateLiveUDPAnswer(dialog.InviteResponse.Body(), livePayloadType, ssrc)
+	}
+	if answerErr == nil && deviceSSRC != ssrc {
+		// 设备在 y= 中改用了自己的 SSRC，接收端必须按设备实际发送的值过滤。
+		s.logger.Info("device selected SSRC", "stream_name", session.streamName, "requested", ssrc, "device", deviceSSRC)
+		answerErr = s.media.updateReceiverSSRC(operationContext, session.streamID, session.streamName, deviceSSRC)
+	}
+	if answerErr != nil {
 		ackContext, ackCancel := context.WithTimeout(context.Background(), s.byeTimeout)
 		_ = dialog.Ack(ackContext)
 		_ = dialog.Bye(ackContext)
 		ackCancel()
-		return s.finishFailedStart(session, fmt.Errorf("invalid INVITE answer SDP"), false)
+		return s.finishFailedStart(session, fmt.Errorf("invalid INVITE answer: %w", answerErr), false)
 	}
 	ackContext, ackCancel := context.WithTimeout(operationContext, s.byeTimeout)
 	err = dialog.Ack(ackContext)

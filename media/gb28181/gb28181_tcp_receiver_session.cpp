@@ -58,6 +58,12 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
     return true;
 }
 
+void gb28181_tcp_receiver_session::update_ssrc(std::uint32_t ssrc)
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
+}
+
 void gb28181_tcp_receiver_session::shutdown()
 {
     const auto self = shared_from_this();

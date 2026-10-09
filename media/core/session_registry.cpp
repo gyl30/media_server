@@ -59,6 +59,17 @@ void session_registry::remove_receiver_session(std::string_view stream_name, con
     }
 }
 
+std::shared_ptr<session> session_registry::find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const
+{
+    std::scoped_lock lock(mutex_);
+    const auto iterator = sessions_.find(stream_name);
+    if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->stream_id != expected_stream_id)
+    {
+        return {};
+    }
+    return iterator->second.receiver->value;
+}
+
 std::vector<receiver_identity> session_registry::receivers() const
 {
     std::scoped_lock lock(mutex_);

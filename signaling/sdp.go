@@ -54,76 +54,60 @@ func buildLiveUDPSDP(parameters liveSDPParameters) ([]byte, error) {
 	return body, nil
 }
 
-func validateLiveUDPAnswer(body []byte, payloadType uint8, expectedSSRC uint32) error {
+// validateLiveUDPAnswer 校验设备 200 OK 的 SDP 并返回设备实际使用的 SSRC。
+// 与 wvp、Monibuca 一致：y= 缺失时沿用请求的 SSRC，y= 不同时以设备为准；
+// f= 和 s= 只是描述信息，不参与校验。
+func validateLiveUDPAnswer(body []byte, payloadType uint8, requestedSSRC uint32) (uint32, error) {
 	var standard strings.Builder
-	var y, format string
+	ssrc := requestedSSRC
 	seenY := false
-	seenFormat := false
 	for _, line := range strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(line, "y="):
 			if seenY {
-				return fmt.Errorf("duplicate SDP y field")
+				return 0, fmt.Errorf("duplicate SDP y field")
 			}
 			seenY = true
-			y = strings.TrimPrefix(line, "y=")
-		case strings.HasPrefix(line, "f="):
-			if seenFormat {
-				return fmt.Errorf("duplicate SDP f field")
+			value, err := strconv.ParseUint(strings.TrimPrefix(line, "y="), 10, 32)
+			if err != nil || value == 0 {
+				return 0, fmt.Errorf("invalid GB28181 SDP y field")
 			}
-			seenFormat = true
-			format = strings.TrimPrefix(line, "f=")
+			ssrc = uint32(value)
+		case strings.HasPrefix(line, "f="):
 		case line != "":
 			standard.WriteString(line)
 			standard.WriteString("\r\n")
 		}
 	}
-	if y != fmt.Sprintf("%010d", expectedSSRC) || format == "" {
-		return fmt.Errorf("invalid GB28181 SDP fields")
-	}
 	var description sdp.SessionDescription
 	if err := description.UnmarshalString(standard.String()); err != nil {
-		return err
+		return 0, err
 	}
-	if description.Version != 0 || description.SessionName != "Play" || description.ConnectionInformation == nil ||
-		description.ConnectionInformation.Address == nil || net.ParseIP(description.ConnectionInformation.Address.Address) == nil || len(description.TimeDescriptions) != 1 ||
-		description.TimeDescriptions[0].Timing.StartTime != 0 || description.TimeDescriptions[0].Timing.StopTime != 0 || len(description.MediaDescriptions) != 1 {
-		return fmt.Errorf("invalid live SDP session")
+	if len(description.MediaDescriptions) != 1 {
+		return 0, fmt.Errorf("invalid live SDP session")
 	}
 	media := description.MediaDescriptions[0]
 	if media.MediaName.Media != "video" || media.MediaName.Port.Value <= 0 || strings.Join(media.MediaName.Protos, "/") != "RTP/AVP" ||
 		len(media.MediaName.Formats) != 1 || media.MediaName.Formats[0] != strconv.Itoa(int(payloadType)) {
-		return fmt.Errorf("invalid live SDP media")
+		return 0, fmt.Errorf("invalid live SDP media")
 	}
 	rtpmap, ok := media.Attribute("rtpmap")
 	if !ok || !strings.EqualFold(rtpmap, fmt.Sprintf("%d PS/90000", payloadType)) {
-		return fmt.Errorf("invalid live SDP payload mapping")
+		return 0, fmt.Errorf("invalid live SDP payload mapping")
 	}
 	direction := ""
-	for _, attribute := range description.Attributes {
-		switch attribute.Key {
-		case "sendonly", "recvonly", "sendrecv", "inactive":
-			if direction != "" {
-				return fmt.Errorf("multiple SDP direction attributes")
+	for _, attributes := range [][]sdp.Attribute{description.Attributes, media.Attributes} {
+		for _, attribute := range attributes {
+			switch attribute.Key {
+			case "sendonly", "recvonly", "sendrecv", "inactive":
+				direction = attribute.Key
 			}
-			direction = attribute.Key
 		}
 	}
-	mediaDirection := ""
-	for _, attribute := range media.Attributes {
-		switch attribute.Key {
-		case "sendonly", "recvonly", "sendrecv", "inactive":
-			if mediaDirection != "" {
-				return fmt.Errorf("multiple SDP media direction attributes")
-			}
-			mediaDirection = attribute.Key
-		}
+	// 省略方向时按 SDP 默认 sendrecv，只拒绝明确不发送媒体的应答。
+	if direction == "recvonly" || direction == "inactive" {
+		return 0, fmt.Errorf("device SDP does not send media")
 	}
-	if mediaDirection != "" {
-		direction = mediaDirection
-	}
-	if direction != "sendonly" {
-		return fmt.Errorf("device SDP is not sendonly")
-	}
-	return nil
+	return ssrc, nil
 }

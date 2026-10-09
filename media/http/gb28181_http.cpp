@@ -187,7 +187,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
                                                       boost::asio::ip::address bind_address)
 {
     const auto path = target.encoded_path();
-    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/delete")
+    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/delete" && path != "/gb28181/receiver/update")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
@@ -204,6 +204,30 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
             return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
         return handle_receiver_create(request, worker, std::move(*config), std::move(bind_address));
+    }
+
+    if (path == "/gb28181/receiver/update")
+    {
+        const auto update = parse_gb28181_receiver_update(request.body());
+        if (!update)
+        {
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+        }
+        const auto& [identity, ssrc] = *update;
+        const auto found = session_registry::instance().find_receiver_session(identity.stream_name, identity.stream_id);
+        if (const auto udp = std::dynamic_pointer_cast<gb28181_udp_receiver_session>(found))
+        {
+            udp->update_ssrc(ssrc);
+        }
+        else if (const auto tcp = std::dynamic_pointer_cast<gb28181_tcp_receiver_session>(found))
+        {
+            tcp->update_ssrc(ssrc);
+        }
+        else
+        {
+            return make_error_response(request, boost::beast::http::status::not_found, "not_found");
+        }
+        return make_empty_response(request, boost::beast::http::status::no_content);
     }
 
     const auto identity = parse_gb28181_receiver_delete(request.body());

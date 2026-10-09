@@ -27,6 +27,7 @@ class gb28181_udp_receiver_session final : public session, public std::enable_sh
    public:
     [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);
     void shutdown();
+    void update_ssrc(std::uint32_t ssrc);
 
    private:
     void run_rtp(boost::asio::yield_context yield);

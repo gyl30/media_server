@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -19,6 +21,11 @@ import (
 
 // The peer speaks SIP over UDP; the HTTP boundary stands in for the media server.
 func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID string, byeStatus ...int) *atomic.Int32 {
+	t.Helper()
+	return testLivePeerWithAnswer(t, s, deviceID, channelID, nil, byeStatus...)
+}
+
+func testLivePeerWithAnswer(t *testing.T, s *infrastructureServer, deviceID, channelID string, rewrite func([]byte) []byte, byeStatus ...int) *atomic.Int32 {
 	t.Helper()
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -50,6 +57,9 @@ func testLivePeer(t *testing.T, s *infrastructureServer, deviceID, channelID str
 			return
 		}
 		answer := bytes.ReplaceAll(request.Body(), []byte("a=recvonly"), []byte("a=sendonly"))
+		if rewrite != nil {
+			answer = rewrite(answer)
+		}
 		if err := dialog.RespondSDP(answer); err != nil && err.Error() != "No ACK received" {
 			t.Error(err)
 		}
@@ -150,5 +160,54 @@ func TestConcurrentLiveReusesOneUpstream(t *testing.T) {
 	view, err := s.live.startLive(t.Context(), deviceID, channelID)
 	if err != nil || view.streamID != streamID {
 		t.Fatalf("streaming reuse: %+v %v", view, err)
+	}
+}
+
+func TestLiveAdoptsDeviceSelectedSSRC(t *testing.T) {
+	s := testInfrastructure(t)
+	var updates []string
+	var mu sync.Mutex
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/gb28181/receiver/create":
+			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
+		case "/gb28181/receiver/update":
+			body, _ := io.ReadAll(request.Body)
+			mu.Lock()
+			updates = append(updates, string(body))
+			mu.Unlock()
+			writer.WriteHeader(http.StatusNoContent)
+		default:
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(media.Close)
+	s.media.server.controlURL = media.URL
+	deviceID, channelID := "34020000001320000001", "34020000001320000002"
+	// 设备改用自己的 SSRC，并且不返回 f= 字段、使用非 Play 的会话名。
+	testLivePeerWithAnswer(t, s, deviceID, channelID, func(answer []byte) []byte {
+		lines := strings.Split(string(answer), "\r\n")
+		kept := lines[:0]
+		for _, line := range lines {
+			switch {
+			case strings.HasPrefix(line, "y="):
+				kept = append(kept, "y=0123456789")
+			case strings.HasPrefix(line, "f="):
+			case strings.HasPrefix(line, "s="):
+				kept = append(kept, "s=Embedded Net DVR")
+			default:
+				kept = append(kept, line)
+			}
+		}
+		return []byte(strings.Join(kept, "\r\n"))
+	})
+	view, err := s.live.startLive(t.Context(), deviceID, channelID)
+	if err != nil || view.state != liveStreaming {
+		t.Fatalf("live with device SSRC failed: %+v %v", view, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(updates) != 1 || !strings.Contains(updates[0], `"ssrc":123456789`) || !strings.Contains(updates[0], view.streamID) {
+		t.Fatalf("receiver SSRC not updated: %v", updates)
 	}
 }
