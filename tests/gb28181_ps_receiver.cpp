@@ -88,8 +88,14 @@ struct rtp_writer
 using audio_frame_source = std::function<std::vector<std::uint8_t>(std::int64_t)>;
 using psm_rewrite = std::function<void(std::vector<std::array<std::uint8_t, 2>>&)>;
 
-// stream_type 为 invalid_psm_entry 的条目写成 es_info_length 越界的坏条目，用于制造解析失败。
+// 改写 PSM 时使用的特殊条目标记：
+// invalid_psm_entry 写成 es_info_length 越界的坏条目；descriptor_overflow_entry 写成类型为 G.722、
+// 描述符体越出 ES 信息范围的条目；trailing_byte_entry 只在映射末尾追加一个残缺字节。
+// sid 为 0xfd 的条目写成带 3 字节扩展 ID 伪描述符的扩展流条目，扩展 ID 依次递增。
 constexpr std::uint8_t invalid_psm_entry = 0xff;
+constexpr std::uint8_t descriptor_overflow_entry = 0xfe;
+constexpr std::uint8_t trailing_byte_entry = 0xfc;
+constexpr std::uint8_t extension_stream_id = 0xfd;
 
 // 按 rewrite 改写 PS 包中 PSM 的条目 (stream_type, stream_id)，版本号保持不变；返回是否改写。
 bool rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
@@ -114,10 +120,26 @@ bool rewrite_psm(std::vector<std::uint8_t>& packet, const psm_rewrite& rewrite)
         }
         rewrite(entries);
         std::vector<std::uint8_t> map;
+        std::uint8_t extension{};
         for (const auto& [type, sid] : entries)
         {
-            const std::uint8_t info_length = type == invalid_psm_entry ? 0xff : 0x00;
-            map.insert(map.end(), {type, sid, info_length, info_length});
+            if (type == trailing_byte_entry)
+            {
+                map.push_back(0x00);
+            }
+            else if (type == descriptor_overflow_entry)
+            {
+                map.insert(map.end(), {PSI_STREAM_AUDIO_G722, sid, 0x00, 0x02, 0x80, 0x03});
+            }
+            else if (sid == extension_stream_id)
+            {
+                map.insert(map.end(), {type, sid, 0x00, 0x03, 0x00, 0x01, static_cast<std::uint8_t>(0x80U | extension++)});
+            }
+            else
+            {
+                const std::uint8_t info_length = type == invalid_psm_entry ? 0xff : 0x00;
+                map.insert(map.end(), {type, sid, info_length, info_length});
+            }
         }
         std::vector<std::uint8_t> psm(packet.begin() + static_cast<std::ptrdiff_t>(index), packet.begin() + static_cast<std::ptrdiff_t>(map_begin));
         // program_stream_map_length 计入其后的全部字节：flags(2) + info_length(2) + info + map_length(2) + map + CRC(4)。
@@ -413,7 +435,93 @@ void psm_topology_changes()
                                       }),
                              2);
     require(unchanged && failed && *failed == *unchanged, "failed psm parse committed partial topology");
+    // 描述符越出 ES 信息范围、映射末尾残缺：都必须判为解析失败，不能提交 C0 的编码变化。
+    const auto to_g722 = [](std::vector<std::array<std::uint8_t, 2>>& entries)
+    {
+        for (auto& entry : entries)
+        {
+            if (entry[0] == PSI_STREAM_AUDIO_G711A)
+            {
+                entry[0] = PSI_STREAM_AUDIO_G722;
+            }
+        }
+    };
+    const auto overflow = feed("gb/test/psm_descriptor_overflow",
+                               make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20, 10,
+                                        [](std::vector<std::array<std::uint8_t, 2>>& entries)
+                                        {
+                                            for (auto& entry : entries)
+                                            {
+                                                if (entry[0] == PSI_STREAM_AUDIO_G711A)
+                                                {
+                                                    entry[0] = descriptor_overflow_entry;
+                                                }
+                                            }
+                                        }),
+                               2);
+    require(overflow && *overflow == *unchanged, "psm descriptor overflow committed topology");
+    const auto trailing = feed("gb/test/psm_trailing_byte",
+                               make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20, 10,
+                                        [&to_g722](std::vector<std::array<std::uint8_t, 2>>& entries)
+                                        {
+                                            to_g722(entries);
+                                            entries.push_back({trailing_byte_entry, 0x00});
+                                        }),
+                               2);
+    require(trailing && *trailing == *unchanged, "psm trailing byte committed topology");
     std::cout << "psm_topology_changes: PASS\n";
+}
+
+void psm_history_capacity()
+{
+    const auto g722 = [](std::int64_t) { return std::vector<std::uint8_t>(160, 0x55); };
+    const auto control = feed("gb/test/psm_capacity_control", make_rtp(PSI_STREAM_AUDIO_G722, g722, 40), 1);
+    // 不支持的音频不参与拓扑比较，反复更换其 SID 会累积历史表直到满载；
+    // 超出容量的 PSM 整体失败且不影响已有输入，满载后同样的 SID 也必须仍能正确解析。
+    std::uint8_t next_sid = 0xc1;
+    const auto churn = feed("gb/test/psm_capacity_churn",
+                            make_rtp(PSI_STREAM_AUDIO_G722, g722, 40, 1,
+                                     [&next_sid](std::vector<std::array<std::uint8_t, 2>>& entries)
+                                     {
+                                         for (auto& entry : entries)
+                                         {
+                                             if (entry[0] == PSI_STREAM_AUDIO_G722)
+                                             {
+                                                 entry[1] = next_sid;
+                                             }
+                                         }
+                                         next_sid = next_sid == 0xdf ? 0xc1 : static_cast<std::uint8_t>(next_sid + 1U);
+                                     }),
+                            1);
+    require(control && churn && *churn == *control, "psm history capacity churn changed published frames");
+
+    // 历史表已有 E0/C0/C1 时，PSM 含 14 个同为 0xfd 的扩展流条目只占一个新槽位；
+    // 同时把 C0 改为受支持的 G.711A，这一拓扑变化必须被提交并结束当前代。
+    int call = 0;
+    const auto extensions = feed("gb/test/psm_extension_streams",
+                                 make_rtp(PSI_STREAM_AUDIO_G722, g722, 20, 1,
+                                          [&call](std::vector<std::array<std::uint8_t, 2>>& entries)
+                                          {
+                                              if (call++ == 0)
+                                              {
+                                                  entries.push_back({PSI_STREAM_AUDIO_G722, 0xc1});
+                                                  return;
+                                              }
+                                              for (auto& entry : entries)
+                                              {
+                                                  if (entry[0] == PSI_STREAM_AUDIO_G722)
+                                                  {
+                                                      entry[0] = PSI_STREAM_AUDIO_G711A;
+                                                  }
+                                              }
+                                              for (int index = 0; index < 14; ++index)
+                                              {
+                                                  entries.push_back({PSI_STREAM_AUDIO_G722, extension_stream_id});
+                                              }
+                                          }),
+                                 1);
+    require(!extensions, "psm with repeated extension stream ids rejected; topology change missed");
+    std::cout << "psm_history_capacity: PASS\n";
 }
 }    // namespace
 
@@ -431,6 +539,7 @@ int main()
         empty_aac_is_not_media();
         real_mp3_audio();
         psm_topology_changes();
+        psm_history_capacity();
         return 0;
     }
     catch (const std::exception& error)

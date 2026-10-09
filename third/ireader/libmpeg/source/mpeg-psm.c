@@ -107,19 +107,30 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 		{
 			// descriptor()
 			mpeg_elment_descriptor(reader);
+			// media_server: 描述符不能越出本条目的 ES 信息范围
+			if (mpeg_bits_tell(reader) > off + element_stream_info_length)
+				return MPEG_ERROR_INVALID_DATA;
 		}
 
 		mpeg_bits_seek(reader, off + element_stream_info_length); // make sure
 	}
 
+	// media_server: 映射必须恰好结束，CRC 才位于正确位置
+	if (0 != mpeg_bits_error(reader) || mpeg_bits_tell(reader) != end)
+		return MPEG_ERROR_INVALID_DATA;
 	mpeg_bits_read32(reader); // crc32
 	if (0 != mpeg_bits_error(reader))
 		return MPEG_ERROR_INVALID_DATA;
 
-	// 新增 sid 超出历史表容量时整体失败，不做部分提交。
+	// 新增 sid 超出历史表容量时整体失败，不做部分提交；同一 sid 多次出现（如多个 0xFD 扩展流）只占一个槽位。
 	added = 0;
 	for (i = 0; i < psm->active_count; i++)
 	{
+		for (j = 0; j < i && psm->active[j].sid != psm->active[i].sid; j++)
+		{
+		}
+		if (j < i)
+			continue;
 		for (j = 0; j < psm->stream_count && psm->streams[j].sid != psm->active[i].sid; j++)
 		{
 		}
