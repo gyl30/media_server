@@ -3,7 +3,6 @@
 
 #include <span>
 #include <memory>
-#include <functional>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -39,9 +38,7 @@ struct rtsp_publish_track_description
 class rtsp_publish_media final
 {
    public:
-    rtsp_publish_media(worker_context& worker,
-                       std::string media_stream_name,
-                       std::vector<rtsp_publish_track_description> descriptions);
+    rtsp_publish_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_publish_track_description> descriptions);
 
    public:
     [[nodiscard]] bool startup(const std::string& rtcp_cname);

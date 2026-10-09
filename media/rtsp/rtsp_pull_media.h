@@ -3,7 +3,6 @@
 
 #include <span>
 #include <memory>
-#include <functional>
 #include <string>
 #include <vector>
 #include <cstddef>
