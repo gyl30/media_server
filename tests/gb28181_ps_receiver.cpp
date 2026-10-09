@@ -162,7 +162,8 @@ void empty_payload_is_not_media()
                                             0, 0, 0, 0,
                                             static_cast<std::uint8_t>(ssrc >> 24U), static_cast<std::uint8_t>(ssrc >> 16U),
                                             static_cast<std::uint8_t>(ssrc >> 8U), static_cast<std::uint8_t>(ssrc)};
-        require(receiver.receive_rtp(header) != gb28181_rtp_receive_result::fatal, "empty payload: header rejected");
+        // ignored 才能保证 UDP 会话不会把对端锁定到发送空包的端点。
+        require(receiver.receive_rtp(header) == gb28181_rtp_receive_result::ignored, "empty payload: header-only rtp accepted");
     }
     require(before != 0 && frames == before, "empty payload: header-only rtp reported as media");
     receiver.shutdown();

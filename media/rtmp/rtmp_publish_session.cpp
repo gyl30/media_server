@@ -235,6 +235,11 @@ int rtmp_publish_session::initialize_g711_track(int codec)
 
 int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags)
 {
+    // 只有 FLV 音频头的消息（如单字节 G.711 标签）没有媒体数据。
+    if (data.empty())
+    {
+        return 0;
+    }
     track_id id{};
     if (codec == FLV_VIDEO_H264 || codec == FLV_VIDEO_H265)
     {

@@ -104,8 +104,9 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
     }
 
     rtp_packet_t packet{};
+    // 空载荷包不是媒体：既不进入解复用，也不能让 UDP 会话锁定其来源端点。
     if (rtp_packet_deserialize(&packet, data.data(), static_cast<int>(data.size())) != 0 || packet.rtp.pt != payload_type_ ||
-        packet.rtp.ssrc != expected_ssrc_)
+        packet.rtp.ssrc != expected_ssrc_ || packet.payloadlen <= 0)
     {
         return gb28181_rtp_receive_result::ignored;
     }

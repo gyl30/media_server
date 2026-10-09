@@ -11,7 +11,9 @@
 namespace media_server
 {
 
-// 输入会话超过该时间没有收到媒体即视为上游失效。
+// 输入空闲期限：连接或会话建立后该时间内必须发布出首个媒体帧，此后任意该时长内都要持续发布。
+// 以"发布出媒体帧"为准，才能统一排除 RTCP、空载荷、被忽略的消息等非媒体输入；
+// 解复用器缓冲一个访问单元造成的出帧滞后计入期限。
 inline constexpr std::chrono::seconds media_idle_timeout{20};
 
 // 由 owner executor 使用；owner 必须持有本对象，回调前通过 weak owner 确认其仍然存活。
