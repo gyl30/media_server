@@ -210,21 +210,18 @@ void high_water_boundaries()
         const std::size_t front_bytes = remaining == 0 ? high_water_mark + 1U : 17U;
         std::size_t completions{};
         std::vector<std::uint8_t> received;
-        if (overflow)
-        {
-            received.resize(front_bytes);
-            boost::asio::async_read(pair.peer, boost::asio::buffer(received), [&](boost::system::error_code error, std::size_t bytes)
-                                   { require(!error && bytes == front_bytes, "high water front not delivered"); });
-        }
-        else
-        {
-            pair.read_to_end(received);
-        }
+        pair.read_to_end(received);
         pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
                                           {
-                                              require(bytes == (completions == 0 ? front_bytes : remaining), "high water completion bytes changed");
-                                              require(overflow ? error == boost::asio::error::no_buffer_space : !error,
-                                                      "high water phase/boundary changed");
+                                              // 超限写入在入队时关闭连接，只通知一次，在途写不再回调。
+                                              if (overflow)
+                                              {
+                                                  require(error == boost::asio::error::no_buffer_space && bytes == 0, "high water overflow not rejected");
+                                              }
+                                              else
+                                              {
+                                                  require(!error && bytes == (completions == 0 ? front_bytes : remaining), "high water completion bytes changed");
+                                              }
                                               ++completions;
                                               if (!overflow && (remaining == 0 || completions == 2))
                                               {
@@ -235,16 +232,48 @@ void high_water_boundaries()
         pair.transport->write(std::vector<std::uint8_t>(remaining, 0x22));
         pair.drain();
         std::vector<std::uint8_t> expected(front_bytes, 0x11);
-        if (!overflow)
+        if (overflow)
+        {
+            // 在途的首个写可能已发出部分数据，超限数据绝不能发出。
+            require(received.size() <= front_bytes && std::ranges::all_of(received, [](std::uint8_t byte) { return byte == 0x11; }) &&
+                        completions == 1U,
+                    "high water overflow sent rejected data or notified twice");
+        }
+        else
         {
             expected.insert(expected.end(), remaining, 0x22);
+            require(received == expected && completions == (remaining != 0 ? 2U : 1U), "high water discarded accepted data");
         }
-        require(received == expected && completions == (!overflow && remaining != 0 ? 2U : 1U),
-                "high water sent pending data or discarded accepted data");
         pair.transport->shutdown();
         pair.transport.reset();
         pair.drain();
     }
+}
+
+void stalled_reader()
+{
+    connection pair(true);
+    std::size_t overflows{};
+    std::size_t completed_bytes{};
+    pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
+                                      {
+                                          if (error == boost::asio::error::no_buffer_space)
+                                          {
+                                              ++overflows;
+                                              pair.transport->shutdown();
+                                              return;
+                                          }
+                                          require(!error, "stalled reader write failed");
+                                          completed_bytes += bytes;
+                                      });
+    for (int index = 0; index < 64; ++index)
+    {
+        pair.transport->write(std::vector<std::uint8_t>(64U * 1024U, 0x33));
+    }
+    pair.drain();
+    require(overflows == 1, "stalled reader did not hit high water once");
+    require(completed_bytes < 2U * high_water_mark, "stalled reader accepted unbounded data");
+    pair.transport.reset();
 }
 
 void socket_error()
@@ -307,6 +336,10 @@ int main(int argc, char** argv)
         else if (name == "high_water")
         {
             high_water_boundaries();
+        }
+        else if (name == "stalled_reader")
+        {
+            stalled_reader();
         }
         else if (name == "socket_error")
         {

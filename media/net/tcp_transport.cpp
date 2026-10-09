@@ -61,6 +61,17 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
     }
 
     const bool writing = !write_queue_.empty();
+    // 对端停止读取时在途写不会完成，因此入队时限制尚未开始发送的字节数。
+    if (writing && queued_write_bytes_ - write_queue_.front()->size() + data.size() > write_high_water_mark)
+    {
+        const auto callback = std::move(write_callback_);
+        safe_shutdown();
+        if (callback)
+        {
+            callback(boost::asio::error::no_buffer_space, 0);
+        }
+        return;
+    }
     queued_write_bytes_ += data.size();
     write_queue_.push_back(std::make_shared<std::vector<std::uint8_t>>(std::move(data)));
     if (!writing)
@@ -88,10 +99,6 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
     {
         queued_write_bytes_ -= write_queue_.front()->size();
         write_queue_.pop_front();
-        if (queued_write_bytes_ > write_high_water_mark)
-        {
-            error = boost::asio::error::no_buffer_space;
-        }
     }
 
     if (write_callback_)
