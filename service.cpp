@@ -42,7 +42,7 @@ bool start_tcp_listener(worker_pool& workers,
     }
 
     listener_worker.spawn(
-        [&workers, listener, start_session = std::move(start_session)](boost::asio::yield_context yield) mutable
+        [&workers, listener, port, start_session = std::move(start_session)](boost::asio::yield_context yield) mutable
         {
             boost::system::error_code accept_error;
             for (;;)
@@ -50,9 +50,22 @@ bool start_tcp_listener(worker_pool& workers,
                 auto& worker = workers.next();
                 boost::asio::ip::tcp::socket socket(worker.io());
                 listener->accept(socket, yield, accept_error);
-                if (accept_error)
+                if (yield.cancelled() != boost::asio::cancellation_type::none || accept_error == boost::asio::error::operation_aborted)
                 {
                     return;
+                }
+                if (accept_error)
+                {
+                    // EMFILE 等资源错误是暂时的，退出循环会让监听端口永久失效。
+                    spdlog::warn("accept failed port {} error {}", port, accept_error.message());
+                    boost::asio::steady_timer backoff(yield.get_executor(), std::chrono::milliseconds(100));
+                    boost::system::error_code wait_error;
+                    backoff.async_wait(yield[wait_error]);
+                    if (yield.cancelled() != boost::asio::cancellation_type::none)
+                    {
+                        return;
+                    }
+                    continue;
                 }
                 start_session(worker, std::move(socket));
             }
