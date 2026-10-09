@@ -33,7 +33,12 @@ void hls_segmenter::on_frame(const media_frame& frame)
     {
         return;
     }
-    const auto& state = tracks_.find(frame.track)->second;
+    const auto iterator = tracks_.find(frame.track);
+    if (iterator == tracks_.end())
+    {
+        return;
+    }
+    const auto& state = iterator->second;
     const auto& track = state.track;
     if (waiting_for_key_frame_)
     {
@@ -50,7 +55,8 @@ void hls_segmenter::on_frame(const media_frame& frame)
     }
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(hls::target_duration_seconds * 1'000'000'000.0);
-    const bool segment_boundary = track.kind == media_kind::video && frame.key_frame && elapsed_ns >= target_ns;
+    // 有视频时只在关键帧切片；纯音频流任意帧都可以作为分片起点。
+    const bool segment_boundary = (!has_video_ || (track.kind == media_kind::video && frame.key_frame)) && elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
         finish_segment(frame.pts_ns);
@@ -102,8 +108,18 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     bool has_video = false;
     for (const auto& track : source->tracks())
     {
+        // MPEG-TS 不承载的轨道（如 Opus）只跳过该轨，其余轨道照常输出。
+        if (track.codec == codec_id::opus)
+        {
+            spdlog::warn("hls skip unsupported track {} codec {}", track.id, to_string(track.codec));
+            continue;
+        }
         tracks.emplace(track.id, track_state{.track = track});
         has_video = has_video || track.kind == media_kind::video;
+    }
+    if (tracks.empty())
+    {
+        return false;
     }
     std::scoped_lock lock(mutex_);
     if (!recreate_muxer(tracks))
@@ -112,6 +128,7 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     }
     tracks_ = std::move(tracks);
     waiting_for_key_frame_ = has_video;
+    has_video_ = has_video;
     source_ = source;
     source->add_sink(shared_from_this());
     return true;
@@ -263,7 +280,7 @@ void hls_segmenter::discard_segment()
     std::vector<std::uint8_t>().swap(current_segment_);
     segment_start_pts_ns_.reset();
     segment_max_pts_ns_ = 0;
-    waiting_for_key_frame_ = std::ranges::any_of(tracks_, [](const auto& item) { return item.second.track.kind == media_kind::video; });
+    waiting_for_key_frame_ = has_video_;
 }
 
 int hls_segmenter::add_track_to_muxer(void* muxer, const media_track& track)
