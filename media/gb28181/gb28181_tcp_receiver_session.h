@@ -47,6 +47,7 @@ class gb28181_tcp_receiver_session final : public session, public std::enable_sh
     std::unique_ptr<tcp_listener> listener_;
     std::shared_ptr<tcp_transport> transport_;
     idle_timer idle_timer_;
+    bool closed_{};
 };
 
 }    // namespace media_server

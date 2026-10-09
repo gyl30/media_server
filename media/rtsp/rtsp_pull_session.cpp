@@ -168,6 +168,11 @@ void rtsp_pull_session::schedule_rtcp()
 
 void rtsp_pull_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     idle_timer_.stop();
     if (media_)
     {
@@ -278,24 +283,15 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
 {
     boost::system::error_code error;
     const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
-    if (yield.cancelled() != boost::asio::cancellation_type::none)
-    {
-        shutdown();
-        return;
-    }
-    if (error)
+    // 关闭前已排队的成功完成仍会恢复协程，关闭后不能继续连接或协商。
+    if (closed_ || yield.cancelled() != boost::asio::cancellation_type::none || error)
     {
         shutdown();
         return;
     }
 
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
-    if (yield.cancelled() != boost::asio::cancellation_type::none)
-    {
-        shutdown();
-        return;
-    }
-    if (error)
+    if (closed_ || yield.cancelled() != boost::asio::cancellation_type::none || error)
     {
         shutdown();
         return;
@@ -354,7 +350,7 @@ void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_conte
     for (;;)
     {
         const auto bytes = transport_->read(buffer, yield, error);
-        if (error || rtsp_client_input(client, buffer.data(), bytes) != 0)
+        if (error || closed_ || rtsp_client_input(client, buffer.data(), bytes) != 0)
         {
             return;
         }

@@ -102,13 +102,11 @@ void gb28181_udp_receiver_session::update_ssrc(std::uint32_t ssrc, std::function
     boost::asio::post(worker_.io(),
                       [self, ssrc, done = std::move(done)]()
                       {
-                          const bool open =
-                              self->receiver_.running() && session_registry::instance().receiver_open(self->receiver_.stream_name(), *self);
-                          if (open)
-                          {
-                              self->receiver_.set_expected_ssrc(ssrc);
-                          }
-                          done(open);
+                          // 运行状态只在本 worker 上变化；槽位检查与更新在 registry 锁内一次完成，不会与删除交错。
+                          const bool updated = self->receiver_.running() &&
+                                               session_registry::instance().update_if_open(
+                                                   self->receiver_.stream_name(), *self, [&self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
+                          done(updated);
                       });
 }
 

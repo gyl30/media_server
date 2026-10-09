@@ -21,6 +21,13 @@ class session
     virtual void shutdown() = 0;
 };
 
+// 等待关闭的结果：会话清理完成后移除槽位，或服务停止时直接结束等待。
+enum class receiver_close
+{
+    completed,
+    stopped,
+};
+
 struct receiver_identity
 {
     std::string stream_name;
@@ -37,10 +44,11 @@ class session_registry final
     // 槽位不存在或属于其他代时返回空且不调用 closed；并发关闭共享同一次完成。
     [[nodiscard]] std::shared_ptr<session> begin_close_receiver(std::string_view stream_name,
                                                                 std::string_view expected_stream_id,
-                                                                std::function<void()> closed);
+                                                                std::function<void(receiver_close)> closed);
     // 会话在资源清理完成后调用，移除自身槽位并通知等待关闭的请求。
     void remove_receiver_session(std::string_view stream_name, const session& expected);
-    [[nodiscard]] bool receiver_open(std::string_view stream_name, const session& expected) const;
+    // 槽位仍属于 expected 且未进入关闭时在锁内执行 update（不得挂起或阻塞）并返回 true。
+    bool update_if_open(std::string_view stream_name, const session& expected, const std::function<void()>& update);
     [[nodiscard]] std::vector<receiver_identity> receivers() const;
     [[nodiscard]] std::shared_ptr<session> find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const;
 
@@ -57,7 +65,7 @@ class session_registry final
         std::string stream_id;
         std::shared_ptr<session> value;
         bool closing{};
-        std::vector<std::function<void()>> closed;
+        std::vector<std::function<void(receiver_close)>> closed;
     };
 
     struct session_entry

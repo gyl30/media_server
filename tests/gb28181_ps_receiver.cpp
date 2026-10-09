@@ -565,16 +565,20 @@ void close_waits_for_cleanup()
         {
             std::string failure;
             const auto update = [&session, &yield]()
-            { return await_result([&session](auto done) { session->update_ssrc(ssrc + 1U, std::move(done)); }, yield); };
+            {
+                return await_result([&session](auto done)
+                                    { session->update_ssrc(ssrc + 1U, [done](bool updated) { done(updated ? async_result::completed : async_result::not_found); }); },
+                                    yield) == async_result::completed;
+            };
             if (!update())
             {
                 failure = "update rejected while receiver running";
             }
-            else if (close_receiver(stream_name, "id-other", yield))
+            else if (close_receiver(stream_name, "id-other", yield) != async_result::not_found)
             {
                 failure = "stale identity closed receiver";
             }
-            else if (!close_receiver(stream_name, "id-1", yield))
+            else if (close_receiver(stream_name, "id-1", yield) != async_result::completed)
             {
                 failure = "close not completed";
             }
@@ -600,7 +604,7 @@ void close_waits_for_cleanup()
                 {
                     failure = "update accepted after close";
                 }
-                else if (close_receiver(stream_name, "id-1", yield))
+                else if (close_receiver(stream_name, "id-1", yield) != async_result::not_found)
                 {
                     failure = "closed receiver closed again";
                 }

@@ -7,6 +7,8 @@
 #include <boost/beast/http.hpp>
 #include <boost/url/url_view.hpp>
 
+#include "media/http/http_async.h"
+
 namespace media_server
 {
 
@@ -18,8 +20,8 @@ using receiver_http_response = boost::beast::http::response<boost::beast::http::
                                                              const boost::urls::url_view& target,
                                                              boost::asio::yield_context yield);
 
-// 按身份关闭接收会话并等待其资源清理完成；身份不存在或属于其他代时返回 false。
-[[nodiscard]] bool close_receiver(std::string_view stream_name, std::string_view stream_id, boost::asio::yield_context yield);
+// 按身份关闭接收会话并等待其资源清理完成；身份不存在或属于其他代时返回 not_found，服务停止返回 stopped。
+[[nodiscard]] async_result close_receiver(std::string_view stream_name, std::string_view stream_id, boost::asio::yield_context yield);
 
 }    // namespace media_server
 

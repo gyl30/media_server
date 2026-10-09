@@ -67,13 +67,11 @@ void gb28181_tcp_receiver_session::update_ssrc(std::uint32_t ssrc, std::function
     boost::asio::post(worker_.io(),
                       [self, ssrc, done = std::move(done)]()
                       {
-                          const bool open =
-                              self->receiver_.running() && session_registry::instance().receiver_open(self->receiver_.stream_name(), *self);
-                          if (open)
-                          {
-                              self->receiver_.set_expected_ssrc(ssrc);
-                          }
-                          done(open);
+                          // 运行状态只在本 worker 上变化；槽位检查与更新在 registry 锁内一次完成，不会与删除交错。
+                          const bool updated = self->receiver_.running() &&
+                                               session_registry::instance().update_if_open(
+                                                   self->receiver_.stream_name(), *self, [&self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
+                          done(updated);
                       });
 }
 
@@ -104,7 +102,8 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
         listener_.reset();
     }
 
-    if (yield.cancelled() != boost::asio::cancellation_type::none)
+    // 关闭前已排队的成功完成仍会恢复协程，关闭后不能再接管连接。
+    if (closed_ || yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
         return;
@@ -133,7 +132,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
     for (;;)
     {
         const auto read_bytes = transport_->read(buffer, yield, error);
-        if (error)
+        if (error || closed_)
         {
             shutdown();
             return;
@@ -175,6 +174,11 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
 
 void gb28181_tcp_receiver_session::safe_shutdown()
 {
+    if (closed_)
+    {
+        return;
+    }
+    closed_ = true;
     idle_timer_.stop();
     if (listener_)
     {

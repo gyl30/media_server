@@ -216,25 +216,30 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     const auto& [identity, ssrc] = *update;
     const auto found = session_registry::instance().find_receiver_session(identity.stream_name, identity.stream_id);
     // 204 表示更新已在接收器 worker 上实际生效，信令随后才发送 ACK。
-    const bool updated = await_result(
+    const auto result = await_result(
         [&found, ssrc](auto done)
         {
+            const auto updated = [done](bool value) { done(value ? async_result::completed : async_result::not_found); };
             if (const auto udp = std::dynamic_pointer_cast<gb28181_udp_receiver_session>(found))
             {
-                udp->update_ssrc(ssrc, done);
+                udp->update_ssrc(ssrc, updated);
                 return;
             }
             if (const auto tcp = std::dynamic_pointer_cast<gb28181_tcp_receiver_session>(found))
             {
-                tcp->update_ssrc(ssrc, done);
+                tcp->update_ssrc(ssrc, updated);
                 return;
             }
-            done(false);
+            done(async_result::not_found);
         },
         yield);
-    if (!updated)
+    if (result == async_result::not_found)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
+    }
+    if (result == async_result::stopped)
+    {
+        return make_error_response(request, boost::beast::http::status::service_unavailable, "service_unavailable");
     }
     return make_empty_response(request, boost::beast::http::status::no_content);
 }

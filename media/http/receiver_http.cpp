@@ -50,15 +50,18 @@ std::optional<receiver_identity> parse_identity(std::string_view body)
 
 }    // namespace
 
-bool close_receiver(std::string_view stream_name, std::string_view stream_id, boost::asio::yield_context yield)
+async_result close_receiver(std::string_view stream_name, std::string_view stream_id, boost::asio::yield_context yield)
 {
     return await_result(
         [stream_name = std::string(stream_name), stream_id = std::string(stream_id)](auto done)
         {
-            const auto session = session_registry::instance().begin_close_receiver(stream_name, stream_id, [done]() { done(true); });
+            const auto session = session_registry::instance().begin_close_receiver(
+                stream_name,
+                stream_id,
+                [done](receiver_close reason) { done(reason == receiver_close::completed ? async_result::completed : async_result::stopped); });
             if (!session)
             {
-                done(false);
+                done(async_result::not_found);
                 return;
             }
             session->shutdown();
@@ -103,9 +106,14 @@ receiver_http_response handle_receiver_request(const receiver_http_request& requ
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    if (!close_receiver(identity->stream_name, identity->stream_id, yield))
+    const auto result = close_receiver(identity->stream_name, identity->stream_id, yield);
+    if (result == async_result::not_found)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
+    }
+    if (result == async_result::stopped)
+    {
+        return make_error_response(request, boost::beast::http::status::service_unavailable, "service_unavailable");
     }
     receiver_http_response response{boost::beast::http::status::no_content, request.version()};
     response.set(boost::beast::http::field::server, "media_server");

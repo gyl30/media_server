@@ -29,7 +29,7 @@ bool session_registry::add_receiver_session(std::string stream_name, std::string
 
 std::shared_ptr<session> session_registry::begin_close_receiver(std::string_view stream_name,
                                                                 std::string_view expected_stream_id,
-                                                                std::function<void()> closed)
+                                                                std::function<void(receiver_close)> closed)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
@@ -45,7 +45,7 @@ std::shared_ptr<session> session_registry::begin_close_receiver(std::string_view
 
 void session_registry::remove_receiver_session(std::string_view stream_name, const session& expected)
 {
-    std::vector<std::function<void()>> closed;
+    std::vector<std::function<void(receiver_close)>> closed;
     {
         std::scoped_lock lock(mutex_);
         const auto iterator = sessions_.find(stream_name);
@@ -62,16 +62,21 @@ void session_registry::remove_receiver_session(std::string_view stream_name, con
     }
     for (const auto& notify : closed)
     {
-        notify();
+        notify(receiver_close::completed);
     }
 }
 
-bool session_registry::receiver_open(std::string_view stream_name, const session& expected) const
+bool session_registry::update_if_open(std::string_view stream_name, const session& expected, const std::function<void()>& update)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
-    return iterator != sessions_.end() && iterator->second.receiver && iterator->second.receiver->value.get() == &expected &&
-           !iterator->second.receiver->closing;
+    if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->value.get() != &expected ||
+        iterator->second.receiver->closing)
+    {
+        return false;
+    }
+    update();
+    return true;
 }
 
 std::shared_ptr<session> session_registry::find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const
@@ -173,10 +178,10 @@ void session_registry::shutdown_all()
         if (entry.receiver)
         {
             entry.receiver->value->shutdown();
-            // 槽位已摘除，会话之后无法再移除它；服务停止时直接结束等待关闭的请求。
+            // 槽位已摘除，会话之后无法再移除它；服务停止时以 stopped 结束等待，不表示清理已完成。
             for (const auto& notify : entry.receiver->closed)
             {
-                notify();
+                notify(receiver_close::stopped);
             }
         }
         for (const auto& [sender_id, session] : entry.sender_sessions)
