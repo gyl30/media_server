@@ -162,24 +162,53 @@ void video_messages()
 void empty_g711_audio()
 {
     publisher publish("rtmp/g711");
-    // FLV audiocodecid 7 为 G.711 A-law。
+    // FLV audiocodecid 7 为 G.711 A-law；首条带数据的 G.711 消息建立音轨并完成登记。
     publish.register_video(7);
-    const std::array<std::uint8_t, 1> empty_audio{0x70};
-    require(publish.session.on_audio(empty_audio.data(), empty_audio.size(), 0) == 0, "empty g711 rejected");
+    std::array<std::uint8_t, 161> audio{};
+    audio.front() = 0x70;
+    require(publish.session.on_audio(audio.data(), audio.size(), 0) == 0, "g711 frame rejected");
     publish.attach("rtmp/g711");
+    const auto before = publish.notifications;
+
+    const std::array<std::uint8_t, 1> empty_audio{0x70};
     for (std::uint32_t timestamp = 20; timestamp < 400; timestamp += 20)
     {
         require(publish.session.on_audio(empty_audio.data(), empty_audio.size(), timestamp) == 0, "empty g711 rejected");
     }
-    require(publish.notifications == 0 && publish.sink->frames.empty(), "empty g711 reported as media");
+    require(publish.notifications == before && publish.sink->frames.empty(), "empty g711 reported as media");
 
-    std::array<std::uint8_t, 161> audio{};
-    audio.front() = 0x70;
     require(publish.session.on_audio(audio.data(), audio.size(), 400) == 0, "g711 frame rejected");
-    require(publish.notifications == 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 160,
+    require(publish.notifications == before + 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 160,
             "g711 frame not published as media");
     publish.session.shutdown();
     std::cout << "empty_g711_audio: PASS\n";
+}
+
+void empty_aac_audio()
+{
+    publisher publish("rtmp/aac");
+    // FLV audiocodecid 10 为 AAC。
+    publish.register_video(10);
+    const std::array<std::uint8_t, 4> sequence_header{0xaf, 0x00, 0x11, 0x90};
+    require(publish.session.on_audio(sequence_header.data(), sequence_header.size(), 0) == 0, "aac sequence header rejected");
+    publish.attach("rtmp/aac");
+
+    // 只有 AAC 标签头、没有 ES 的消息；解复用器会为它补出 7 字节 ADTS 头。
+    const std::array<std::uint8_t, 2> empty_audio{0xaf, 0x01};
+    for (std::uint32_t timestamp = 20; timestamp < 400; timestamp += 20)
+    {
+        require(publish.session.on_audio(empty_audio.data(), empty_audio.size(), timestamp) == 0, "empty aac rejected");
+    }
+    require(publish.notifications == 0 && publish.sink->frames.empty(), "empty aac reported as media");
+
+    std::array<std::uint8_t, 22> audio{};
+    audio[0] = 0xaf;
+    audio[1] = 0x01;
+    require(publish.session.on_audio(audio.data(), audio.size(), 400) == 0, "aac frame rejected");
+    require(publish.notifications == 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 7 + 20,
+            "aac frame not published as media");
+    publish.session.shutdown();
+    std::cout << "empty_aac_audio: PASS\n";
 }
 }    // namespace
 
@@ -189,6 +218,7 @@ int main()
     {
         video_messages();
         empty_g711_audio();
+        empty_aac_audio();
         return 0;
     }
     catch (const std::exception& error)

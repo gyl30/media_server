@@ -14,6 +14,7 @@ extern "C"
 {
 #include "amf0.h"
 #include "flv-proto.h"
+#include "flv-header.h"
 #include "opus-head.h"
 #include "flv-demuxer.h"
 }
@@ -52,6 +53,13 @@ int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uin
 
 int rtmp_publish_session::on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
+    // 只有音频标签头的消息不含音频数据；解复用器会给空 AAC 补 ADTS 头，必须在此之前忽略。
+    flv_audio_tag_header_t header{};
+    const auto header_bytes = flv_audio_tag_header_read(&header, static_cast<const std::uint8_t*>(data), bytes);
+    if (header_bytes > 0 && bytes <= static_cast<std::size_t>(header_bytes))
+    {
+        return 0;
+    }
     return flv_demuxer_input(demuxer_, FLV_TYPE_AUDIO, data, bytes, timestamp);
 }
 

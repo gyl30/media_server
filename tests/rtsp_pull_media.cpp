@@ -1,12 +1,15 @@
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "media/core/media_sink.h"
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_pull_media.h"
@@ -27,6 +30,21 @@ void require(bool condition, const std::string& message)
         throw std::runtime_error(message);
     }
 }
+
+class frame_sink final : public media_sink
+{
+   public:
+    explicit frame_sink(worker_context& worker) : worker_(worker) {}
+
+    worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame& frame) override { frames.push_back(frame); }
+    void on_end() override {}
+
+    std::vector<media_frame> frames;
+
+   private:
+    worker_context& worker_;
+};
 
 std::vector<std::uint8_t> rtp(std::uint8_t payload_type, bool marker, std::uint16_t sequence, std::uint32_t timestamp, std::span<const std::uint8_t> payload)
 {
@@ -107,16 +125,28 @@ int main()
         std::uint16_t video_sequence = 1;
         const auto units = nal_units(h264_idr);
         require(units.size() == 3, "h264 fixture split failed");
-        for (std::uint32_t frame = 0; frame < 5; ++frame)
+        const auto sink = std::make_shared<frame_sink>(worker);
+        auto send_frame = [&](std::uint32_t frame)
         {
             for (std::size_t index = 0; index < units.size(); ++index)
             {
                 const auto packet = rtp(96, index + 1 == units.size(), video_sequence++, frame * 3'600, units[index]);
                 require(media.input_packet(video_channel, packet), "video rtp rejected");
             }
+        };
+        send_frame(0);
+        send_frame(1);
+        const auto stream = stream_registry::instance().find(name);
+        require(stream != nullptr, "stream not registered after in-band video config");
+        stream->add_sink(sink);
+        worker.io().poll();
+        for (std::uint32_t frame = 2; frame < 5; ++frame)
+        {
+            send_frame(frame);
         }
+        require(std::ranges::any_of(sink->frames, [](const media_frame& frame) { return frame.track == 1 && frame.key_frame; }),
+                "video frame not delivered downstream");
         send_audio(20);
-        require(stream_registry::instance().find(name) != nullptr, "stream not registered after in-band video config");
         require(notifications != 0, "published media not reported after ready");
         media.shutdown();
         std::cout << "rtsp pull unready audio: PASS\n";
