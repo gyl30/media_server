@@ -40,10 +40,12 @@ std::uint32_t random_u32()
 
 rtsp_publish_session::rtsp_publish_session(worker_context& worker,
                                            boost::asio::ip::address bind_address,
-                                           std::function<void(std::span<const std::uint8_t>)> write)
+                                           std::function<void(std::span<const std::uint8_t>)> write,
+                                           std::function<void()> media_handler)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
       write_handler_(std::move(write)),
+      media_handler_(std::move(media_handler)),
       tcp_rtcp_timer_(worker_.io())
 {
 }
@@ -217,7 +219,7 @@ int rtsp_publish_session::on_setup(
 
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
-        auto media = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_);
+        auto media = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_, media_handler_);
         if (!media->startup(session_id_))
         {
             return -1;
@@ -227,7 +229,7 @@ int rtsp_publish_session::on_setup(
         return on_tcp_setup(server, track_index, *selected);
     }
 
-    udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_);
+    udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, media_handler_);
     udp_session_->set_shutdown_handler(
         [this]()
         {

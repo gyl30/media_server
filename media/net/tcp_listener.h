@@ -12,6 +12,15 @@
 namespace media_server
 {
 
+enum class accept_error_action
+{
+    retry_now,
+    retry_later,
+    fatal,
+};
+
+[[nodiscard]] accept_error_action classify_accept_error(const boost::system::error_code& error) noexcept;
+
 class tcp_listener final
 {
    public:

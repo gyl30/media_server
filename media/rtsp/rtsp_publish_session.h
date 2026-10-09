@@ -30,15 +30,14 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
    public:
     rtsp_publish_session(worker_context& worker,
                          boost::asio::ip::address bind_address,
-                         std::function<void(std::span<const std::uint8_t>)> write);
+                         std::function<void(std::span<const std::uint8_t>)> write,
+                         std::function<void()> media_handler);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
    public:
     void shutdown();
-    // UDP 推流的媒体不经过 RTSP 控制连接，由 UDP 会话自行检测空闲。
-    [[nodiscard]] bool receives_udp() const noexcept { return udp_session_ != nullptr; }
 
    public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
@@ -66,6 +65,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     boost::asio::ip::address bind_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
+    std::function<void()> media_handler_;
     std::unique_ptr<rtsp_publish_media> tcp_media_;
     std::vector<tcp_track_state> tcp_track_states_;
     boost::asio::steady_timer tcp_rtcp_timer_;

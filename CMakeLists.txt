@@ -363,11 +363,21 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/publish_idle_timeout.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
         set_tests_properties(publish_idle_timeout PROPERTIES TIMEOUT 60)
+        add_test(NAME input_idle
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/input_idle.py
+                $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
+        set_tests_properties(input_idle PROPERTIES TIMEOUT 90)
     endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME accept_recovery
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/accept_recovery.py $<TARGET_FILE:media_server>)
     set_tests_properties(accept_recovery PROPERTIES TIMEOUT 30)
+    add_library(accept_fault MODULE tests/accept_fault.c)
+    target_link_libraries(accept_fault PRIVATE ${CMAKE_DL_LIBS})
+    add_test(NAME accept_errors
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/accept_errors.py
+            $<TARGET_FILE:media_server> $<TARGET_FILE:accept_fault>)
+    set_tests_properties(accept_errors PROPERTIES TIMEOUT 30)
     add_test(NAME control_auth
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/control_auth.py $<TARGET_FILE:media_server>)
     set_tests_properties(control_auth PROPERTIES TIMEOUT 30)

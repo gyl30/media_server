@@ -401,7 +401,15 @@ int rtsp_pull_session::on_setup()
         return -1;
     }
 
-    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
+    auto media = std::make_unique<rtsp_pull_media>(worker_,
+                                                   stream_name_,
+                                                   [weak = weak_from_this()]()
+                                                   {
+                                                       if (const auto owner = weak.lock())
+                                                       {
+                                                           owner->idle_timer_.touch();
+                                                       }
+                                                   });
     if (!media->startup(std::move(descriptions)))
     {
         return -1;
@@ -434,10 +442,7 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         shutdown();
         return;
     }
-    if (!rtcp)
-    {
-        idle_timer_.touch();
-    }
+
 }
 
 }    // namespace media_server

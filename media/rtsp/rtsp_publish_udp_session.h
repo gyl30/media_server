@@ -15,7 +15,6 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/system/error_code.hpp>
 
-#include "media/net/idle_timer.h"
 #include "media/net/udp_transport.h"
 #include "media/rtsp/rtsp_publish_media.h"
 
@@ -34,7 +33,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_udp_session(worker_context& worker,
                              boost::asio::ip::address bind_address,
                              std::string stream_name,
-                             std::vector<rtsp_publish_track_description> descriptions);
+                             std::vector<rtsp_publish_track_description> descriptions,
+                             std::function<void()> media_handler);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
@@ -70,7 +70,6 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;
-    idle_timer idle_timer_;
 };
 
 }    // namespace media_server

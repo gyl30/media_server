@@ -24,13 +24,13 @@ namespace media_server
 rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
                                                    boost::asio::ip::address bind_address,
                                                    std::string stream_name,
-                                                   std::vector<rtsp_publish_track_description> descriptions)
+                                                   std::vector<rtsp_publish_track_description> descriptions,
+                                                   std::function<void()> media_handler)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
-      media_(worker_, std::move(stream_name), std::move(descriptions)),
+      media_(worker_, std::move(stream_name), std::move(descriptions), std::move(media_handler)),
       track_states_(media_.descriptions().size()),
-      rtcp_timer_(worker_.io()),
-      idle_timer_(worker_.io())
+      rtcp_timer_(worker_.io())
 {
 }
 
@@ -43,15 +43,6 @@ int rtsp_publish_udp_session::startup(rtsp_server_t* server,
     {
         return -1;
     }
-    idle_timer_.start(weak_from_this(), media_idle_timeout, [weak = weak_from_this()]()
-                      {
-                          const auto locked = weak.lock();
-                          if (locked && locked->shutdown_handler_)
-                          {
-                              spdlog::info("rtsp publish udp idle timeout {}", locked->media_.media_stream_name());
-                              locked->shutdown_handler_();
-                          }
-                      });
 
     return on_setup(server, track_index, transport, session_id);
 }
@@ -85,7 +76,6 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
             }
             return;
         }
-        idle_timer_.touch();
     }
 }
 
@@ -278,7 +268,6 @@ void rtsp_publish_udp_session::send_rtcp(std::size_t track_index)
 void rtsp_publish_udp_session::safe_shutdown()
 {
     rtcp_timer_.cancel();
-    idle_timer_.stop();
     media_.shutdown();
     shutdown_handler_ = {};
     for (auto& state : track_states_)

@@ -73,7 +73,7 @@ void rtmp_session::startup()
                 }
             }
         });
-    // 播放连接不计时；握手阶段和发布连接超过空闲时间没有输入即关闭。
+    // 计时从连接建立开始，只由发布的音视频消息刷新；播放连接停止计时。
     idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtmp_session>(self)]()
                       {
                           if (const auto owner = weak.lock())
@@ -125,7 +125,6 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
         {
             break;
         }
-        idle_timer_.touch();
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
             break;
@@ -171,13 +170,31 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
+    if (!self->publish_)
+    {
+        return -1;
+    }
+    const auto result = self->publish_->on_video(data, bytes, timestamp);
+    if (result == 0)
+    {
+        self->idle_timer_.touch();
+    }
+    return result;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    return self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
+    if (!self->publish_)
+    {
+        return -1;
+    }
+    const auto result = self->publish_->on_audio(data, bytes, timestamp);
+    if (result == 0)
+    {
+        self->idle_timer_.touch();
+    }
+    return result;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)

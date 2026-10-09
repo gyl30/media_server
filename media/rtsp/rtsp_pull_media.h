@@ -3,6 +3,7 @@
 
 #include <span>
 #include <memory>
+#include <functional>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -37,7 +38,8 @@ struct rtsp_pull_track_description
 class rtsp_pull_media final
 {
    public:
-    rtsp_pull_media(worker_context& worker, std::string media_stream_name);
+    // media_handler 在解复用出完整媒体帧时调用，供输入空闲计时使用。
+    rtsp_pull_media(worker_context& worker, std::string media_stream_name, std::function<void()> media_handler);
 
    public:
     [[nodiscard]] bool startup(std::vector<rtsp_pull_track_description> descriptions);
@@ -57,6 +59,7 @@ class rtsp_pull_media final
    private:
     worker_context& worker_;
     std::string media_stream_name_;
+    std::function<void()> media_handler_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};

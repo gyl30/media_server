@@ -146,7 +146,7 @@ void bind_failure()
                                 rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, nullptr), &rtsp_server_destroy);
                             require(server != nullptr, "RTSP test server creation failed");
                             auto session = std::make_shared<rtsp_publish_session>(
-                                worker, address, [](std::span<const std::uint8_t>) {});
+                                worker, address, [](std::span<const std::uint8_t>) {}, []() {});
                             constexpr std::string_view sdp =
                                 "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=port-test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                                 "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"

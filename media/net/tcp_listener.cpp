@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <utility>
 
 #include <boost/asio/error.hpp>
@@ -6,6 +7,38 @@
 
 namespace media_server
 {
+
+accept_error_action classify_accept_error(const boost::system::error_code& error) noexcept
+{
+    if (error.category() != boost::system::system_category())
+    {
+        return accept_error_action::fatal;
+    }
+    switch (error.value())
+    {
+        // 资源耗尽在其他连接释放后恢复，需要退避避免空转。
+        case EMFILE:
+        case ENFILE:
+        case ENOBUFS:
+        case ENOMEM:
+            return accept_error_action::retry_later;
+        // accept(2)：已完成握手的单个连接出错，监听 socket 本身仍然可用。
+        case ECONNABORTED:
+        case EPROTO:
+        case EPERM:
+        case EINTR:
+        case ENETDOWN:
+        case ENOPROTOOPT:
+        case EHOSTDOWN:
+        case ENONET:
+        case EHOSTUNREACH:
+        case EOPNOTSUPP:
+        case ENETUNREACH:
+            return accept_error_action::retry_now;
+        default:
+            return accept_error_action::fatal;
+    }
+}
 
 tcp_listener::tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address)
     : acceptor_(io), port_(port), bind_address_(std::move(bind_address))
