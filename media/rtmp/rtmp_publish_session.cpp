@@ -42,7 +42,11 @@ void rtmp_publish_session::shutdown()
 {
     stream_registry::instance().remove(*stream_);
     stream_->end();
-    flv_demuxer_destroy(demuxer_);
+    if (demuxer_ != nullptr)
+    {
+        flv_demuxer_destroy(demuxer_);
+        demuxer_ = nullptr;
+    }
 }
 
 int rtmp_publish_session::on_video(const void* data, std::size_t bytes, std::uint32_t timestamp)

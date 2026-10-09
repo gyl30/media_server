@@ -23,7 +23,6 @@ bool rtmp_play_session::startup()
     {
         if (!muxer_.on_track(track))
         {
-            muxer_.shutdown();
             return false;
         }
         if (track.kind == media_kind::video)

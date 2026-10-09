@@ -277,6 +277,7 @@ static int rtmp_server_onget_stream_length(void* param, int r, double transactio
 // The server responds with the onStatus command
 static int rtmp_server_onpublish(void* param, int r, double transaction, const char* stream_name, const char* stream_type)
 {
+	int e;
 	struct rtmp_server_t* ctx;
 	ctx = (struct rtmp_server_t*)param;
 
@@ -291,7 +292,10 @@ static int rtmp_server_onpublish(void* param, int r, double transaction, const c
 		if (RTMP_SERVER_ASYNC_START == r || 0 == ctx->start.play)
 			return RTMP_SERVER_ASYNC_START == r ? 0 : r;
 
+		// media_server: reply the failed status, then propagate the handler error to rtmp_server_input
+		e = r;
 		r = rtmp_server_start(ctx, r, NULL);
+		return 0 != e ? e : r;
 	}
 
 	return r;
@@ -301,6 +305,7 @@ static int rtmp_server_onpublish(void* param, int r, double transaction, const c
 // reply onStatus NetStream.Play.Start & NetStream.Play.Reset
 static int rtmp_server_onplay(void* param, int r, double transaction, const char* stream_name, double start, double duration, uint8_t reset)
 {
+	int e;
 	struct rtmp_server_t* ctx;
 	ctx = (struct rtmp_server_t*)param;
 
@@ -316,7 +321,10 @@ static int rtmp_server_onplay(void* param, int r, double transaction, const char
 		if (RTMP_SERVER_ASYNC_START == r || 0 == ctx->start.play)
 			return RTMP_SERVER_ASYNC_START == r ? 0 : r;
 
+		// media_server: reply the failed status, then propagate the handler error to rtmp_server_input
+		e = r;
 		r = rtmp_server_start(ctx, r, NULL);
+		return 0 != e ? e : r;
 	}
 
 	return r;

@@ -204,7 +204,6 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
     const auto target = parse_rtmp_target(app, stream);
     if (!target)
     {
-        shutdown();
         return -1;
     }
 
@@ -215,7 +214,8 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
     }
 
     const auto self = shared_from_this();
-    auto play = std::make_shared<rtmp_play_session>(
+    // 回调返回 -1 会结束读循环，失败时 play_ 由 safe_shutdown 清理。
+    play_ = std::make_shared<rtmp_play_session>(
         worker_,
         std::move(media),
         [self](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
@@ -232,15 +232,10 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
         },
         [self]() { self->shutdown(); });
     // The muxer emits codec config immediately; Play.Start must precede it.
-    if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
+    if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0 || !play_->startup())
     {
         return -1;
     }
-    if (!play->startup())
-    {
-        return -1;
-    }
-    play_ = std::move(play);
     idle_timer_.stop();
     spdlog::info("rtmp play {}", *target);
     return RTMP_SERVER_ASYNC_START;
@@ -256,17 +251,16 @@ int rtmp_session::on_publish(std::string_view app, std::string_view stream)
     const auto target = parse_rtmp_target(app, stream);
     if (!target)
     {
-        shutdown();
         return -1;
     }
 
-    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target);
-    if (!publish->startup())
+    // 回调返回 -1 会结束读循环，失败时 publish_ 由 safe_shutdown 清理。
+    publish_ = std::make_unique<rtmp_publish_session>(worker_, *target);
+    if (!publish_->startup())
     {
         return -1;
     }
 
-    publish_ = std::move(publish);
     spdlog::info("rtmp publish {}", *target);
     return 0;
 }
