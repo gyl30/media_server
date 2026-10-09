@@ -364,6 +364,9 @@ if(BUILD_TESTING)
     add_test(NAME accept_recovery
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/accept_recovery.py $<TARGET_FILE:media_server>)
     set_tests_properties(accept_recovery PROPERTIES TIMEOUT 30)
+    add_test(NAME control_auth
+        COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/control_auth.py $<TARGET_FILE:media_server>)
+    set_tests_properties(control_auth PROPERTIES TIMEOUT 30)
     add_test(NAME media_server_help COMMAND media_server --help)
     foreach(invalid_case IN ITEMS threads port bind_address webrtc_address)
         if(invalid_case STREQUAL "threads")

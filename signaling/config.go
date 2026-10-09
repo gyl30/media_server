@@ -42,6 +42,7 @@ func parseConfig(args []string) (config, error) {
 	flags.DurationVar(&cfg.registerExpires, "register-expires", time.Hour, "default registration lifetime")
 	flags.DurationVar(&cfg.heartbeatTimeout, "heartbeat-timeout", 90*time.Second, "device heartbeat timeout")
 	flags.StringVar(&cfg.mediaServer.controlURL, "media-control-url", "http://127.0.0.1:8080", "media server control HTTP base URL")
+	flags.StringVar(&cfg.mediaServer.controlToken, "media-control-token", "", "bearer token for the media server control API")
 	flags.StringVar(&cfg.mediaServer.mediaIP, "media-ip", "127.0.0.1", "media server address advertised to clients and devices")
 	flags.UintVar(&mediaHTTPPort, "media-http-port", 8080, "media server HTTP port")
 	flags.DurationVar(&cfg.mediaRequestTimeout, "media-request-timeout", 3*time.Second, "media server HTTP request timeout")

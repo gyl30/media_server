@@ -1,6 +1,8 @@
 #include <chrono>
 #include <utility>
 
+#include <openssl/crypto.h>
+
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
@@ -38,7 +40,27 @@ boost::beast::http::response<boost::beast::http::string_body> make_receiver_list
     return response;
 }
 
+bool is_control_path(std::string_view path)
+{
+    return path == "/receivers" || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") || path == "/gb28181/sender" ||
+           path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
+}
+
 }    // namespace
+
+bool http_session::control_authorized(const boost::beast::http::request<boost::beast::http::string_body>& request)
+{
+    // 播放端口需要对浏览器开放，控制接口必须单独鉴权。
+    if (config_.control_token.empty())
+    {
+        boost::system::error_code error;
+        const auto peer = stream_.socket().remote_endpoint(error);
+        return !error && peer.address().is_loopback();
+    }
+    const auto authorization = request[boost::beast::http::field::authorization];
+    const std::string expected = "Bearer " + config_.control_token;
+    return authorization.size() == expected.size() && CRYPTO_memcmp(authorization.data(), expected.data(), expected.size()) == 0;
+}
 
 http_session::http_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& config)
     : worker_(worker), stream_(std::move(socket)), config_(config)
@@ -83,6 +105,18 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     if (path == "/")
     {
         send_text_response(request, boost::beast::http::status::not_found, "not found\n", yield);
+        return;
+    }
+    if (is_control_path(path) && !control_authorized(request))
+    {
+        // 与控制接口其他错误一致返回 JSON，信令据此识别为明确拒绝。
+        boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::forbidden, request.version());
+        response.set(boost::beast::http::field::server, "media_server");
+        response.set(boost::beast::http::field::content_type, "application/json");
+        response.keep_alive(false);
+        response.body() = R"({"error":"forbidden"})";
+        response.prepare_payload();
+        write_string_response(request, std::move(response), yield);
         return;
     }
     if (path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/"))

@@ -37,6 +37,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
 
    private:
     void shutdown();
+    [[nodiscard]] bool control_authorized(const boost::beast::http::request<boost::beast::http::string_body>& request);
 
    private:
     worker_context& worker_;

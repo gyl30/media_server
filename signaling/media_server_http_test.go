@@ -39,3 +39,27 @@ func TestRTSPPullCreateMatchesMediaContract(t *testing.T) {
 		t.Fatalf("media rejected signaling RTSP request: %v", err)
 	}
 }
+
+func TestMediaControlRequestsCarryToken(t *testing.T) {
+	var authorizations []string
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		authorizations = append(authorizations, request.Header.Get("Authorization"))
+		if request.URL.Path == "/receivers" {
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`{"receivers":[]}`))
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(media.Close)
+	client := newMediaServerHTTPClient(mediaServer{controlURL: media.URL, controlToken: "secret"}, time.Second)
+	if err := client.deleteReceiver(t.Context(), "id", "gb/a/b"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.listReceivers(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(authorizations) != 2 || authorizations[0] != "Bearer secret" || authorizations[1] != "Bearer secret" {
+		t.Fatalf("control requests missing token: %v", authorizations)
+	}
+}

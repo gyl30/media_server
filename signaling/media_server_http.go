@@ -14,9 +14,10 @@ import (
 )
 
 type mediaServer struct {
-	controlURL string
-	mediaIP    string
-	httpPort   uint16
+	controlURL   string
+	controlToken string
+	mediaIP      string
+	httpPort     uint16
 }
 
 type gb28181ReceiverRequest struct {
@@ -55,6 +56,12 @@ type mediaServerHTTPClient struct {
 
 func newMediaServerHTTPClient(server mediaServer, timeout time.Duration) *mediaServerHTTPClient {
 	return &mediaServerHTTPClient{server: server, client: &http.Client{Timeout: timeout}}
+}
+
+func (c *mediaServerHTTPClient) authorize(request *http.Request) {
+	if c.server.controlToken != "" {
+		request.Header.Set("Authorization", "Bearer "+c.server.controlToken)
+	}
 }
 
 func (c *mediaServerHTTPClient) timeoutContext() (context.Context, context.CancelFunc) {
@@ -101,6 +108,7 @@ func (c *mediaServerHTTPClient) listReceivers(ctx context.Context) ([]mediaRecei
 	if err != nil {
 		return nil, err
 	}
+	c.authorize(request)
 	response, err := c.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("media server request failed: %w", err)
@@ -141,6 +149,7 @@ func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBod
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
+	c.authorize(request)
 	response, err := c.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("media server request failed: %w", err)

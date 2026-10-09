@@ -45,7 +45,8 @@ int parse_config(int argc, char** argv, config* cfg)
         "http-port", boost::program_options::value<std::string>(&http_port), "http listen port")(
         "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
         "webrtc-address", boost::program_options::value<std::string>(&result.webrtc_address), "webrtc address")(
-        "threads", boost::program_options::value<std::string>(&threads), "worker thread count");
+        "threads", boost::program_options::value<std::string>(&threads), "worker thread count")(
+        "control-token", boost::program_options::value<std::string>(&result.control_token), "bearer token required by control API; empty allows loopback only");
 
     boost::program_options::variables_map values;
     try
