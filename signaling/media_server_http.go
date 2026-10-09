@@ -91,6 +91,34 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, streamID, st
 	return c.post(ctx, c.server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusNoContent, nil)
 }
 
+type mediaReceiver struct {
+	StreamName string `json:"stream_name"`
+	StreamID   string `json:"stream_id"`
+}
+
+func (c *mediaServerHTTPClient) listReceivers(ctx context.Context) ([]mediaReceiver, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.server.controlURL+"/receivers", nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("media server request failed: %w", err)
+	}
+	defer response.Body.Close()
+	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if response.StatusCode != http.StatusOK || err != nil || !strings.EqualFold(mediaType, "application/json") {
+		return nil, fmt.Errorf("invalid media server receiver list response: status=%d", response.StatusCode)
+	}
+	var body struct {
+		Receivers []mediaReceiver `json:"receivers"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 16*1024*1024)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("invalid media server receiver list: %w", err)
+	}
+	return body.Receivers, nil
+}
+
 func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, command rtspPullCreateRequest) error {
 	return c.post(ctx, c.server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
 }

@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace media_server
 {
@@ -19,6 +20,12 @@ class session
     virtual void shutdown() = 0;
 };
 
+struct receiver_identity
+{
+    std::string stream_name;
+    std::string stream_id;
+};
+
 class session_registry final
 {
    public:
@@ -27,6 +34,7 @@ class session_registry final
     bool add_receiver_session(std::string stream_name, std::string stream_id, std::shared_ptr<session> session);
     [[nodiscard]] std::shared_ptr<session> take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id);
     void remove_receiver_session(std::string_view stream_name, const session& expected);
+    [[nodiscard]] std::vector<receiver_identity> receivers() const;
 
     bool add_sender_session(std::string stream_name, std::string sender_id, std::string stream_id, std::shared_ptr<session> session);
     [[nodiscard]] std::shared_ptr<session> take_sender_session(std::string_view stream_name,

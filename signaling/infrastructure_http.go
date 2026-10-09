@@ -96,9 +96,15 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 		}
 		shutdownCancel()
 	}()
+	reconcileDone := make(chan struct{})
+	go func() {
+		defer close(reconcileDone)
+		s.runMediaReconcile(serveContext)
+	}()
 	err = server.Serve(listener)
 	cancel()
 	<-done
+	<-reconcileDone
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
 	}

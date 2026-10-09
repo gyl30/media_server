@@ -30,6 +30,8 @@ type liveState string
 
 const livePayloadType uint8 = 96
 
+const liveStreamPrefix = "gb/"
+
 const (
 	livePreparing      liveState = "preparing"
 	liveInviting       liveState = "inviting"
@@ -155,7 +157,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	operationContext, cancel := context.WithCancel(ctx)
 	session := &liveSession{
-		key: key, streamID: uuid.NewString(), streamName: "gb/" + deviceID + "/" + channelID, ssrc: ssrc,
+		key: key, streamID: uuid.NewString(), streamName: liveStreamPrefix + deviceID + "/" + channelID, ssrc: ssrc,
 		state: livePreparing, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
 	}
 	s.sessions[key] = session
