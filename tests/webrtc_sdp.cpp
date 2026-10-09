@@ -86,6 +86,53 @@ void check(const negotiation_case& item)
     }
     std::cout << item.name << ": PASS\n";
 }
+
+struct opus_case
+{
+    const char* name;
+    std::uint16_t source_channels;
+    const char* format_parameters;
+    bool accepted;
+};
+
+void check_opus(const opus_case& item)
+{
+    webrtc_media_offer media;
+    media.type = "audio";
+    media.port = 9;
+    media.protocol = "UDP/TLS/RTP/SAVPF";
+    media.mid = "0";
+    media.direction = "recvonly";
+    media.setup = "actpass";
+    media.rtcp_mux = true;
+    media.mid_extension_id = 4;
+    media.formats = {"111"};
+    media.payload_types = {111};
+    media.codecs = {webrtc_codec_offer{.payload_type = 111, .encoding_name = "opus", .clock_rate = 48'000, .channel_count = 2,
+                                       .format_parameters = item.format_parameters}};
+
+    webrtc_offer offer;
+    offer.bundle_mids = {"0"};
+    offer.media = {media};
+
+    const media_track track{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000,
+                            .channel_count = item.source_channels, .codec_config = {}};
+    webrtc_answer_config config;
+    config.address = boost::asio::ip::make_address("127.0.0.1");
+    config.port = 49000;
+    config.stream_id = "sdp-test";
+    config.ice_ufrag = "test-ufrag";
+    config.ice_pwd = "test-password-not-a-real-credential";
+    config.fingerprint = "test-fingerprint-not-used-for-transport";
+
+    const auto answer = make_webrtc_answer(offer, {track}, config);
+    const bool accepted = answer && answer->audio_codec == codec_id::opus && answer->audio_payload_type == 111;
+    if (accepted != item.accepted)
+    {
+        throw std::runtime_error(std::string(item.name) + ": unexpected opus passthrough negotiation");
+    }
+    std::cout << item.name << ": PASS\n";
+}
 }
 
 int main()
@@ -127,6 +174,19 @@ int main()
             check(item);
         }
         std::cout << "H264 SDP selection: " << cases.size() << " cases PASS\n";
+
+        // Chrome 默认 Opus fmtp 不带 maxaveragebitrate。
+        const std::vector<opus_case> opus_cases{
+            {"opus_mono_browser_default", 1, "minptime=10;useinbandfec=1", true},
+            {"opus_stereo_browser_stereo", 2, "minptime=10;useinbandfec=1;stereo=1", true},
+            {"opus_explicit_max_bitrate", 1, "minptime=10;useinbandfec=1;maxaveragebitrate=510000", true},
+            {"opus_limited_bitrate", 1, "minptime=10;useinbandfec=1;maxaveragebitrate=64000", false},
+            {"opus_stereo_without_stereo", 2, "minptime=10;useinbandfec=1", false},
+        };
+        for (const auto& item : opus_cases)
+        {
+            check_opus(item);
+        }
         return 0;
     }
     catch (const std::exception& error)

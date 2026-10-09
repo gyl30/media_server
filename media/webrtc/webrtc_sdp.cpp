@@ -436,7 +436,8 @@ bool opus_passthrough_compatible(const webrtc_codec_offer& codec, const media_tr
         }
     }
 
-    const auto bitrate = decimal_parameter(codec.format_parameters, "maxaveragebitrate", 0, 510'000);
+    // RFC 7587：省略 maxaveragebitrate 表示接收端支持最大值 510000。
+    const auto bitrate = decimal_parameter(codec.format_parameters, "maxaveragebitrate", 510'000, 510'000);
     if (!bitrate || *bitrate != 510'000)
     {
         return false;
