@@ -62,22 +62,21 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
     const auto source_tracks = stream_->tracks();
+    // 失败直接返回，由创建方调用 shutdown 统一清理已取得的端口和 socket。
     const auto reserved = media_port_pool::instance().acquire();
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed: no available media port");
         return std::unexpected(whep_session_startup_error::internal_error);
     }
+    local_port_ = *reserved;
     boost::system::error_code udp_error;
-    udp_transport_->startup(advertised_address, *reserved, udp_error);
+    udp_transport_->startup(advertised_address, local_port_, udp_error);
     if (udp_error)
     {
-        udp_transport_->shutdown();
-        media_port_pool::instance().release(*reserved);
         spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
         return std::unexpected(whep_session_startup_error::internal_error);
     }
-    local_port_ = *reserved;
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -103,7 +102,6 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
     {
         spdlog::error("webrtc session identifiers create failed");
-        shutdown();
         return std::unexpected(whep_session_startup_error::internal_error);
     }
 
@@ -120,7 +118,6 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     if (!answer)
     {
         spdlog::debug("webrtc answer create failed session {}", id_);
-        shutdown();
         return std::unexpected(whep_session_startup_error::invalid_offer);
     }
     const auto media = std::find_if(
@@ -129,7 +126,6 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
         !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
         spdlog::debug("webrtc whep startup rejected invalid transport attributes");
-        shutdown();
         return std::unexpected(whep_session_startup_error::invalid_offer);
     }
 
@@ -140,7 +136,6 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     if (!dtls_->startup(*certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
-        shutdown();
         return std::unexpected(whep_session_startup_error::internal_error);
     }
 
@@ -157,7 +152,6 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
                                                   });
         if (!audio_egress_)
         {
-            shutdown();
             return std::unexpected(whep_session_startup_error::internal_error);
         }
         stream_ = audio_egress_->output_stream();

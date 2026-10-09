@@ -121,11 +121,13 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
     if (session_id_collision)
     {
         spdlog::error("whep session id collision {}", session_id);
+        session->shutdown();
         return failed(create_error::internal_error);
     }
     auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
     if (!answer_sdp)
     {
+        session->shutdown();
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         release_session(current, *session);

@@ -60,22 +60,21 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
                                                  boost::asio::ip::address advertised_address,
                                                  std::shared_ptr<dtls_certificate> certificate)
 {
+    // 失败直接返回，由创建方调用 shutdown 统一清理已取得的端口和 socket。
     const auto reserved = media_port_pool::instance().acquire();
     if (!reserved)
     {
         spdlog::error("webrtc udp socket startup failed: no available media port");
         return std::unexpected(whip_session_startup_error::internal_error);
     }
+    local_port_ = *reserved;
     boost::system::error_code udp_error;
-    udp_transport_->startup(advertised_address, *reserved, udp_error);
+    udp_transport_->startup(advertised_address, local_port_, udp_error);
     if (udp_error)
     {
-        udp_transport_->shutdown();
-        media_port_pool::instance().release(*reserved);
         spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
         return std::unexpected(whip_session_startup_error::internal_error);
     }
-    local_port_ = *reserved;
 
     id_ = random_hex(16);
     ice_ufrag_ = random_hex(8);
@@ -83,7 +82,6 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
     {
         spdlog::error("webrtc session identifiers create failed");
-        shutdown();
         return std::unexpected(whip_session_startup_error::internal_error);
     }
 
@@ -99,7 +97,6 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     if (!answer)
     {
         spdlog::debug("webrtc whip answer create failed session {}", id_);
-        shutdown();
         return std::unexpected(whip_session_startup_error::invalid_offer);
     }
 
@@ -109,7 +106,6 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
         !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
     {
         spdlog::debug("webrtc whip startup rejected invalid transport attributes");
-        shutdown();
         return std::unexpected(whip_session_startup_error::invalid_offer);
     }
 
@@ -139,7 +135,6 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     if (!dtls_->startup(*certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
-        shutdown();
         return std::unexpected(whip_session_startup_error::internal_error);
     }
 
@@ -161,10 +156,6 @@ void whip_session::shutdown()
 
 void whip_session::safe_shutdown()
 {
-    if (local_port_ == 0)
-    {
-        return;
-    }
     dtls_.reset();
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();

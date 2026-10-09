@@ -192,10 +192,12 @@ void bind_failure()
                     const auto whep_result = whep->startup({}, address, certificate);
                     require(!whep_result && whep_result.error() == whep_session_startup_error::internal_error,
                             "WHEP continued to negotiation after bind failure");
+                    whep->shutdown();
                     auto whip = std::make_shared<whip_session>(worker, "verify/webrtc-port-conflict");
                     const auto whip_result = whip->startup({}, address, certificate);
                     require(!whip_result && whip_result.error() == whip_session_startup_error::internal_error,
                             "WHIP continued to negotiation after bind failure");
+                    whip->shutdown();
                     const auto first = pool.acquire();
                     const auto second = pool.acquire();
                     require(first == 50'000 && second == 50'002 && !pool.acquire(), "WebRTC bind failure leaked allocation");

@@ -95,7 +95,6 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::internal_error);
     }
 
-    auto session = std::make_shared<whip_session>(worker, std::string(stream_name));
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
@@ -114,9 +113,11 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::stream_conflict);
     }
 
+    auto session = std::make_shared<whip_session>(worker, std::string(stream_name));
     auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
     if (!answer_sdp)
     {
+        session->shutdown();
         release_stream(stream_name);
         return failed(answer_sdp.error() == whip_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
     }
