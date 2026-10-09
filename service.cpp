@@ -1,7 +1,6 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
-#include <functional>
 #include <csignal>
 #include <utility>
 
@@ -27,12 +26,13 @@ namespace media_server
 namespace
 {
 
+constexpr std::chrono::seconds accept_retry_interval{3};
+
 template <typename StartSession>
 bool start_tcp_listener(worker_pool& workers,
                         boost::asio::ip::address bind_address,
                         std::uint16_t port,
                         StartSession start_session,
-                        std::function<void()> fail,
                         boost::system::error_code& error)
 {
     auto& listener_worker = workers.next();
@@ -44,7 +44,7 @@ bool start_tcp_listener(worker_pool& workers,
     }
 
     listener_worker.spawn(
-        [&workers, listener, port, start_session = std::move(start_session), fail = std::move(fail)](boost::asio::yield_context yield) mutable
+        [&workers, listener, port, start_session = std::move(start_session)](boost::asio::yield_context yield) mutable
         {
             boost::system::error_code accept_error;
             for (;;)
@@ -58,22 +58,11 @@ bool start_tcp_listener(worker_pool& workers,
                 }
                 if (accept_error)
                 {
-                    const auto action = classify_accept_error(accept_error);
-                    if (action == accept_error_action::fatal)
-                    {
-                        // 监听 socket 已不可用，继续重试只会空转并让端口静默失效。
-                        spdlog::error("accept failed permanently port {} error {}", port, accept_error.message());
-                        fail();
-                        return;
-                    }
-                    spdlog::warn("accept failed port {} error {}", port, accept_error.message());
-                    if (action == accept_error_action::retry_now)
-                    {
-                        continue;
-                    }
-                    boost::asio::steady_timer backoff(yield.get_executor(), std::chrono::milliseconds(100));
+                    // 不区分错误原因：固定间隔重试，监听恢复后继续服务，日志也不会刷屏。
+                    spdlog::error("accept failed port {} error {}", port, accept_error.message());
+                    boost::asio::steady_timer retry(yield.get_executor(), accept_retry_interval);
                     boost::system::error_code wait_error;
-                    backoff.async_wait(yield[wait_error]);
+                    retry.async_wait(yield[wait_error]);
                     if (yield.cancelled() != boost::asio::cancellation_type::none)
                     {
                         return;
@@ -91,12 +80,6 @@ bool start_tcp_listener(worker_pool& workers,
 service::service(config cfg) : config_(std::move(cfg)) {}
 
 service::~service() = default;
-
-void service::fail()
-{
-    result_ = 1;
-    stop();
-}
 
 void service::stop()
 {
@@ -121,7 +104,6 @@ bool service::run_server()
                 auto session = std::make_shared<rtmp_session>(worker, std::move(socket));
                 session->startup();
             },
-            [this]() { fail(); },
             network_error))
     {
         spdlog::error("rtmp listen failed port {} error {}", config_.rtmp_port, network_error.message());
@@ -136,7 +118,6 @@ bool service::run_server()
                 auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket));
                 connection->startup();
             },
-            [this]() { fail(); },
             network_error))
     {
         spdlog::error("rtsp listen failed port {} error {}", config_.rtsp_port, network_error.message());
@@ -151,7 +132,6 @@ bool service::run_server()
                 auto session = std::make_shared<http_session>(worker, std::move(socket), config_);
                 session->startup();
             },
-            [this]() { fail(); },
             network_error))
     {
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
@@ -188,18 +168,12 @@ int service::run()
             }
         });
 
-    control_worker.spawn(
-        [this](boost::asio::yield_context)
-        {
-            if (!run_server())
-            {
-                result_ = 1;
-            }
-        });
+    int result = 0;
+    control_worker.spawn([this, &result](boost::asio::yield_context) { result = run_server() ? 0 : 1; });
     spdlog::info("worker threads {}", workers_->size());
     workers_->run();
     hls::shutdown();
-    return result_.load();
+    return result;
 }
 
 }    // namespace media_server

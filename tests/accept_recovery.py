@@ -47,7 +47,8 @@ def main():
         for connection in connections:
             connection.close()
         time.sleep(1)
-        for _ in range(20):
+        # accept 失败后固定 3 秒重试。
+        for _ in range(40):
             try:
                 if rtsp_options(ports[1]):
                     print(f"accept recovered after {len(connections)} connections exhausted={exhausted}")

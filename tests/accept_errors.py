@@ -33,16 +33,16 @@ def start(server_bin, fault_library, fault_errno, skip, count):
     return server, ports[1]
 
 
-def rtsp_options(connection):
+def rtsp_options(connection, timeout=2):
     connection.sendall(b"OPTIONS rtsp://127.0.0.1/check RTSP/1.0\r\nCSeq: 1\r\n\r\n")
-    connection.settimeout(2)
-    return connection.recv(64).startswith(b"RTSP/1.0 200")
+    connection.settimeout(timeout)
+    return connection.recv(4096).startswith(b"RTSP/1.0 200")
 
 
-def answered(port):
+def answered(port, timeout=2):
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
-            return rtsp_options(connection)
+            return rtsp_options(connection, timeout)
     except OSError:
         return False
 
@@ -50,41 +50,29 @@ def answered(port):
 def main():
     server_bin, fault_library = sys.argv[1:3]
 
-    # 单连接错误：被注入的 3 个连接失败，监听继续接受后续连接。
-    # Asio 内部会吸收 ECONNABORTED/EPROTO，用 EPERM 才能经过应用层的立即继续分支。
-    server, port = start(server_bin, fault_library, errno.EPERM, 0, 3)
-    try:
-        results = [answered(port) for _ in range(5)]
-    finally:
-        stop_process(server)
-    if results != [False, False, False, True, True]:
-        print(f"listener stopped after per-connection accept error: {results}")
-        return 1
-
-    # 监听 socket 不可用：在多 worker 且已有活跃会话时，服务以 1 退出而不是空转重试。
+    # accept 失败（含监听 socket 不可用类错误）不退出也不空转：已有会话继续服务，3 秒后重试接受新连接。
     server, port = start(server_bin, fault_library, errno.EINVAL, 1, 1)
     active = None
     try:
         active = socket.create_connection(("127.0.0.1", port), timeout=2)
         if not rtsp_options(active):
-            print("active session was not served before the fatal error")
+            print("active session was not served before the accept error")
             return 1
-        try:
-            socket.create_connection(("127.0.0.1", port), timeout=1).close()
-        except OSError:
-            pass
-        try:
-            code = server.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            code = None
+        failed = answered(port)
+        began = time.monotonic()
+        # 下一次 accept 在重试间隔之后才发生，连接期间停留在 backlog 中。
+        recovered = answered(port, timeout=6)
+        waited = time.monotonic() - began
+        still_active = rtsp_options(active)
+        alive = server.poll() is None
     finally:
         if active is not None:
             active.close()
         stop_process(server)
-    if code != 1:
-        print(f"fatal accept error did not fail the service with exit 1: exit={code}")
+    if failed or not recovered or waited < 2.5 or not still_active or not alive:
+        print(f"accept retry failed: failed={failed} recovered={recovered} waited={waited:.1f} active={still_active} alive={alive}")
         return 1
-    print(f"per-connection errors recovered {results}; fatal error with active session exit={code}")
+    print(f"accept error retried after {waited:.1f}s; active session kept")
     return 0
 
 

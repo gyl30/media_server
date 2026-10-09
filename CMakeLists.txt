@@ -385,7 +385,7 @@ if(BUILD_TESTING)
     add_test(NAME accept_errors
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/accept_errors.py
             $<TARGET_FILE:media_server> $<TARGET_FILE:accept_fault>)
-    set_tests_properties(accept_errors PROPERTIES TIMEOUT 30)
+    set_tests_properties(accept_errors PROPERTIES TIMEOUT 40)
     add_test(NAME control_auth
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/control_auth.py $<TARGET_FILE:media_server>)
     set_tests_properties(control_auth PROPERTIES TIMEOUT 30)
