@@ -6,6 +6,7 @@
 #include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/http/whep_http.h"
 #include "media/http/whip_http.h"
@@ -222,6 +223,12 @@ void http_session::send_text_response(boost::beast::http::request<boost::beast::
 }
 
 void http_session::shutdown()
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+}
+
+void http_session::safe_shutdown()
 {
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);

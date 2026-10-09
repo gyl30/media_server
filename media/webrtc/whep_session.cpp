@@ -6,7 +6,7 @@
 
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
-#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -196,7 +196,7 @@ void whep_session::shutdown()
     }
     stream_->remove_sink(this);
     const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()

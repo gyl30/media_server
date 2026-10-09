@@ -6,6 +6,7 @@
 
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/uuid/random_generator.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/hls/hls_play_session.h"
@@ -46,10 +47,10 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
                 continue;
             }
         }
-        session->shutdown_subscription_ = worker.subscribe_shutdown([session]() { session->safe_shutdown(); });
+        session->shutdown_subscription_ = worker.subscribe_shutdown([session]() { session->shutdown(); });
         if (!session->shutdown_subscription_)
         {
-            session->safe_shutdown();
+            session->shutdown();
         }
         else
         {
@@ -121,6 +122,12 @@ void hls_play_session::handle_inactivity(const boost::system::error_code& error)
     shutdown_subscription_.reset();
 }
 
+void hls_play_session::shutdown()
+{
+    const auto self = shared_from_this();
+    boost::asio::post(timer_.get_executor(), [self]() { self->safe_shutdown(); });
+}
+
 void hls_play_session::safe_shutdown()
 {
     {
@@ -129,6 +136,7 @@ void hls_play_session::safe_shutdown()
         current.by_secret.erase(secret_);
     }
     timer_.cancel();
+    shutdown_subscription_.reset();
 }
 
 }    // namespace media_server

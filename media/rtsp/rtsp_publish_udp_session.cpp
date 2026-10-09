@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/error.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
@@ -247,6 +248,12 @@ void rtsp_publish_udp_session::send_rtcp(std::size_t track_index)
     }
 
     schedule_rtcp();
+}
+
+void rtsp_publish_udp_session::shutdown()
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_publish_udp_session::safe_shutdown()

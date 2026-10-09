@@ -31,6 +31,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
 
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);
+    void shutdown();
     void safe_shutdown();
 
    private:

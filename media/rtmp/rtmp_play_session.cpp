@@ -1,5 +1,7 @@
 #include <utility>
 
+#include <boost/asio/post.hpp>
+
 #include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_play_session.h"
 
@@ -35,6 +37,12 @@ bool rtmp_play_session::startup()
 }
 
 void rtmp_play_session::shutdown()
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+}
+
+void rtmp_play_session::safe_shutdown()
 {
     if (!stream_)
     {

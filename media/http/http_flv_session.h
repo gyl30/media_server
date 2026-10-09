@@ -49,6 +49,7 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
 
    private:
     void shutdown();
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

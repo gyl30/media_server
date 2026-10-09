@@ -7,6 +7,7 @@
 #include <boost/asio/write.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -272,6 +273,12 @@ int http_flv_session::writer_callback(void* param, const flv_vec_t* vectors, int
 }
 
 void http_flv_session::shutdown()
+{
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+}
+
+void http_flv_session::safe_shutdown()
 {
     if (source_)
     {

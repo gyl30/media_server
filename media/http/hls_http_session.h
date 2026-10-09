@@ -47,6 +47,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
    private:
     void shutdown();
+    void safe_shutdown();
 
    private:
     worker_context& worker_;

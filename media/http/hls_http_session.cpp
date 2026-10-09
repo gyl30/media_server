@@ -4,6 +4,7 @@
 #include <optional>
 
 #include <boost/url/parse.hpp>
+#include <boost/asio/post.hpp>
 
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
@@ -286,10 +287,12 @@ void hls_http_session::read_request()
 
 void hls_http_session::shutdown()
 {
-    if (!stream_.socket().is_open())
-    {
-        return;
-    }
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+}
+
+void hls_http_session::safe_shutdown()
+{
     shutdown_subscription_.reset();
     boost::system::error_code error;
     wait_timer_.cancel();

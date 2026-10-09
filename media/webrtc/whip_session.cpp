@@ -6,7 +6,7 @@
 
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
-#include <boost/asio/dispatch.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -151,7 +151,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
 void whip_session::shutdown()
 {
     const auto self = shared_from_this();
-    boost::asio::dispatch(worker_.io(), [self]() { self->safe_shutdown(); });
+    boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whip_session::safe_shutdown()

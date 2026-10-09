@@ -377,7 +377,9 @@ void rtsp_publish_session::safe_shutdown()
     tcp_track_states_.clear();
     if (udp_session_)
     {
-        udp_session_->safe_shutdown();
+        // 子会话的回调捕获本对象裸指针，投递关闭前先解除，避免本对象释放后仍被回调。
+        udp_session_->set_shutdown_handler({});
+        udp_session_->shutdown();
         udp_session_.reset();
     }
     descriptions_.clear();

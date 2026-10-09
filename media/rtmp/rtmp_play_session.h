@@ -32,6 +32,9 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
     void on_end() override;
 
    private:
+    void safe_shutdown();
+
+   private:
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
     flv_muxer muxer_;

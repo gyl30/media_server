@@ -37,6 +37,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
                              std::function<void()> input_handler);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
+    void shutdown();
 
    private:
     friend class rtsp_publish_session;
