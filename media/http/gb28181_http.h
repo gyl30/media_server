@@ -1,7 +1,6 @@
 #ifndef MEDIA_HTTP_GB28181_HTTP_H
 #define MEDIA_HTTP_GB28181_HTTP_H
 
-#include <boost/asio/spawn.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/url/url_view.hpp>
 #include <boost/asio/ip/address.hpp>
@@ -16,8 +15,7 @@ using gb28181_http_response = boost::beast::http::response<boost::beast::http::s
 [[nodiscard]] gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
                                                                     worker_context& worker,
                                                                     const boost::urls::url_view& target,
-                                                                    boost::asio::ip::address bind_address,
-                                                                    boost::asio::yield_context yield);
+                                                                    boost::asio::ip::address bind_address);
 [[nodiscard]] gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& request,
                                                                   worker_context& worker,
                                                                   const boost::urls::url_view& target,

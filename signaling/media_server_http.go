@@ -95,7 +95,7 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, streamID, st
 		StreamID   string `json:"stream_id"`
 		StreamName string `json:"stream_name"`
 	}{StreamID: streamID, StreamName: streamName}
-	return c.post(ctx, c.server.controlURL+"/receivers/delete", requestBody, http.StatusNoContent, nil)
+	return c.post(ctx, c.server.controlURL+"/gb28181/receiver/delete", requestBody, http.StatusNoContent, nil)
 }
 
 type mediaReceiver struct {
@@ -138,6 +138,14 @@ func (c *mediaServerHTTPClient) updateReceiverSSRC(ctx context.Context, streamID
 
 func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, command rtspPullCreateRequest) error {
 	return c.post(ctx, c.server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
+}
+
+func (c *mediaServerHTTPClient) deleteRTSPPull(ctx context.Context, streamID, streamName string) error {
+	requestBody := struct {
+		StreamID   string `json:"stream_id"`
+		StreamName string `json:"stream_name"`
+	}{StreamID: streamID, StreamName: streamName}
+	return c.post(ctx, c.server.controlURL+"/rtsp/pull/delete", requestBody, http.StatusNoContent, nil)
 }
 
 func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBody any, successStatus int, responseBody any) error {

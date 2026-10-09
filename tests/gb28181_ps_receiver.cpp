@@ -1,7 +1,4 @@
 #include <array>
-#include <chrono>
-#include <future>
-#include <thread>
 #include <functional>
 #include <optional>
 #include <cstdint>
@@ -12,12 +9,7 @@
 #include <vector>
 
 #include "media/codec/codec_utils.h"
-#include "media/core/session_registry.h"
 #include "media/core/stream_registry.h"
-#include "media/gb28181/gb28181_udp_receiver_session.h"
-#include "media/http/http_async.h"
-#include "media/http/receiver_http.h"
-#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
@@ -531,94 +523,6 @@ void psm_history_capacity()
     require(!extensions, "psm with repeated extension stream ids rejected; topology change missed");
     std::cout << "psm_history_capacity: PASS\n";
 }
-// 关闭接口返回时，流必须已移除、RTP/RTCP 端口已可重新绑定；关闭前后的 SSRC 更新结果反映接收器实际状态。
-void close_waits_for_cleanup()
-{
-    media_port_pool::init(media_server::default_media_port_start, media_server::default_media_port_end);
-    worker_context receiver_worker;
-    worker_context control_worker;
-    const std::string stream_name = "gb/test/close";
-    const auto session = std::make_shared<gb28181_udp_receiver_session>(receiver_worker, stream_name, payload_type, ssrc);
-    require(session_registry::instance().add_receiver_session(stream_name, "id-1", session), "close: add receiver failed");
-    const auto port = session->startup(boost::asio::ip::make_address("127.0.0.1"));
-    require(port.has_value(), "close: receiver startup failed");
-
-    std::thread receiver_thread([&receiver_worker]() { receiver_worker.run(); });
-    std::thread control_thread([&control_worker]() { control_worker.run(); });
-
-    boost::asio::io_context sender_io;
-    boost::asio::ip::udp::socket sender(sender_io, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), 0));
-    const boost::asio::ip::udp::endpoint target(boost::asio::ip::make_address("127.0.0.1"), *port);
-    for (const auto& packet : make_rtp(PSI_STREAM_AUDIO_G711A, 320))
-    {
-        sender.send_to(boost::asio::buffer(packet), target);
-    }
-    for (int attempt = 0; attempt < 200 && !stream_registry::instance().find(stream_name); ++attempt)
-    {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    require(stream_registry::instance().find(stream_name) != nullptr, "close: stream not registered");
-
-    std::promise<std::string> result;
-    control_worker.spawn(
-        [&](boost::asio::yield_context yield)
-        {
-            std::string failure;
-            const auto update = [&session, &yield]()
-            {
-                return await_result([&session](auto done)
-                                    { session->update_ssrc(ssrc + 1U, [done](bool updated) { done(updated ? async_result::completed : async_result::not_found); }); },
-                                    yield) == async_result::completed;
-            };
-            if (!update())
-            {
-                failure = "update rejected while receiver running";
-            }
-            else if (close_receiver(stream_name, "id-other", yield) != async_result::not_found)
-            {
-                failure = "stale identity closed receiver";
-            }
-            else if (close_receiver(stream_name, "id-1", yield) != async_result::completed)
-            {
-                failure = "close not completed";
-            }
-            else if (stream_registry::instance().find(stream_name) != nullptr)
-            {
-                failure = "stream still registered after close completed";
-            }
-            else
-            {
-                boost::system::error_code error;
-                boost::asio::ip::udp::socket rtp(sender_io);
-                boost::asio::ip::udp::socket rtcp(sender_io);
-                rtp.open(boost::asio::ip::udp::v4(), error);
-                rtp.bind({boost::asio::ip::make_address("127.0.0.1"), *port}, error);
-                boost::system::error_code rtcp_error;
-                rtcp.open(boost::asio::ip::udp::v4(), rtcp_error);
-                rtcp.bind({boost::asio::ip::make_address("127.0.0.1"), static_cast<std::uint16_t>(*port + 1U)}, rtcp_error);
-                if (error || rtcp_error)
-                {
-                    failure = "ports still bound after close completed";
-                }
-                else if (update())
-                {
-                    failure = "update accepted after close";
-                }
-                else if (close_receiver(stream_name, "id-1", yield) != async_result::not_found)
-                {
-                    failure = "closed receiver closed again";
-                }
-            }
-            result.set_value(failure);
-        });
-    const auto failure = result.get_future().get();
-    receiver_worker.request_stop();
-    control_worker.request_stop();
-    receiver_thread.join();
-    control_thread.join();
-    require(failure.empty(), "close: " + failure);
-    std::cout << "close_waits_for_cleanup: PASS\n";
-}
 }    // namespace
 
 int main()
@@ -636,7 +540,6 @@ int main()
         real_mp3_audio();
         psm_topology_changes();
         psm_history_capacity();
-        close_waits_for_cleanup();
         return 0;
     }
     catch (const std::exception& error)

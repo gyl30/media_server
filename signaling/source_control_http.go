@@ -45,7 +45,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		cleanupConfirmed := !ambiguousCreate
 		if ambiguousCreate {
 			cleanupContext, cancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
+			cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 			cancel()
 			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
 			if !cleanupConfirmed {
@@ -62,7 +62,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	}
 	if !s.finishRTSPPull(session) {
 		cleanupContext, cancel := s.media.timeoutContext()
-		cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
+		cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 		cancel()
 		if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
 			s.logger.Warn("orphan rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
@@ -79,7 +79,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		}
 		if s.removeRTSPPull(session) {
 			cleanupContext, cancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
+			cleanupErr := s.media.deleteRTSPPull(cleanupContext, session.streamID, session.streamName)
 			cancel()
 			if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
 				s.logger.Warn("deleted source rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
@@ -138,7 +138,7 @@ func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) 
 				return ctx.Err()
 			}
 		}
-		deleteErr := s.media.deleteReceiver(ctx, session.streamID, session.streamName)
+		deleteErr := s.media.deleteRTSPPull(ctx, session.streamID, session.streamName)
 		if isMediaServerNotFound(deleteErr) {
 			deleteErr = nil
 		}

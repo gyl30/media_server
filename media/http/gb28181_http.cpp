@@ -8,7 +8,6 @@
 
 #include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
-#include "media/http/http_async.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
@@ -185,11 +184,10 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
                                                       worker_context& worker,
                                                       const boost::urls::url_view& target,
-                                                      boost::asio::ip::address bind_address,
-                                                      boost::asio::yield_context yield)
+                                                      boost::asio::ip::address bind_address)
 {
     const auto path = target.encoded_path();
-    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/update")
+    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/delete" && path != "/gb28181/receiver/update")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
@@ -208,39 +206,42 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
         return handle_receiver_create(request, worker, std::move(*config), std::move(bind_address));
     }
 
-    const auto update = parse_gb28181_receiver_update(request.body());
-    if (!update)
+    if (path == "/gb28181/receiver/update")
+    {
+        const auto update = parse_gb28181_receiver_update(request.body());
+        if (!update)
+        {
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+        }
+        const auto& [identity, ssrc] = *update;
+        const auto found = session_registry::instance().find_receiver_session(identity.stream_name, identity.stream_id);
+        if (const auto udp = std::dynamic_pointer_cast<gb28181_udp_receiver_session>(found))
+        {
+            udp->update_ssrc(ssrc);
+        }
+        else if (const auto tcp = std::dynamic_pointer_cast<gb28181_tcp_receiver_session>(found))
+        {
+            tcp->update_ssrc(ssrc);
+        }
+        else
+        {
+            return make_error_response(request, boost::beast::http::status::not_found, "not_found");
+        }
+        return make_empty_response(request, boost::beast::http::status::no_content);
+    }
+
+    const auto identity = parse_gb28181_receiver_delete(request.body());
+    if (!identity)
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    const auto& [identity, ssrc] = *update;
-    const auto found = session_registry::instance().find_receiver_session(identity.stream_name, identity.stream_id);
-    // 204 表示更新已在接收器 worker 上实际生效，信令随后才发送 ACK。
-    const auto result = await_result(
-        [&found, ssrc](auto done)
-        {
-            const auto updated = [done](bool value) { done(value ? async_result::completed : async_result::not_found); };
-            if (const auto udp = std::dynamic_pointer_cast<gb28181_udp_receiver_session>(found))
-            {
-                udp->update_ssrc(ssrc, updated);
-                return;
-            }
-            if (const auto tcp = std::dynamic_pointer_cast<gb28181_tcp_receiver_session>(found))
-            {
-                tcp->update_ssrc(ssrc, updated);
-                return;
-            }
-            done(async_result::not_found);
-        },
-        yield);
-    if (result == async_result::not_found)
+    auto session = session_registry::instance().take_receiver_session(identity->stream_name, identity->stream_id);
+    if (!session)
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
-    if (result == async_result::stopped)
-    {
-        return make_error_response(request, boost::beast::http::status::service_unavailable, "service_unavailable");
-    }
+    session->shutdown();
+
     return make_empty_response(request, boost::beast::http::status::no_content);
 }
 

@@ -28,7 +28,7 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/rtsp/pull/create" {
 			writer.WriteHeader(http.StatusCreated)
-		} else if request.URL.Path == "/receivers/delete" {
+		} else if request.URL.Path == "/rtsp/pull/delete" {
 			writer.WriteHeader(http.StatusNoContent)
 		} else {
 			writer.WriteHeader(http.StatusNotFound)

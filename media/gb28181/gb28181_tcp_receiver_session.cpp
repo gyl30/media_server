@@ -61,18 +61,10 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
     return true;
 }
 
-void gb28181_tcp_receiver_session::update_ssrc(std::uint32_t ssrc, std::function<void(bool)> done)
+void gb28181_tcp_receiver_session::update_ssrc(std::uint32_t ssrc)
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(),
-                      [self, ssrc, done = std::move(done)]()
-                      {
-                          // 运行状态只在本 worker 上变化；槽位检查与更新在 registry 锁内一次完成，不会与删除交错。
-                          const bool updated = self->receiver_.running() &&
-                                               session_registry::instance().update_if_open(
-                                                   self->receiver_.stream_name(), *self, [&self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
-                          done(updated);
-                      });
+    boost::asio::post(worker_.io(), [self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
 }
 
 void gb28181_tcp_receiver_session::shutdown()
@@ -102,8 +94,7 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
         listener_.reset();
     }
 
-    // 关闭前已排队的成功完成仍会恢复协程，关闭后不能再接管连接。
-    if (closed_ || yield.cancelled() != boost::asio::cancellation_type::none)
+    if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
         return;
@@ -132,7 +123,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
     for (;;)
     {
         const auto read_bytes = transport_->read(buffer, yield, error);
-        if (error || closed_)
+        if (error)
         {
             shutdown();
             return;
@@ -174,12 +165,8 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
 
 void gb28181_tcp_receiver_session::safe_shutdown()
 {
-    if (closed_)
-    {
-        return;
-    }
-    closed_ = true;
     idle_timer_.stop();
+    session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -194,9 +181,6 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         socket_.close(error);
     }
     receiver_.shutdown();
-    // tcp_transport 的关闭投递到同一 worker；排在其后移除槽位，删除请求据此确认 socket 已关闭。
-    const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self]() { session_registry::instance().remove_receiver_session(self->receiver_.stream_name(), *self); });
     spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_name());
 }
 

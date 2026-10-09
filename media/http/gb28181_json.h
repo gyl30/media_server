@@ -61,6 +61,7 @@ struct gb28181_sender_identity
 
 [[nodiscard]] std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body);
 [[nodiscard]] std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body);
+[[nodiscard]] std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body);
 [[nodiscard]] std::optional<std::pair<gb28181_receiver_identity, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body);
 [[nodiscard]] std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body);
 

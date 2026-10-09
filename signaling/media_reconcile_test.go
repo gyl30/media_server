@@ -36,7 +36,7 @@ func TestMediaReconcileFollowsMediaServer(t *testing.T) {
 				{"stream_name":"rtsp/running","stream_id":"pull-running"},
 				{"stream_name":"gb/34020000001320000009/34020000001320000009","stream_id":"live-orphan"},
 				{"stream_name":"rtsp/orphan","stream_id":"pull-orphan"}]}`)
-		case "/receivers/delete":
+		case "/gb28181/receiver/delete", "/rtsp/pull/delete":
 			var body struct {
 				StreamID string `json:"stream_id"`
 			}
@@ -79,7 +79,7 @@ func TestMediaReconcileFollowsMediaServer(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if deleted["live-orphan"] != "/receivers/delete" || deleted["pull-orphan"] != "/receivers/delete" {
+	if deleted["live-orphan"] != "/gb28181/receiver/delete" || deleted["pull-orphan"] != "/rtsp/pull/delete" {
 		t.Fatalf("orphan receivers not deleted: %v", deleted)
 	}
 	if _, ok := deleted["live-running"]; ok {

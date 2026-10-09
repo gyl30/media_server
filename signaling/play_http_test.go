@@ -138,7 +138,7 @@ func TestLiveStopWaitsForConsumedOffer(t *testing.T) {
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
 			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
-		case "/receivers/delete":
+		case "/gb28181/receiver/delete":
 			deletes.Add(1)
 			writer.WriteHeader(http.StatusNoContent)
 		default:
@@ -212,7 +212,7 @@ func TestPlayExpiryFailureAndStop(t *testing.T) {
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
 			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
-		case "/receivers/delete":
+		case "/gb28181/receiver/delete":
 			writer.WriteHeader(http.StatusNoContent)
 		default:
 			offers.Add(1)
