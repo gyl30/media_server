@@ -59,10 +59,17 @@ func prepareMediaFixture(ctx context.Context, cfg config) (mediaFixture, error) 
 	return mediaFixture{path: path, cleanup: cleanup}, nil
 }
 
-func loadSharedMediaSource(path string) (*sharedMediaSource, error) {
+func loadSharedMediaSource(path, audioPath string) (*sharedMediaSource, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read H264 media: %w", err)
 	}
-	return newSharedMediaSource(data)
+	var audio []byte
+	if audioPath != "" {
+		audio, err = os.ReadFile(audioPath)
+		if err != nil {
+			return nil, fmt.Errorf("read PCMA audio: %w", err)
+		}
+	}
+	return newSharedMediaSource(data, audio)
 }

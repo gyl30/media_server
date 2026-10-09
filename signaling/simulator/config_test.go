@@ -13,3 +13,20 @@ func TestSimulatorDoesNotAcceptControllerOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestSimulatorOptionalPCMAFile(t *testing.T) {
+	cfg, err := parseConfig(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.audioFile != "" || cfg.mediaProfile != "normal" {
+		t.Fatalf("changed default media: %+v", cfg)
+	}
+	cfg, err = parseConfig([]string{"--audio-file", "tone.alaw", "--media-profile", "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.audioFile != "tone.alaw" || cfg.mediaProfile != "high" {
+		t.Fatalf("unexpected media configuration: %+v", cfg)
+	}
+}

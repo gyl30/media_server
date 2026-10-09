@@ -7,6 +7,7 @@ import (
 )
 
 const frameDurationMillis = uint64(40)
+const pcmaPacketBytes = 320
 
 type encodedAccessUnit struct {
 	annexB   []byte
@@ -90,21 +91,30 @@ func parseAccessUnits(data []byte) ([]encodedAccessUnit, error) {
 }
 
 type sharedMediaSource struct {
-	units    []encodedAccessUnit
-	muxer    *mpeg2.PSMuxer
-	streamID uint8
-	frames   uint64
+	units         []encodedAccessUnit
+	audio         []byte
+	muxer         *mpeg2.PSMuxer
+	videoStreamID uint8
+	audioStreamID uint8
+	frames        uint64
 }
 
-func newSharedMediaSource(data []byte) (*sharedMediaSource, error) {
+func newSharedMediaSource(data, audio []byte) (*sharedMediaSource, error) {
 	units, err := parseAccessUnits(data)
 	if err != nil {
 		return nil, err
 	}
+	if audio != nil && (len(audio) == 0 || len(audio)%pcmaPacketBytes != 0) {
+		return nil, fmt.Errorf("PCMA input requires a nonempty multiple of %d bytes at 8000 Hz mono", pcmaPacketBytes)
+	}
 	muxer := mpeg2.NewPsMuxer()
-	return &sharedMediaSource{
-		units: units, muxer: muxer, streamID: muxer.AddStream(mpeg2.PS_STREAM_H264),
-	}, nil
+	source := &sharedMediaSource{
+		units: units, audio: audio, muxer: muxer, videoStreamID: muxer.AddStream(mpeg2.PS_STREAM_H264),
+	}
+	if len(audio) > 0 {
+		source.audioStreamID = muxer.AddStream(mpeg2.PS_STREAM_G711A)
+	}
+	return source, nil
 }
 
 func (s *sharedMediaSource) next() (mediaUnit, error) {
@@ -114,8 +124,14 @@ func (s *sharedMediaSource) next() (mediaUnit, error) {
 	s.muxer.OnPacket = func(packet []byte) {
 		payload = append(payload, packet...)
 	}
-	if err := s.muxer.Write(s.streamID, accessUnit.annexB, timestampMillis, timestampMillis); err != nil {
+	if err := s.muxer.Write(s.videoStreamID, accessUnit.annexB, timestampMillis, timestampMillis); err != nil {
 		return mediaUnit{}, err
+	}
+	if len(s.audio) > 0 {
+		start := int(s.frames%uint64(len(s.audio)/pcmaPacketBytes)) * pcmaPacketBytes
+		if err := s.muxer.Write(s.audioStreamID, s.audio[start:start+pcmaPacketBytes], timestampMillis, timestampMillis); err != nil {
+			return mediaUnit{}, err
+		}
 	}
 	if len(payload) == 0 {
 		return mediaUnit{}, fmt.Errorf("MPEG-PS muxer produced no payload")

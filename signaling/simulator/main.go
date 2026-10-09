@@ -18,7 +18,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 		return err
 	}
 	defer fixture.cleanup()
-	source, err := loadSharedMediaSource(fixture.path)
+	source, err := loadSharedMediaSource(fixture.path, cfg.audioFile)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ type config struct {
 	deviceID          string
 	channelID         string
 	mediaFile         string
+	audioFile         string
 	mediaBind         string
 	mediaSink         string
 	mediaProfile      string
@@ -46,6 +47,7 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.deviceID, "device-id", "34020000001320000001", "simulated device ID")
 	flags.StringVar(&cfg.channelID, "channel-id", "34020000001320000002", "simulated channel ID")
 	flags.StringVar(&cfg.mediaFile, "media-file", "", "Annex-B H264 input with AUD; empty generates a temporary fixture")
+	flags.StringVar(&cfg.audioFile, "audio-file", "", "optional raw PCMA input: 8000 Hz mono, nonempty multiple of 320 bytes; looped in 40 ms packets")
 	flags.StringVar(&cfg.mediaBind, "media-bind", "127.0.0.1", "local IPv4 address for RTP sender sockets")
 	flags.StringVar(&cfg.mediaSink, "media-sink", "", "generator-only RTP UDP sink as IPv4:port")
 	flags.StringVar(&cfg.mediaProfile, "media-profile", "normal", "generated fixture bitrate profile: normal or high")
