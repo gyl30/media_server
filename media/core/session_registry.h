@@ -2,6 +2,7 @@
 #define MEDIA_CORE_SESSION_REGISTRY_H
 
 #include <map>
+#include <functional>
 #include <mutex>
 #include <memory>
 #include <optional>
@@ -32,8 +33,14 @@ class session_registry final
     [[nodiscard]] static session_registry& instance();
 
     bool add_receiver_session(std::string stream_name, std::string stream_id, std::shared_ptr<session> session);
-    [[nodiscard]] std::shared_ptr<session> take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id);
+    // 按身份开始关闭接收会话：槽位保留并标记关闭，会话清理完成后移除槽位时调用 closed。
+    // 槽位不存在或属于其他代时返回空且不调用 closed；并发关闭共享同一次完成。
+    [[nodiscard]] std::shared_ptr<session> begin_close_receiver(std::string_view stream_name,
+                                                                std::string_view expected_stream_id,
+                                                                std::function<void()> closed);
+    // 会话在资源清理完成后调用，移除自身槽位并通知等待关闭的请求。
     void remove_receiver_session(std::string_view stream_name, const session& expected);
+    [[nodiscard]] bool receiver_open(std::string_view stream_name, const session& expected) const;
     [[nodiscard]] std::vector<receiver_identity> receivers() const;
     [[nodiscard]] std::shared_ptr<session> find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const;
 
@@ -49,6 +56,8 @@ class session_registry final
     {
         std::string stream_id;
         std::shared_ptr<session> value;
+        bool closing{};
+        std::vector<std::function<void()>> closed;
     };
 
     struct session_entry

@@ -23,11 +23,13 @@ bool session_registry::add_receiver_session(std::string stream_name, std::string
     {
         return false;
     }
-    iterator->second.receiver = registered_session{.stream_id = std::move(stream_id), .value = std::move(session)};
+    iterator->second.receiver = registered_session{.stream_id = std::move(stream_id), .value = std::move(session), .closing = false, .closed = {}};
     return true;
 }
 
-std::shared_ptr<session> session_registry::take_receiver_session(std::string_view stream_name, std::string_view expected_stream_id)
+std::shared_ptr<session> session_registry::begin_close_receiver(std::string_view stream_name,
+                                                                std::string_view expected_stream_id,
+                                                                std::function<void()> closed)
 {
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
@@ -35,28 +37,41 @@ std::shared_ptr<session> session_registry::take_receiver_session(std::string_vie
     {
         return {};
     }
-    auto value = std::move(iterator->second.receiver->value);
-    iterator->second.receiver.reset();
-    if (empty(iterator->second))
-    {
-        sessions_.erase(iterator);
-    }
-    return value;
+    auto& receiver = *iterator->second.receiver;
+    receiver.closing = true;
+    receiver.closed.push_back(std::move(closed));
+    return receiver.value;
 }
 
 void session_registry::remove_receiver_session(std::string_view stream_name, const session& expected)
 {
+    std::vector<std::function<void()>> closed;
+    {
+        std::scoped_lock lock(mutex_);
+        const auto iterator = sessions_.find(stream_name);
+        if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->value.get() != &expected)
+        {
+            return;
+        }
+        closed = std::move(iterator->second.receiver->closed);
+        iterator->second.receiver.reset();
+        if (empty(iterator->second))
+        {
+            sessions_.erase(iterator);
+        }
+    }
+    for (const auto& notify : closed)
+    {
+        notify();
+    }
+}
+
+bool session_registry::receiver_open(std::string_view stream_name, const session& expected) const
+{
     std::scoped_lock lock(mutex_);
     const auto iterator = sessions_.find(stream_name);
-    if (iterator == sessions_.end() || !iterator->second.receiver || iterator->second.receiver->value.get() != &expected)
-    {
-        return;
-    }
-    iterator->second.receiver.reset();
-    if (empty(iterator->second))
-    {
-        sessions_.erase(iterator);
-    }
+    return iterator != sessions_.end() && iterator->second.receiver && iterator->second.receiver->value.get() == &expected &&
+           !iterator->second.receiver->closing;
 }
 
 std::shared_ptr<session> session_registry::find_receiver_session(std::string_view stream_name, std::string_view expected_stream_id) const
@@ -94,7 +109,7 @@ bool session_registry::add_sender_session(
     }
     const auto iterator = sessions_.try_emplace(std::move(stream_name)).first;
     return iterator->second.sender_sessions
-        .emplace(std::move(sender_id), registered_session{.stream_id = std::move(stream_id), .value = std::move(session)})
+        .emplace(std::move(sender_id), registered_session{.stream_id = std::move(stream_id), .value = std::move(session), .closing = false, .closed = {}})
         .second;
 }
 
@@ -158,6 +173,11 @@ void session_registry::shutdown_all()
         if (entry.receiver)
         {
             entry.receiver->value->shutdown();
+            // 槽位已摘除，会话之后无法再移除它；服务停止时直接结束等待关闭的请求。
+            for (const auto& notify : entry.receiver->closed)
+            {
+                notify();
+            }
         }
         for (const auto& [sender_id, session] : entry.sender_sessions)
         {

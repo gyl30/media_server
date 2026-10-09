@@ -3,7 +3,6 @@
 
 #include <openssl/crypto.h>
 
-#include <boost/json.hpp>
 #include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -12,8 +11,8 @@
 #include "media/http/gb28181_http.h"
 #include "media/http/http_session.h"
 #include "media/net/worker_context.h"
-#include "media/core/session_registry.h"
 #include "media/http/rtsp_pull_http.h"
+#include "media/http/receiver_http.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
 
@@ -22,27 +21,10 @@ namespace media_server
 namespace
 {
 
-// 控制面对账使用：列出仍在运行的 GB28181 接收和 RTSP 拉流会话。
-boost::beast::http::response<boost::beast::http::string_body> make_receiver_list_response(
-    const boost::beast::http::request<boost::beast::http::string_body>& request)
-{
-    boost::json::array receivers;
-    for (const auto& receiver : session_registry::instance().receivers())
-    {
-        receivers.push_back(boost::json::object{{"stream_name", receiver.stream_name}, {"stream_id", receiver.stream_id}});
-    }
-    boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::ok, request.version());
-    response.set(boost::beast::http::field::server, "media_server");
-    response.set(boost::beast::http::field::content_type, "application/json");
-    response.keep_alive(false);
-    response.body() = boost::json::serialize(boost::json::object{{"receivers", std::move(receivers)}});
-    response.prepare_payload();
-    return response;
-}
-
 bool is_control_path(std::string_view path)
 {
-    return path == "/receivers" || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") || path == "/gb28181/sender" ||
+    return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") ||
+           path == "/gb28181/sender" ||
            path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
 }
 
@@ -123,7 +105,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     {
         write_string_response(
             request,
-            media_server::handle_gb28181_receiver_request(request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
+            media_server::handle_gb28181_receiver_request(request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address), yield),
             yield);
         return;
     }
@@ -135,14 +117,9 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
             yield);
         return;
     }
-    if (path == "/receivers")
+    if (path == "/receivers" || path.starts_with("/receivers/"))
     {
-        if (request.method() != boost::beast::http::verb::get || !parsed->params().empty())
-        {
-            send_text_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", yield, "GET");
-            return;
-        }
-        write_string_response(request, make_receiver_list_response(request), yield);
+        write_string_response(request, media_server::handle_receiver_request(request, *parsed, yield), yield);
         return;
     }
     if (path == "/rtsp/pull" || path.starts_with("/rtsp/pull/"))

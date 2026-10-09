@@ -46,6 +46,7 @@ class gb28181_rtp_receiver final
     [[nodiscard]] bool receive_rtcp(std::span<const std::uint8_t> data);
     [[nodiscard]] int generate_rtcp(std::span<std::uint8_t> buffer);
     void shutdown();
+    [[nodiscard]] bool running() const noexcept { return demuxer_ != nullptr; }
     // 设备可以在 200 OK 的 y= 中改用自己的 SSRC，信令据此更新过滤条件。
     void set_expected_ssrc(std::uint32_t ssrc) noexcept { expected_ssrc_ = ssrc; }
 

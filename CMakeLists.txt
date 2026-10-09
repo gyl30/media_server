@@ -241,6 +241,7 @@ add_library(media_core STATIC
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
     media/http/rtsp_pull_http.cpp
+    media/http/receiver_http.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
     media/http/http_session.cpp
@@ -330,6 +331,10 @@ if(BUILD_TESTING)
     target_link_libraries(gb28181_ps_receiver_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb28181_ps_receiver COMMAND gb28181_ps_receiver_tests)
     set_tests_properties(gb28181_ps_receiver PROPERTIES TIMEOUT 10)
+    add_executable(session_registry_tests tests/session_registry.cpp)
+    target_link_libraries(session_registry_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME session_registry COMMAND session_registry_tests)
+    set_tests_properties(session_registry PROPERTIES TIMEOUT 10)
     add_executable(rtsp_pull_media_tests tests/rtsp_pull_media.cpp)
     target_link_libraries(rtsp_pull_media_tests PRIVATE media_core media_server_link_options)
     add_test(NAME rtsp_pull_media COMMAND rtsp_pull_media_tests)

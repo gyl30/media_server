@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"time"
 )
 
@@ -53,12 +52,7 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 			continue
 		}
 		s.logger.Warn("deleting orphan media receiver", "stream_name", receiver.StreamName, "stream_id", receiver.StreamID)
-		var deleteErr error
-		if strings.HasPrefix(receiver.StreamName, liveStreamPrefix) {
-			deleteErr = s.media.deleteReceiver(ctx, receiver.StreamID, receiver.StreamName)
-		} else {
-			deleteErr = s.media.deleteRTSPPull(ctx, receiver.StreamID, receiver.StreamName)
-		}
+		deleteErr := s.media.deleteReceiver(ctx, receiver.StreamID, receiver.StreamName)
 		if deleteErr != nil && !isMediaServerNotFound(deleteErr) {
 			s.logger.Warn("orphan media receiver delete failed", "stream_name", receiver.StreamName, "error", deleteErr)
 		}

@@ -169,7 +169,6 @@ void rtsp_pull_session::schedule_rtcp()
 void rtsp_pull_session::safe_shutdown()
 {
     idle_timer_.stop();
-    session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
         media_->shutdown();
@@ -183,6 +182,9 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
+    // tcp_transport 的关闭投递到同一 worker；排在其后移除槽位，删除请求据此确认 socket 已关闭。
+    const auto self = shared_from_this();
+    boost::asio::post(worker_.io(), [self]() { session_registry::instance().remove_receiver_session(self->stream_name_, *self); });
     spdlog::debug("rtsp pull shutdown {}", stream_name_);
 }
 

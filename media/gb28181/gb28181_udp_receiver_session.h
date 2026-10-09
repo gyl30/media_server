@@ -2,6 +2,7 @@
 #define MEDIA_GB28181_GB28181_UDP_RECEIVER_SESSION_H
 
 #include <memory>
+#include <functional>
 #include <string>
 #include <cstdint>
 #include <optional>
@@ -27,7 +28,8 @@ class gb28181_udp_receiver_session final : public session, public std::enable_sh
    public:
     [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);
     void shutdown();
-    void update_ssrc(std::uint32_t ssrc);
+    // 在接收器 worker 上确认仍在运行且槽位未进入关闭后更新 SSRC，结果通过 done 返回。
+    void update_ssrc(std::uint32_t ssrc, std::function<void(bool)> done);
 
    private:
     void run_rtp(boost::asio::yield_context yield);

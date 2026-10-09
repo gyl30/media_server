@@ -96,10 +96,20 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     return local_port_;
 }
 
-void gb28181_udp_receiver_session::update_ssrc(std::uint32_t ssrc)
+void gb28181_udp_receiver_session::update_ssrc(std::uint32_t ssrc, std::function<void(bool)> done)
 {
     const auto self = shared_from_this();
-    boost::asio::post(worker_.io(), [self, ssrc]() { self->receiver_.set_expected_ssrc(ssrc); });
+    boost::asio::post(worker_.io(),
+                      [self, ssrc, done = std::move(done)]()
+                      {
+                          const bool open =
+                              self->receiver_.running() && session_registry::instance().receiver_open(self->receiver_.stream_name(), *self);
+                          if (open)
+                          {
+                              self->receiver_.set_expected_ssrc(ssrc);
+                          }
+                          done(open);
+                      });
 }
 
 void gb28181_udp_receiver_session::shutdown()
@@ -230,13 +240,14 @@ void gb28181_udp_receiver_session::safe_shutdown()
     }
     const auto local_port = *local_port_;
     local_port_.reset();
-    session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     idle_timer_.stop();
     rtp_transport_->shutdown();
     rtcp_transport_->shutdown();
     receiver_.shutdown();
     media_port_pool::instance().release(local_port);
+    // 流已移除、socket 已关闭、端口已归还后才移除槽位，删除请求据此确认关闭完成。
+    session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());
 }
 
