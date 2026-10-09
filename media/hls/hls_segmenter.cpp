@@ -97,8 +97,11 @@ void hls_segmenter::finish()
     {
         finish_segment(segment_max_pts_ns_);
     }
-    mpeg_ts_destroy(muxer_);
-    muxer_ = nullptr;
+    if (muxer_ != nullptr)
+    {
+        mpeg_ts_destroy(muxer_);
+        muxer_ = nullptr;
+    }
     ended_at_ = std::chrono::steady_clock::now();
 }
 
@@ -140,8 +143,11 @@ void hls_segmenter::on_end() { finish(); }
 
 void hls_segmenter::shutdown()
 {
-    source_->remove_sink(this);
-    source_.reset();
+    if (source_)
+    {
+        source_->remove_sink(this);
+        source_.reset();
+    }
     finish();
 }
 

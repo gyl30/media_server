@@ -40,6 +40,7 @@ bool start_tcp_listener(worker_pool& workers,
     listener->startup(error);
     if (error)
     {
+        listener->shutdown();
         return false;
     }
 

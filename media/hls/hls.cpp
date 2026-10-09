@@ -96,6 +96,7 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
     auto segmenter = std::make_shared<hls_segmenter>();
     if (!segmenter->startup(stream))
     {
+        segmenter->shutdown();
         return {};
     }
     current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});

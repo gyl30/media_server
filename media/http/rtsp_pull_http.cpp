@@ -193,9 +193,14 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
                                                        std::move(config.password));
     if (!session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
     {
+        session->shutdown();
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
-    session->startup();
+    if (!session->startup())
+    {
+        session->shutdown();
+        return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+    }
     return make_empty_response(request, boost::beast::http::status::created);
 }
 

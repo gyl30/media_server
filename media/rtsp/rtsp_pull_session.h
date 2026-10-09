@@ -42,7 +42,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     [[nodiscard]] static bool valid_url(std::string_view url);
 
    public:
-    void startup();
+    [[nodiscard]] bool startup();
     void shutdown();
 
    private:

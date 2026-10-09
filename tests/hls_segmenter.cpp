@@ -79,9 +79,13 @@ void audio_only(worker_context& worker)
 
 void opus_only(worker_context& worker)
 {
-    require(start(worker, {{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = 2, .codec_config = {}}}) ==
-                nullptr,
-            "opus only: unsupported stream accepted");
+    auto stream = std::make_shared<media_stream>("hls/test", worker);
+    require(stream->set_tracks({{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = 2, .codec_config = {}}}),
+            "tracks rejected");
+    const auto segmenter = std::make_shared<hls_segmenter>();
+    require(!segmenter->startup(stream), "opus only: unsupported stream accepted");
+    // 启动失败后由调用方 shutdown 清理，此时 muxer 尚未创建。
+    segmenter->shutdown();
     std::cout << "opus_only: PASS\n";
 }
 }    // namespace

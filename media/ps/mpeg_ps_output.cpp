@@ -60,7 +60,6 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
     if (!muxer_)
     {
         spdlog::error("mpeg ps muxer create failed stream {}", source->name());
-        finish();
         return false;
     }
     for (const auto& track : source->tracks())
@@ -90,7 +89,6 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
         if (id < 0)
         {
             spdlog::error("mpeg ps muxer add track failed stream {} track {}", source->name(), track.id);
-            finish();
             return false;
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});

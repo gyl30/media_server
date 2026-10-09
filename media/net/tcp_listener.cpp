@@ -35,11 +35,6 @@ void tcp_listener::startup(boost::system::error_code& error)
     {
         acceptor_.listen(boost::asio::socket_base::max_listen_connections, error);
     }
-    if (error)
-    {
-        boost::system::error_code close_error;
-        acceptor_.close(close_error);
-    }
 }
 
 void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,

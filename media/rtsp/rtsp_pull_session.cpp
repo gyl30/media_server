@@ -103,13 +103,12 @@ rtsp_pull_session::~rtsp_pull_session() = default;
 
 bool rtsp_pull_session::valid_url(std::string_view url) { return parse_url(url).has_value(); }
 
-void rtsp_pull_session::startup()
+bool rtsp_pull_session::startup()
 {
     const auto parsed = parse_url(url_);
     if (!parsed)
     {
-        shutdown();
-        return;
+        return false;
     }
 
     url_ = parsed->request_url;
@@ -123,6 +122,7 @@ void rtsp_pull_session::startup()
                           shutdown();
                       });
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
+    return true;
 }
 
 void rtsp_pull_session::shutdown()
