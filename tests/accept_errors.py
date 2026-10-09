@@ -39,8 +39,9 @@ def rtsp_options(port):
 def main():
     server_bin, fault_library = sys.argv[1:3]
 
-    # 单连接错误：监听继续工作。
-    server, ports = start(server_bin, fault_library, errno.ECONNABORTED, 3)
+    # 单连接错误：监听继续工作。Asio 内部会吸收 ECONNABORTED/EPROTO，
+    # 用 EPERM 才能经过应用层的立即继续分支。
+    server, ports = start(server_bin, fault_library, errno.EPERM, 3)
     try:
         wait_for_listener("127.0.0.1", ports[1])
         recovered = any(rtsp_options(ports[1]) for _ in range(5))
@@ -64,8 +65,8 @@ def main():
         code = server.poll()
     finally:
         stop_process(server)
-    if code is None or code == 0:
-        print(f"fatal accept error did not fail the service: exit={code}")
+    if code != 1:
+        print(f"fatal accept error did not fail the service with exit 1: exit={code}")
         return 1
     print(f"per-connection error recovered; fatal error exit={code}")
     return 0

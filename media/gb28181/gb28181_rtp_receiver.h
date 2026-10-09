@@ -3,6 +3,7 @@
 
 #include <span>
 #include <memory>
+#include <functional>
 #include <string>
 #include <cstdint>
 #include <optional>
@@ -32,7 +33,12 @@ enum class gb28181_rtp_receive_result
 class gb28181_rtp_receiver final
 {
    public:
-    gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
+    // media_handler 在发布媒体帧时调用，供输入空闲计时使用。
+    gb28181_rtp_receiver(worker_context& worker,
+                         std::string stream_name,
+                         std::uint8_t payload_type,
+                         std::uint32_t expected_ssrc,
+                         std::function<void()> media_handler);
 
    public:
     [[nodiscard]] bool startup();
@@ -69,6 +75,7 @@ class gb28181_rtp_receiver final
     std::string stream_name_;
     std::uint8_t payload_type_{};
     std::uint32_t expected_ssrc_{};
+    std::function<void()> media_handler_;
     rtsp_demuxer_t* demuxer_{};
     std::shared_ptr<media_stream> stream_;
     avpkt2bs_t bitstream_{};

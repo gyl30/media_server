@@ -73,7 +73,7 @@ void rtmp_session::startup()
                 }
             }
         });
-    // 计时从连接建立开始，只由发布的音视频消息刷新；播放连接停止计时。
+    // 计时从连接建立开始，只由发布出的媒体帧刷新；播放连接停止计时。
     idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtmp_session>(self)]()
                       {
                           if (const auto owner = weak.lock())
@@ -174,12 +174,7 @@ int rtmp_session::video_callback(void* param, const void* data, std::size_t byte
     {
         return -1;
     }
-    const auto result = self->publish_->on_video(data, bytes, timestamp);
-    if (result == 0)
-    {
-        self->idle_timer_.touch();
-    }
-    return result;
+    return self->publish_->on_video(data, bytes, timestamp);
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
@@ -189,12 +184,7 @@ int rtmp_session::audio_callback(void* param, const void* data, std::size_t byte
     {
         return -1;
     }
-    const auto result = self->publish_->on_audio(data, bytes, timestamp);
-    if (result == 0)
-    {
-        self->idle_timer_.touch();
-    }
-    return result;
+    return self->publish_->on_audio(data, bytes, timestamp);
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
@@ -279,7 +269,8 @@ int rtmp_session::on_publish(std::string_view app, std::string_view stream)
         return -1;
     }
 
-    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target);
+    // publish_ 由本会话持有，回调只会在 rtmp_server_input 内同步执行。
+    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target, [this]() { idle_timer_.touch(); });
     if (!publish->startup())
     {
         return -1;

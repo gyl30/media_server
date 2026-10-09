@@ -68,8 +68,16 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : worker_(worker), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
+gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker,
+                                           std::string stream_name,
+                                           std::uint8_t payload_type,
+                                           std::uint32_t expected_ssrc,
+                                           std::function<void()> media_handler)
+    : worker_(worker),
+      stream_name_(std::move(stream_name)),
+      payload_type_(payload_type),
+      expected_ssrc_(expected_ssrc),
+      media_handler_(std::move(media_handler))
 {
 }
 
@@ -331,6 +339,7 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         .key_frame = (packet->flags & AVPACKET_FLAG_KEY) != 0,
         .payload = std::move(payload),
     });
+    media_handler_();
     return 0;
 }
 

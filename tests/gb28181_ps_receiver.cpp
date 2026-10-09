@@ -109,12 +109,14 @@ void check(const char* name, int audio_codec, std::size_t audio_bytes, std::size
 {
     worker_context worker;
     const std::string stream_name = std::string("gb/test/") + name;
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc);
+    std::size_t frames{};
+    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc, [&frames]() { ++frames; });
     require(receiver.startup(), std::string(name) + ": receiver startup failed");
     for (const auto& packet : make_rtp(audio_codec, audio_bytes))
     {
         require(receiver.receive_rtp(packet) != gb28181_rtp_receive_result::fatal, std::string(name) + ": stream rejected");
     }
+    require(frames != 0, std::string(name) + ": published frames not reported");
     const auto stream = stream_registry::instance().find(stream_name);
     require(stream && stream->tracks().size() == expected_tracks && stream->tracks().front().codec == codec_id::h264,
             std::string(name) + ": unexpected tracks");
@@ -125,7 +127,7 @@ void device_selected_ssrc()
 {
     worker_context worker;
     const std::string stream_name = "gb/test/device_ssrc";
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U);
+    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U, []() {});
     require(receiver.startup(), "device ssrc: receiver startup failed");
     const auto packets = make_rtp(PSI_STREAM_AUDIO_G711A, 320);
     for (const auto& packet : packets)
@@ -142,6 +144,30 @@ void device_selected_ssrc()
     receiver.shutdown();
     std::cout << "device_selected_ssrc: PASS\n";
 }
+void empty_payload_is_not_media()
+{
+    worker_context worker;
+    std::size_t frames{};
+    gb28181_rtp_receiver receiver(worker, "gb/test/empty_payload", payload_type, ssrc, [&frames]() { ++frames; });
+    require(receiver.startup(), "empty payload: receiver startup failed");
+    for (const auto& packet : make_rtp(PSI_STREAM_AUDIO_G711A, 320))
+    {
+        require(receiver.receive_rtp(packet) != gb28181_rtp_receive_result::fatal, "empty payload: stream rejected");
+    }
+    const auto before = frames;
+    // 只有 RTP 头、没有 PS 载荷的包不是媒体，不能刷新输入空闲期限。
+    for (std::uint16_t sequence = 1000; sequence < 1100; ++sequence)
+    {
+        std::array<std::uint8_t, 12> header{0x80, payload_type, static_cast<std::uint8_t>(sequence >> 8U), static_cast<std::uint8_t>(sequence),
+                                            0, 0, 0, 0,
+                                            static_cast<std::uint8_t>(ssrc >> 24U), static_cast<std::uint8_t>(ssrc >> 16U),
+                                            static_cast<std::uint8_t>(ssrc >> 8U), static_cast<std::uint8_t>(ssrc)};
+        require(receiver.receive_rtp(header) != gb28181_rtp_receive_result::fatal, "empty payload: header rejected");
+    }
+    require(before != 0 && frames == before, "empty payload: header-only rtp reported as media");
+    receiver.shutdown();
+    std::cout << "empty_payload_is_not_media: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -154,6 +180,7 @@ int main()
         check("g729", PSI_STREAM_AUDIO_G729, 20, 1);
         check("mp3", PSI_STREAM_MP3, 144, 1);
         device_selected_ssrc();
+        empty_payload_is_not_media();
         return 0;
     }
     catch (const std::exception& error)
