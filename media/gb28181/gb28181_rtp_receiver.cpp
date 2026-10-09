@@ -256,7 +256,8 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     }
 
     const auto codec = codec_from_avpacket(packet->stream->codecid);
-    if (!codec && packet->stream->codecid >= AVCODEC_AUDIO_PCM && packet->stream->codecid < AVCODEC_TEXT_WEBVTT)
+    // 拓扑未声明受支持音频时，不支持的音频按无音频忽略；已声明受支持音频却出现其他编码仍为致命。
+    if (!codec && !audio_codec_ && packet->stream->codecid >= AVCODEC_AUDIO_PCM && packet->stream->codecid < AVCODEC_TEXT_WEBVTT)
     {
         return 0;
     }

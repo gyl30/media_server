@@ -69,6 +69,7 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 	mpeg_bits_skip(reader, program_stream_info_length); // 10 + program_stream_info_length;
 
 	// program element stream
+	psm->active_count = 0;
 	element_stream_map_length = mpeg_bits_read16(reader);
 	/* Ignore es_map_length, trust psm_length */
 	element_stream_map_length = program_stream_map_length - program_stream_info_length - 10;
@@ -90,6 +91,12 @@ int psm_read(struct psm_t* psm, struct mpeg_bits_t* reader)
 		stream->codecid = cid;
 		stream->sid = sid;
 		stream->pid = stream->sid; // for ts PID
+		if (psm->active_count < sizeof(psm->active) / sizeof(psm->active[0]))
+		{
+			psm->active[psm->active_count].sid = sid;
+			psm->active[psm->active_count].codecid = cid;
+			psm->active_count++;
+		}
 
 		off = mpeg_bits_tell(reader);
 		if (0xFD == stream->sid && 0 == single_extension_stream_flag)

@@ -51,6 +51,10 @@ struct psm_t
     struct pes_t streams[16];
 	size_t stream_count;
 
+	// media_server: 最近一次解析的 PSM 中实际出现的条目；streams 是按 sid 累积的历史表。
+	struct { uint8_t sid; uint8_t codecid; } active[16];
+	size_t active_count;
+
 	int64_t clock; // ms
 };
 

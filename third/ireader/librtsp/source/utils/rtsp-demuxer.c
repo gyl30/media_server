@@ -173,8 +173,8 @@ static inline int rtsp_demuxer_mpegts_onpacket(void* param, int program, int tra
     if (0xbd == codecid || 0 == codecid)
         return 0; // ignore HIK private stream
 
-    // media_server: 丢弃无法解码的音频（如 G.722/G.729），由上层按无音频处理，不中断视频
-    if (mpeg_stream_type_audio(codecid))
+    // media_server: 只丢弃类型无法映射的音频（如 G.722/G.729），由上层按无音频处理；轨道容量、过滤器创建等失败照常报错
+    if (-EPROTONOSUPPORT == i && mpeg_stream_type_audio(codecid))
         return 0;
 
     (void)program; //ignore

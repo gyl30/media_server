@@ -48,7 +48,9 @@ struct ps_demuxer_t
 
     struct ps_demuxer_notify_t notify;
     void* notify_param;
-    uint32_t ver; // psm notify version
+    // media_server: 已通知上层的活动 PSM 条目，用于识别同版本下的编码变化与条目增删。
+    struct { uint8_t sid; uint8_t codecid; } notified[16];
+    size_t notified_count;
 };
 
 static void ps_demuxer_notify(struct ps_demuxer_t* ps);
@@ -206,7 +208,6 @@ static int ps_demuxer_skip(struct ps_demuxer_t* ps, struct mpeg_bits_t* reader, 
 static int ps_demuxer_header(struct ps_demuxer_t* ps, struct mpeg_bits_t* reader)
 {
     int r;
-    size_t n;
 	size_t off;
     uint8_t v8;
     struct pes_t* pes;
@@ -248,11 +249,15 @@ static int ps_demuxer_header(struct ps_demuxer_t* ps, struct mpeg_bits_t* reader
             break;
 
         case PES_SID_PSM:
-            n = ps->psm.stream_count;
             r = psm_read(&ps->psm, reader);
-            if (n != ps->psm.stream_count || ps->ver != ps->psm.ver)
-                ps_demuxer_notify(ps); // TODO: check psm stream sid
-            ps->ver = ps->psm.ver;
+            // media_server: 只在完整解析成功后，按本次 PSM 的活动条目判断拓扑是否变化。
+            if (MPEG_ERROR_OK == r && (ps->notified_count != ps->psm.active_count
+                || 0 != memcmp(ps->notified, ps->psm.active, sizeof(ps->psm.active[0]) * ps->psm.active_count)))
+            {
+                ps->notified_count = ps->psm.active_count;
+                memcpy(ps->notified, ps->psm.active, sizeof(ps->psm.active[0]) * ps->psm.active_count);
+                ps_demuxer_notify(ps);
+            }
             break;
 
         case PES_SID_PSD:
@@ -472,7 +477,6 @@ struct ps_demuxer_t* ps_demuxer_create(ps_demuxer_onpacket onpacket, void* param
     ps->buffer.ptr = (uint8_t*)(ps + 1);
     ps->buffer.cap = N_BUFFER_INIT;
 
-    ps->ver = 0xFFFFFFFF; // fix: guest stream add stream internal, alway notify on firstly
 	return ps;
 }
 
@@ -506,14 +510,22 @@ void ps_demuxer_set_notify(struct ps_demuxer_t* ps, struct ps_demuxer_notify_t *
 
 static void ps_demuxer_notify(struct ps_demuxer_t* ps)
 {
-    size_t i;
+    size_t i, j;
     struct pes_t* pes;
     if (!ps->notify.onstream)
         return;
 
-    for (i = 0; i < ps->psm.stream_count; i++)
+    // media_server: 通知最近一次 PSM 的活动条目，而不是累积的历史表。
+    for (i = 0; i < ps->notified_count; i++)
     {
-        pes = &ps->psm.streams[i];
-        ps->notify.onstream(ps->notify_param, pes->pid, pes->codecid, pes->esinfo, pes->esinfo_len, i + 1 >= ps->psm.stream_count ? 1 : 0);
+        pes = NULL;
+        for (j = 0; j < ps->psm.stream_count; j++)
+        {
+            if (ps->psm.streams[j].sid == ps->notified[i].sid)
+                pes = &ps->psm.streams[j];
+        }
+        if (!pes)
+            continue;
+        ps->notify.onstream(ps->notify_param, pes->pid, ps->notified[i].codecid, pes->esinfo, pes->esinfo_len, i + 1 >= ps->notified_count ? 1 : 0);
     }
 }
