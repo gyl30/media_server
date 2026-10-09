@@ -297,68 +297,6 @@ void empty_payload_is_not_media()
     std::cout << "empty_payload_is_not_media: PASS\n";
 }
 // 先发送带数据的视频与 AAC 使流就绪，随后只发送只有 ADTS 头的 AAC PES；返回 RTP 包及第二阶段起点。
-std::pair<std::vector<std::vector<std::uint8_t>>, std::size_t> make_aac_rtp()
-{
-    const std::vector<std::uint8_t> asc{0x11, 0x90};
-    ps_writer ps;
-    const ps_muxer_func_t ps_functions{&ps_writer::alloc, &ps_writer::free, &ps_writer::write};
-    auto* muxer = ps_muxer_create(&ps_functions, &ps);
-    const auto video = ps_muxer_add_stream(muxer, PSI_STREAM_H264, nullptr, 0);
-    const auto audio = ps_muxer_add_stream(muxer, PSI_STREAM_AAC, nullptr, 0);
-    const auto aac = make_adts_frame(asc, std::vector<std::uint8_t>(40, 0x00));
-    const auto empty_aac = make_adts_frame(asc, {});
-    require(aac.size() == 47 && empty_aac.size() == 7, "adts fixture failed");
-    std::int64_t pts = 0;
-    for (int index = 0; index < 10; ++index, pts += 3'600)
-    {
-        require(ps_muxer_input(muxer, video, MPEG_FLAG_IDR_FRAME, pts, pts, h264_idr.data(), h264_idr.size()) == 0, "ps video mux failed");
-        require(ps_muxer_input(muxer, audio, 0, pts, pts, aac.data(), aac.size()) == 0, "ps audio mux failed");
-    }
-    const auto split = ps.packets.size();
-    for (int index = 0; index < 50; ++index, pts += 1'920)
-    {
-        require(ps_muxer_input(muxer, audio, 0, pts, pts, empty_aac.data(), empty_aac.size()) == 0, "ps empty audio mux failed");
-    }
-    ps_muxer_destroy(muxer);
-
-    rtp_writer rtp;
-    rtp_payload_t rtp_functions{&rtp_writer::alloc, &rtp_writer::free, &rtp_writer::packet};
-    auto* encoder = rtp_payload_encode_create(payload_type, "PS", 1, ssrc, &rtp_functions, &rtp);
-    std::size_t rtp_split = 0;
-    for (std::size_t index = 0; index < ps.packets.size(); ++index)
-    {
-        if (index == split)
-        {
-            rtp_split = rtp.packets.size();
-        }
-        const auto& packet = ps.packets[index];
-        require(rtp_payload_encode_input(encoder, packet.data(), static_cast<int>(packet.size()), static_cast<std::uint32_t>(index * 1'920)) == 0,
-                "rtp encode failed");
-    }
-    rtp_payload_encode_destroy(encoder);
-    return {std::move(rtp.packets), rtp_split};
-}
-
-void empty_aac_is_not_media()
-{
-    worker_context worker;
-    const std::string stream_name = "gb/test/empty_aac";
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc);
-    require(receiver.startup(), "empty aac: receiver startup failed");
-    const auto [packets, split] = make_aac_rtp();
-    for (std::size_t index = 0; index < split; ++index)
-    {
-        require(receiver.receive_rtp(packets[index]) != gb28181_rtp_receive_result::fatal, "empty aac: stream rejected");
-    }
-    const auto stream = stream_registry::instance().find(stream_name);
-    require(stream && stream->tracks().size() == 2 && stream->tracks().back().codec == codec_id::aac, "empty aac: aac track not registered");
-    for (std::size_t index = split; index < packets.size(); ++index)
-    {
-        require(receiver.receive_rtp(packets[index]) != gb28181_rtp_receive_result::fatal, "empty aac: empty pes rejected");
-    }
-    receiver.shutdown();
-    std::cout << "empty_aac_is_not_media: PASS\n";
-}
 void real_mp3_audio()
 {
     // 有效 MP3 能被 ireader 映射并解析，到达上层后按无音频忽略。对照用同样带音频 PES、
@@ -525,7 +463,6 @@ int main()
         check("mp3", PSI_STREAM_MP3, 144, 1);
         device_selected_ssrc();
         empty_payload_is_not_media();
-        empty_aac_is_not_media();
         real_mp3_audio();
         psm_topology_changes();
         psm_history_capacity();

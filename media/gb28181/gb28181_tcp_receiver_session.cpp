@@ -75,13 +75,11 @@ void gb28181_tcp_receiver_session::shutdown()
 
 void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint, boost::asio::yield_context yield)
 {
-    idle_timer_.start(weak_from_this(), media_idle_timeout, [weak = weak_from_this()]()
+    idle_timer_.start(weak_from_this(),
+                      [this]()
                       {
-                          if (const auto owner = weak.lock())
-                          {
-                              spdlog::info("gb28181 tcp receiver idle timeout {}", owner->receiver_.stream_name());
-                              owner->shutdown();
-                          }
+                          spdlog::info("gb28181 tcp receiver idle timeout {}", receiver_.stream_name());
+                          shutdown();
                       });
     boost::system::error_code error;
     if (remote_endpoint)

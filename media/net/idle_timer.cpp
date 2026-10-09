@@ -7,10 +7,9 @@ namespace media_server
 
 idle_timer::idle_timer(boost::asio::io_context& io) : timer_(io) {}
 
-void idle_timer::start(std::weak_ptr<void> owner, std::chrono::steady_clock::duration timeout, std::function<void()> on_idle)
+void idle_timer::start(std::weak_ptr<void> owner, std::function<void()> on_idle)
 {
     owner_ = std::move(owner);
-    timeout_ = timeout;
     on_idle_ = std::move(on_idle);
     touch();
     wait();
@@ -27,7 +26,7 @@ void idle_timer::stop()
 
 void idle_timer::wait()
 {
-    timer_.expires_at(last_activity_ + timeout_);
+    timer_.expires_at(last_activity_ + media_idle_timeout);
     timer_.async_wait(
         [this, owner = owner_](const boost::system::error_code& error)
         {
@@ -36,7 +35,7 @@ void idle_timer::wait()
             {
                 return;
             }
-            if (std::chrono::steady_clock::now() < last_activity_ + timeout_)
+            if (std::chrono::steady_clock::now() < last_activity_ + media_idle_timeout)
             {
                 wait();
                 return;

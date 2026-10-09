@@ -74,13 +74,11 @@ void rtmp_session::startup()
             }
         });
     // 收到数据即刷新；播放连接停止计时。
-    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtmp_session>(self)]()
+    idle_timer_.start(self,
+                      [this]()
                       {
-                          if (const auto owner = weak.lock())
-                          {
-                              spdlog::info("rtmp input idle timeout");
-                              owner->shutdown();
-                          }
+                          spdlog::info("rtmp input idle timeout");
+                          shutdown();
                       });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
@@ -171,21 +169,13 @@ int rtmp_session::publish_callback(void* param, const char* app, const char* str
 int rtmp_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (!self->publish_)
-    {
-        return -1;
-    }
-    return self->publish_->on_video(data, bytes, timestamp);
+    return self->publish_ ? self->publish_->on_video(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_session*>(param);
-    if (!self->publish_)
-    {
-        return -1;
-    }
-    return self->publish_->on_audio(data, bytes, timestamp);
+    return self->publish_ ? self->publish_->on_audio(data, bytes, timestamp) : -1;
 }
 
 int rtmp_session::script_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)

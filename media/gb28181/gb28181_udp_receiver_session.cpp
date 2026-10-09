@@ -82,13 +82,11 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
     schedule_rtcp();
     // 设备不发 BYE 就停止推流时（重启、断网）释放接收端口。
-    idle_timer_.start(self, media_idle_timeout, [weak = weak_from_this()]()
+    idle_timer_.start(self,
+                      [this]()
                       {
-                          if (const auto owner = weak.lock())
-                          {
-                              spdlog::info("gb28181 udp receiver idle timeout {}", owner->receiver_.stream_name());
-                              owner->shutdown();
-                          }
+                          spdlog::info("gb28181 udp receiver idle timeout {}", receiver_.stream_name());
+                          shutdown();
                       });
 
     spdlog::info(

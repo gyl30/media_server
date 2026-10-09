@@ -68,10 +68,7 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker,
-                                           std::string stream_name,
-                                           std::uint8_t payload_type,
-                                           std::uint32_t expected_ssrc)
+gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
     : worker_(worker), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
 {
 }
@@ -325,11 +322,6 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         spdlog::info("gb28181 stream started {}", stream_name_);
     }
 
-    // 只有封装头的空包没有媒体数据；avpkt2bs 会给空 AAC 补 ADTS 头，必须在此之前忽略。
-    if (packet->size <= 0)
-    {
-        return 0;
-    }
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)
     {

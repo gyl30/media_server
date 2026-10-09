@@ -116,13 +116,11 @@ void rtsp_pull_session::startup()
 
     const auto self = shared_from_this();
     // 连接、协商和收流都受同一空闲时间约束，上游不再发送 RTP 时结束会话。
-    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtsp_pull_session>(self)]()
+    idle_timer_.start(self,
+                      [this]()
                       {
-                          if (const auto owner = weak.lock())
-                          {
-                              spdlog::info("rtsp pull idle timeout {}", owner->stream_name_);
-                              owner->shutdown();
-                          }
+                          spdlog::info("rtsp pull idle timeout {}", stream_name_);
+                          shutdown();
                       });
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
 }

@@ -46,13 +46,11 @@ void rtsp_server_connection::startup()
             }
         });
     // 收到数据即刷新（UDP 推流由 UDP 会话收到 RTP 时刷新）；播放连接停止计时。
-    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtsp_server_connection>(self)]()
+    idle_timer_.start(self,
+                      [this]()
                       {
-                          if (const auto owner = weak.lock())
-                          {
-                              spdlog::info("rtsp input idle timeout");
-                              owner->shutdown();
-                          }
+                          spdlog::info("rtsp input idle timeout");
+                          shutdown();
                       });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
