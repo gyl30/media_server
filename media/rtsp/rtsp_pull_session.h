@@ -11,6 +11,7 @@
 
 #include <boost/asio.hpp>
 
+#include "media/net/idle_timer.h"
 #include "media/core/session_registry.h"
 #include "media/net/tcp_transport.h"
 
@@ -86,6 +87,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
     boost::asio::steady_timer rtcp_timer_;
+    idle_timer idle_timer_;
     std::shared_ptr<tcp_transport> transport_;
     std::unique_ptr<rtsp_pull_media> media_;
     rtsp_client_t* client_{};

@@ -53,7 +53,7 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
 }
 
 rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket)
-    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket)))
+    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
 {
 }
 
@@ -73,6 +73,15 @@ void rtmp_session::startup()
                 }
             }
         });
+    // 播放连接不计时；握手阶段和发布连接超过空闲时间没有输入即关闭。
+    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtmp_session>(self)]()
+                      {
+                          if (const auto owner = weak.lock())
+                          {
+                              spdlog::info("rtmp input idle timeout");
+                              owner->shutdown();
+                          }
+                      });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
@@ -116,6 +125,7 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
         {
             break;
         }
+        idle_timer_.touch();
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
             break;
@@ -233,6 +243,7 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
         return -1;
     }
     play_ = std::move(play);
+    idle_timer_.stop();
     spdlog::info("rtmp play {}", *target);
     return RTMP_SERVER_ASYNC_START;
 }
@@ -270,6 +281,7 @@ void rtmp_session::shutdown()
 
 void rtmp_session::safe_shutdown()
 {
+    idle_timer_.stop();
     if (publish_)
     {
         publish_->shutdown();

@@ -11,6 +11,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/core/session_registry.h"
+#include "media/net/idle_timer.h"
 #include "media/net/udp_transport.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
 
@@ -42,6 +43,7 @@ class gb28181_udp_receiver_session final : public session, public std::enable_sh
     std::shared_ptr<udp_transport> rtcp_transport_;
     std::optional<std::uint16_t> local_port_;
     boost::asio::steady_timer rtcp_timer_;
+    idle_timer idle_timer_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtp_endpoint_;
     std::optional<boost::asio::ip::udp::endpoint> remote_rtcp_endpoint_;
 };

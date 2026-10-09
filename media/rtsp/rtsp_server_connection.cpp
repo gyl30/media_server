@@ -26,7 +26,7 @@ constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
 }    // namespace
 
 rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket)
-    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket)))
+    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
 {
 }
 
@@ -45,6 +45,15 @@ void rtsp_server_connection::startup()
                 }
             }
         });
+    // 播放连接和 UDP 推流不在控制连接上计时；其余连接超过空闲时间没有输入即关闭。
+    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtsp_server_connection>(self)]()
+                      {
+                          if (const auto owner = weak.lock())
+                          {
+                              spdlog::info("rtsp input idle timeout");
+                              owner->shutdown();
+                          }
+                      });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
@@ -116,6 +125,7 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
             shutdown();
             return;
         }
+        idle_timer_.touch();
         auto remaining = std::span{buffer.data(), bytes};
 
         while (!remaining.empty())
@@ -222,7 +232,13 @@ int rtsp_server_connection::setup_callback(
     auto* self = static_cast<rtsp_server_connection*>(param);
     if (self->publish_session_)
     {
-        return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+        const auto result =
+            self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
+        if (self->publish_session_->receives_udp())
+        {
+            self->idle_timer_.stop();
+        }
+        return result;
     }
     if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", true))
     {
@@ -340,11 +356,13 @@ bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
                                                         local_address_,
                                                         [owner](std::vector<std::uint8_t> data) { owner->transport_->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
+    idle_timer_.stop();
     return true;
 }
 
 void rtsp_server_connection::safe_shutdown()
 {
+    idle_timer_.stop();
     if (publish_session_)
     {
         publish_session_->shutdown();

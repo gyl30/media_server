@@ -28,7 +28,8 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
     : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc),
       rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
-      rtcp_timer_(worker_.io())
+      rtcp_timer_(worker_.io()),
+      idle_timer_(worker_.io())
 {
 }
 
@@ -80,6 +81,15 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
     schedule_rtcp();
+    // 设备不发 BYE 就停止推流时（重启、断网）释放接收端口。
+    idle_timer_.start(self, media_idle_timeout, [weak = weak_from_this()]()
+                      {
+                          if (const auto owner = weak.lock())
+                          {
+                              spdlog::info("gb28181 udp receiver idle timeout {}", owner->receiver_.stream_name());
+                              owner->shutdown();
+                          }
+                      });
 
     spdlog::info(
         "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_name(), *local_port_, *local_port_ + 1U);
@@ -115,6 +125,10 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
         {
             shutdown();
             return;
+        }
+        if (result == gb28181_rtp_receive_result::accepted)
+        {
+            idle_timer_.touch();
         }
         if (result == gb28181_rtp_receive_result::accepted && !remote_rtp_endpoint_)
         {
@@ -216,6 +230,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
     local_port_.reset();
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
+    idle_timer_.stop();
     rtp_transport_->shutdown();
     rtcp_transport_->shutdown();
     receiver_.shutdown();

@@ -94,7 +94,8 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
       password_(std::move(password)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
-      rtcp_timer_(worker_.io())
+      rtcp_timer_(worker_.io()),
+      idle_timer_(worker_.io())
 {
 }
 
@@ -114,6 +115,15 @@ void rtsp_pull_session::startup()
     url_ = parsed->request_url;
 
     const auto self = shared_from_this();
+    // 连接、协商和收流都受同一空闲时间约束，上游不再发送 RTP 时结束会话。
+    idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtsp_pull_session>(self)]()
+                      {
+                          if (const auto owner = weak.lock())
+                          {
+                              spdlog::info("rtsp pull idle timeout {}", owner->stream_name_);
+                              owner->shutdown();
+                          }
+                      });
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
 }
 
@@ -158,6 +168,7 @@ void rtsp_pull_session::schedule_rtcp()
 
 void rtsp_pull_session::safe_shutdown()
 {
+    idle_timer_.stop();
     session_registry::instance().remove_receiver_session(stream_name_, *this);
     if (media_)
     {
@@ -422,6 +433,10 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
     {
         shutdown();
         return;
+    }
+    if (!rtcp)
+    {
+        idle_timer_.touch();
     }
 }
 

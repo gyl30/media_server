@@ -16,7 +16,7 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
                                                            std::string stream_name,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
-    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc), socket_(worker_.io())
+    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc), socket_(worker_.io()), idle_timer_(worker_.io())
 {
 }
 
@@ -66,6 +66,14 @@ void gb28181_tcp_receiver_session::shutdown()
 
 void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpoint> remote_endpoint, boost::asio::yield_context yield)
 {
+    idle_timer_.start(weak_from_this(), media_idle_timeout, [weak = weak_from_this()]()
+                      {
+                          if (const auto owner = weak.lock())
+                          {
+                              spdlog::info("gb28181 tcp receiver idle timeout {}", owner->receiver_.stream_name());
+                              owner->shutdown();
+                          }
+                      });
     boost::system::error_code error;
     if (remote_endpoint)
     {
@@ -125,10 +133,15 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
             if (packet_bytes != 0U)
             {
                 const std::span packet{input_buffer.data() + offset, packet_bytes};
-                if (receiver_.receive_rtp(packet) == gb28181_rtp_receive_result::fatal)
+                const auto result = receiver_.receive_rtp(packet);
+                if (result == gb28181_rtp_receive_result::fatal)
                 {
                     shutdown();
                     return;
+                }
+                if (result == gb28181_rtp_receive_result::accepted)
+                {
+                    idle_timer_.touch();
                 }
             }
             offset += packet_bytes;
@@ -147,6 +160,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
 
 void gb28181_tcp_receiver_session::safe_shutdown()
 {
+    idle_timer_.stop();
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     if (listener_)
     {

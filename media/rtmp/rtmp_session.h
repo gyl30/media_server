@@ -10,6 +10,7 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
 
+#include "media/net/idle_timer.h"
 #include "media/net/tcp_transport.h"
 
 struct rtmp_server_t;
@@ -62,6 +63,7 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
     rtmp_server_t* rtmp_context_{};
     std::unique_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
+    idle_timer idle_timer_;
 };
 
 }    // namespace media_server

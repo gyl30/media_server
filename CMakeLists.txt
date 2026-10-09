@@ -231,6 +231,7 @@ add_library(media_core STATIC
     media/net/tcp_transport.cpp
     media/net/udp_transport.cpp
     media/net/tcp_listener.cpp
+    media/net/idle_timer.cpp
     media/flv/flv_muxer.cpp
     media/hls/hls_play_session.cpp
     media/hls/hls_segmenter.cpp
@@ -350,6 +351,10 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} h265)
         set_tests_properties(rtmp_hevc_decode PROPERTIES TIMEOUT 60)
+        add_test(NAME publish_idle_timeout
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/publish_idle_timeout.py
+                $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
+        set_tests_properties(publish_idle_timeout PROPERTIES TIMEOUT 60)
     endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME accept_recovery

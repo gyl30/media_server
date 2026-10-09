@@ -37,6 +37,8 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
 
    public:
     void shutdown();
+    // UDP 推流的媒体不经过 RTSP 控制连接，由 UDP 会话自行检测空闲。
+    [[nodiscard]] bool receives_udp() const noexcept { return udp_session_ != nullptr; }
 
    public:
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);

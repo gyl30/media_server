@@ -12,6 +12,7 @@
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/address.hpp>
 
+#include "media/net/idle_timer.h"
 #include "media/net/tcp_transport.h"
 
 extern "C"
@@ -65,6 +66,7 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
+    idle_timer idle_timer_;
 };
 
 }    // namespace media_server
