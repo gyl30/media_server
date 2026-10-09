@@ -40,27 +40,21 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
         return std::nullopt;
     }
 
-    const auto local_port = media_port_pool::instance().acquire();
-    if (!local_port)
+    local_port_ = media_port_pool::instance().acquire();
+    if (!local_port_)
     {
-        receiver_.shutdown();
         return std::nullopt;
     }
     boost::system::error_code network_error;
-    rtp_transport_->startup(bind_address, *local_port, network_error);
+    rtp_transport_->startup(bind_address, *local_port_, network_error);
     if (!network_error)
     {
-        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port + 1U), network_error);
+        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), network_error);
     }
     if (network_error)
     {
-        rtp_transport_->shutdown();
-        rtcp_transport_->shutdown();
-        media_port_pool::instance().release(*local_port);
-        receiver_.shutdown();
         return std::nullopt;
     }
-    local_port_ = *local_port;
 
     const auto self = shared_from_this();
     rtcp_transport_->set_write_callback(
@@ -223,19 +217,18 @@ void gb28181_udp_receiver_session::schedule_rtcp()
 
 void gb28181_udp_receiver_session::safe_shutdown()
 {
-    if (!local_port_)
-    {
-        return;
-    }
-    const auto local_port = *local_port_;
-    local_port_.reset();
     session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
     rtcp_timer_.cancel();
     idle_timer_.stop();
     rtp_transport_->shutdown();
     rtcp_transport_->shutdown();
     receiver_.shutdown();
-    media_port_pool::instance().release(local_port);
+    // 端口在 socket 关闭后才归还，且只归还一次。
+    if (local_port_)
+    {
+        media_port_pool::instance().release(*local_port_);
+        local_port_.reset();
+    }
     spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());
 }
 

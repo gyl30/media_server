@@ -112,73 +112,77 @@ void bind_failure()
     const auto address = boost::asio::ip::make_address("127.0.0.1");
     worker_context worker;
     std::exception_ptr failure;
+    for (const std::string_view protocol : {"receiver", "sender", "rtsp"})
+    {
+        for (const auto blocked_port : std::array<std::uint16_t, 2>{50'000, 50'001})
+        {
+            udp::socket blocker(worker.io(), udp::endpoint(address, blocked_port));
+            if (protocol == "sender")
+            {
+                auto stream = std::make_shared<media_stream>("verify/port-conflict", worker);
+                require(stream->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
+                                             .clock_rate = 90'000, .channel_count = 0, .codec_config = {}}}), "test tracks rejected");
+                auto session = std::make_shared<gb28181_udp_sender_session>(
+                    worker, stream, "sender", udp::endpoint(address, 40'000), std::nullopt);
+                require(!session->startup(address, 96, 1234), "sender retried another allocation after bind failure");
+                session->shutdown();
+            }
+            else if (protocol == "receiver")
+            {
+                auto session = std::make_shared<gb28181_udp_receiver_session>(worker, "verify/port-conflict", 96, 1234);
+                require(!session->startup(address), "receiver retried another allocation after bind failure");
+                session->shutdown();
+            }
+            else
+            {
+                rtsp_handler_t handler{};
+                handler.close = [](void*) { return 0; };
+                handler.send = [](void*, const void*, std::size_t) { return 0; };
+                std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(
+                    rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, nullptr), &rtsp_server_destroy);
+                require(server != nullptr, "RTSP test server creation failed");
+                auto session = std::make_shared<rtsp_publish_session>(
+                    worker, address, [](std::span<const std::uint8_t>) {}, []() {});
+                constexpr std::string_view sdp =
+                    "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=port-test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                    "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
+                    "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==\r\n"
+                    "a=control:trackID=1\r\n";
+                require(session->on_announce(server.get(), "rtsp://127.0.0.1/verify/port-conflict",
+                                             sdp.data(), static_cast<int>(sdp.size())), "RTSP test ANNOUNCE failed");
+                rtsp_header_transport_t transport{};
+                require(rtsp_header_transport("RTP/AVP;unicast;client_port=40000-40001;mode=record", &transport) == 0,
+                        "RTSP test transport rejected");
+                require(session->on_setup(server.get(), "rtsp://127.0.0.1/verify/port-conflict/trackID=1", {}, &transport, 1) < 0,
+                        "RTSP retried another allocation after bind failure");
+                session->shutdown();
+            }
+            // 失败的 startup 不自行清理，端口由 shutdown 投递的 safe_shutdown 归还。
+            worker.io().poll();
+            const auto first = pool.acquire();
+            const auto second = pool.acquire();
+            require(first == 50'000 && second == 50'002 && !pool.acquire(), "bind failure leaked or duplicated allocation");
+            if (blocked_port == 50'001)
+            {
+                udp::socket released_rtp(worker.io(), udp::endpoint(address, *first));
+            }
+            blocker.close();
+            {
+                udp::socket rtp(worker.io(), udp::endpoint(address, *first));
+                udp::socket rtcp(worker.io(), udp::endpoint(address, static_cast<std::uint16_t>(*first + 1U)));
+                udp::socket unused(worker.io(), udp::endpoint(address, *second));
+            }
+            pool.release(*second);
+            pool.release(*first);
+        }
+    }
+
     boost::asio::post(
         worker.io(),
         [&]()
         {
             try
             {
-                for (const std::string_view protocol : {"receiver", "sender", "rtsp"})
-                {
-                    for (const auto blocked_port : std::array<std::uint16_t, 2>{50'000, 50'001})
-                    {
-                        udp::socket blocker(worker.io(), udp::endpoint(address, blocked_port));
-                        if (protocol == "sender")
-                        {
-                            auto stream = std::make_shared<media_stream>("verify/port-conflict", worker);
-                            require(stream->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
-                                                         .clock_rate = 90'000, .channel_count = 0, .codec_config = {}}}), "test tracks rejected");
-                            auto session = std::make_shared<gb28181_udp_sender_session>(
-                                worker, stream, "sender", udp::endpoint(address, 40'000), std::nullopt);
-                            require(!session->startup(address, 96, 1234), "sender retried another allocation after bind failure");
-                        }
-                        else if (protocol == "receiver")
-                        {
-                            auto session = std::make_shared<gb28181_udp_receiver_session>(worker, "verify/port-conflict", 96, 1234);
-                            require(!session->startup(address), "receiver retried another allocation after bind failure");
-                        }
-                        else
-                        {
-                            rtsp_handler_t handler{};
-                            handler.close = [](void*) { return 0; };
-                            handler.send = [](void*, const void*, std::size_t) { return 0; };
-                            std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(
-                                rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, nullptr), &rtsp_server_destroy);
-                            require(server != nullptr, "RTSP test server creation failed");
-                            auto session = std::make_shared<rtsp_publish_session>(
-                                worker, address, [](std::span<const std::uint8_t>) {}, []() {});
-                            constexpr std::string_view sdp =
-                                "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=port-test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
-                                "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
-                                "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==\r\n"
-                                "a=control:trackID=1\r\n";
-                            require(session->on_announce(server.get(), "rtsp://127.0.0.1/verify/port-conflict",
-                                                         sdp.data(), static_cast<int>(sdp.size())), "RTSP test ANNOUNCE failed");
-                            rtsp_header_transport_t transport{};
-                            require(rtsp_header_transport("RTP/AVP;unicast;client_port=40000-40001;mode=record", &transport) == 0,
-                                    "RTSP test transport rejected");
-                            require(session->on_setup(server.get(), "rtsp://127.0.0.1/verify/port-conflict/trackID=1", {}, &transport, 1) < 0,
-                                    "RTSP retried another allocation after bind failure");
-                            session->shutdown();
-                        }
-                        const auto first = pool.acquire();
-                        const auto second = pool.acquire();
-                        require(first == 50'000 && second == 50'002 && !pool.acquire(), "bind failure leaked or duplicated allocation");
-                        if (blocked_port == 50'001)
-                        {
-                            udp::socket released_rtp(worker.io(), udp::endpoint(address, *first));
-                        }
-                        blocker.close();
-                        {
-                            udp::socket rtp(worker.io(), udp::endpoint(address, *first));
-                            udp::socket rtcp(worker.io(), udp::endpoint(address, static_cast<std::uint16_t>(*first + 1U)));
-                            udp::socket unused(worker.io(), udp::endpoint(address, *second));
-                        }
-                        pool.release(*second);
-                        pool.release(*first);
-                    }
-                }
-
                 {
                     udp::socket blocker(worker.io(), udp::endpoint(address, 50'000));
                     auto certificate = dtls_certificate::create();

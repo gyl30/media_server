@@ -36,7 +36,6 @@ class gb28181_udp_sender_session final : public session, public std::enable_shar
     void shutdown();
 
    private:
-    void shutdown_udp_transports();
     void schedule_rtcp();
     void send_packet(std::vector<std::uint8_t> packet);
 

@@ -40,17 +40,6 @@ gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
 {
 }
 
-void gb28181_udp_sender_session::shutdown_udp_transports()
-{
-    rtp_transport_->shutdown();
-    rtcp_transport_->shutdown();
-    if (local_port_)
-    {
-        media_port_pool::instance().release(*local_port_);
-        local_port_.reset();
-    }
-}
-
 bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, std::uint8_t payload_type, std::uint32_t ssrc)
 {
     local_port_ = media_port_pool::instance().acquire();
@@ -66,13 +55,11 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     }
     if (network_error)
     {
-        shutdown_udp_transports();
         return false;
     }
     shutdown_subscription_ = worker_.subscribe_shutdown([self = shared_from_this()]() { self->safe_shutdown(); });
     if (!shutdown_subscription_)
     {
-        shutdown_udp_transports();
         return false;
     }
 
@@ -82,8 +69,6 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
         rtcp_sender_ = rtp_create(&handler, nullptr, ssrc, 0, 90'000, 2 * 1024 * 1024, 1);
         if (rtcp_sender_ == nullptr)
         {
-            shutdown_subscription_.reset();
-            shutdown_udp_transports();
             return false;
         }
     }
@@ -124,15 +109,6 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
         worker_, stream_, [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); }, [self]() { self->shutdown(); });
     if (!sender_->startup(payload_type, ssrc))
     {
-        sender_->shutdown();
-        sender_.reset();
-        shutdown_subscription_.reset();
-        shutdown_udp_transports();
-        if (rtcp_sender_ != nullptr)
-        {
-            rtp_destroy(rtcp_sender_);
-            rtcp_sender_ = nullptr;
-        }
         return false;
     }
 
@@ -223,7 +199,13 @@ void gb28181_udp_sender_session::safe_shutdown()
         sender_->shutdown();
         sender_.reset();
     }
-    shutdown_udp_transports();
+    rtp_transport_->shutdown();
+    rtcp_transport_->shutdown();
+    if (local_port_)
+    {
+        media_port_pool::instance().release(*local_port_);
+        local_port_.reset();
+    }
     if (rtcp_sender_ != nullptr)
     {
         rtp_destroy(rtcp_sender_);

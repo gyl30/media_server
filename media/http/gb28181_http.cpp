@@ -92,12 +92,12 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         auto session = std::make_shared<gb28181_udp_receiver_session>(worker, stream_name, config.payload_type, config.ssrc);
         if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
         {
+            session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
         const auto local_rtp_port = session->startup(std::move(bind_address));
         if (!local_rtp_port)
         {
-            session_registry::instance().remove_receiver_session(stream_name, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -110,6 +110,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
     auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_name, config.payload_type, config.ssrc);
     if (!session_registry::instance().add_receiver_session(stream_name, config.stream_id, session))
     {
+        session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     const bool started = config.transport == gb28181_transport::tcp_active
@@ -117,7 +118,7 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         : session->startup(std::move(bind_address), config.listen_port);
     if (!started)
     {
-        session_registry::instance().remove_receiver_session(stream_name, *session);
+        session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     return make_empty_response(request, boost::beast::http::status::created);
@@ -151,11 +152,11 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
             std::move(remote_rtcp_endpoint));
         if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
         {
+            session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
         if (!session->startup(std::move(bind_address), config.payload_type, config.ssrc))
         {
-            session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
@@ -165,6 +166,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     auto session = std::make_shared<gb28181_tcp_sender_session>(worker, stream, sender_id);
     if (!session_registry::instance().add_sender_session(stream_name, sender_id, config.stream_id, session))
     {
+        session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     if (config.transport == gb28181_transport::tcp_active)
@@ -173,7 +175,7 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
     }
     else if (!session->startup(std::move(bind_address), config.listen_port, config.payload_type, config.ssrc))
     {
-        session_registry::instance().remove_sender_session(stream_name, sender_id, *session);
+        session->shutdown();
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     return make_empty_response(request, boost::beast::http::status::created);

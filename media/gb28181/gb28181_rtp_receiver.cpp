@@ -82,7 +82,6 @@ bool gb28181_rtp_receiver::startup()
         rtsp_demuxer_set_ps_notify(demuxer_, &gb28181_rtp_receiver::stream_callback, this) != 0 ||
         rtsp_demuxer_set_info(demuxer_, stream_name_.c_str(), "media_server") != 0)
     {
-        shutdown();
         return false;
     }
     return true;

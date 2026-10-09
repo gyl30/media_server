@@ -51,8 +51,6 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
     if (error)
     {
         spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
-        listener_.reset();
-        receiver_.shutdown();
         return false;
     }
 
