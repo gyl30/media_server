@@ -162,6 +162,11 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
         avpkt2bs_destroy(&bitstream_);
         avpkt2bs_create(&bitstream_);
     }
+    // 轨道未就绪时媒体核心会丢弃帧；不发布也不刷新出帧期限。
+    if (media_stream_->tracks().empty())
+    {
+        return 0;
+    }
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
     if (bytes <= 0 || bitstream_.ptr == nullptr)
     {

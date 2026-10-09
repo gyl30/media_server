@@ -57,7 +57,7 @@ def main():
         results = [answered(port) for _ in range(5)]
     finally:
         stop_process(server)
-    if results[-2:] != [True, True]:
+    if results != [False, False, False, True, True]:
         print(f"listener stopped after per-connection accept error: {results}")
         return 1
 
