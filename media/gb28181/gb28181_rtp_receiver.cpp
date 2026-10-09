@@ -13,6 +13,7 @@ extern "C"
 {
 #include "avpacket.h"
 #include "mpeg-proto.h"
+#include "mpeg-util.h"
 #include "rtp-packet.h"
 #include "rtsp-demuxer.h"
 }
@@ -146,7 +147,12 @@ void gb28181_rtp_receiver::stream_callback(void* param, int, int codecid, const 
 void gb28181_rtp_receiver::on_stream(int codecid, bool finish)
 {
     const auto codec = codec_from_ps(codecid);
-    if (!codec)
+    if (!codec && mpeg_stream_type_audio(codecid) != 0)
+    {
+        // 不支持的音频按无音频处理，视频照常输出。
+        pending_topology_.unsupported_audio = true;
+    }
+    else if (!codec)
     {
         pending_topology_.invalid = true;
     }
@@ -198,6 +204,10 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
         return true;
     }
 
+    if (topology.unsupported_audio && !topology.audio)
+    {
+        spdlog::warn("gb28181 unsupported audio ignored stream {}", stream_name_);
+    }
     video_codec_ = topology.video;
     audio_codec_ = topology.audio;
     video_track_ = media_track{.id = video_track_id,
@@ -237,6 +247,10 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     }
 
     const auto codec = codec_from_avpacket(packet->stream->codecid);
+    if (!codec && packet->stream->codecid >= AVCODEC_AUDIO_PCM && packet->stream->codecid < AVCODEC_TEXT_WEBVTT)
+    {
+        return 0;
+    }
     if (!codec)
     {
         if (video_codec_)

@@ -5,6 +5,7 @@
 #include "sdp-a-fmtp.h"
 #include "mpeg-ps.h"
 #include "mpeg-ts.h"
+#include "mpeg-util.h"
 #include "avbsf.h"
 #include "avpbs.h" // https://github.com/ireader/avcodec #avbsf/include
 #include "mpeg4-aac.h"
@@ -171,6 +172,10 @@ static inline int rtsp_demuxer_mpegts_onpacket(void* param, int program, int tra
 
     if (0xbd == codecid || 0 == codecid)
         return 0; // ignore HIK private stream
+
+    // media_server: 丢弃无法解码的音频（如 G.722/G.729），由上层按无音频处理，不中断视频
+    if (mpeg_stream_type_audio(codecid))
+        return 0;
 
     (void)program; //ignore
     assert(0);

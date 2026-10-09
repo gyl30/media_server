@@ -49,6 +49,7 @@ class gb28181_rtp_receiver final
     {
         std::optional<codec_id> video;
         std::optional<codec_id> audio;
+        bool unsupported_audio{};
         bool invalid{};
     };
 
