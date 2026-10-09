@@ -107,6 +107,10 @@ BYE timeout/远端失败只记录日志，不阻止已经确认本地清理的�
 
 独立 `bench/gb_signaling_verify.py` 是管理员/播放客户端，负责正式 API；simulator 不 POST device/play、不 DELETE live。
 
+默认媒体仍是轻量 H264 视频。可通过 `--media-file` 使用带 AUD、SPS/PPS 的 25fps Annex-B H264，通过可选 `--audio-file` 加入原始 PCMA（8000Hz、单声道、非空且长度为 320 字节的整数倍）。视频和音频素材循环读取，PS/RTP 时间戳连续递增；共享源每 40ms 复用一份视频 AU 和 320 字节音频，不为每台设备编码或创建 PS muxer。`--media-profile` 仍只选择默认视频生成的码率。
+
+例如使用 FFmpeg 生成合成音频：`ffmpeg -f lavfi -i sine=frequency=440:sample_rate=8000 -t 1 -ac 1 -c:a pcm_alaw -f alaw /tmp/test.alaw`。将同一份 `--media-file`、`--audio-file` 传给 `bench/gb_signaling_verify.py`，可验证 RTSP 音视频解码、Chrome PCMA 采样与视频帧增长，以及三个 viewer 共享一路上游。素材编码参数必须由实际 SPS 确认；合成码流成功不替代真实厂商码流的兼容性验收。
+
 清理前全仓调用搜索确认 simulator/Web 已迁移，直接移除：
 
 - `/internal/live/start`、`/internal/live/stop`。

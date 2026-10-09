@@ -18,8 +18,6 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from playwright.sync_api import sync_playwright
-
 from fanout_support import benchmark_head, proc_snapshot, stop_process, wait_for_listener, wait_for_stream
 from gb_signaling_verify import eventually
 from lifecycle_verify import request
@@ -209,6 +207,8 @@ def read_media(run, index=0):
 
 @contextlib.contextmanager
 def browser_page(run):
+    from playwright.sync_api import sync_playwright
+
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path=run["args"].browser, headless=True,
             args=["--autoplay-policy=no-user-gesture-required"])
