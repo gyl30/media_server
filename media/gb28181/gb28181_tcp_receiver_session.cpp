@@ -17,7 +17,7 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
     : worker_(worker),
-      receiver_(worker_, std::move(stream_name), payload_type, ssrc, [this]() { idle_timer_.touch(); }),
+      receiver_(worker_, std::move(stream_name), payload_type, ssrc),
       socket_(worker_.io()),
       idle_timer_(worker_.io())
 {
@@ -128,6 +128,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
             shutdown();
             return;
         }
+        idle_timer_.touch();
 
         input_buffer.insert(input_buffer.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(read_bytes));
         std::size_t offset = 0;

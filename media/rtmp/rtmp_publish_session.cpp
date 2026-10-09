@@ -28,8 +28,8 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name, std::function<void()> media_handler)
-    : stream_(std::make_shared<media_stream>(std::move(stream_name), worker)), media_handler_(std::move(media_handler))
+rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name)
+    : stream_(std::make_shared<media_stream>(std::move(stream_name), worker))
 {
 }
 
@@ -300,7 +300,6 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
         .payload = std::move(payload),
     };
     stream_->publish(std::move(frame));
-    media_handler_();
     return 0;
 }
 

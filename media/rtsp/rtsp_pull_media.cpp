@@ -26,8 +26,8 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_name, std::function<void()> media_handler)
-    : worker_(worker), media_stream_name_(std::move(media_stream_name)), media_handler_(std::move(media_handler))
+rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_name)
+    : worker_(worker), media_stream_name_(std::move(media_stream_name))
 {
 }
 
@@ -201,7 +201,6 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
         .key_frame = (packet->flags & AVPACKET_FLAG_KEY) != 0,
         .payload = std::move(payload),
     });
-    media_handler_();
     return 0;
 }
 

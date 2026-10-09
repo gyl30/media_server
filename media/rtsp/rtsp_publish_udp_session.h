@@ -34,7 +34,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
                              boost::asio::ip::address bind_address,
                              std::string stream_name,
                              std::vector<rtsp_publish_track_description> descriptions,
-                             std::function<void()> media_handler);
+                             std::function<void()> input_handler);
 
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
@@ -67,6 +67,8 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
     worker_context& worker_;
     std::function<void()> shutdown_handler_;
     boost::asio::ip::address bind_address_;
+    // 媒体经 UDP 到达，RTSP 控制连接的空闲计时由此刷新。
+    std::function<void()> input_handler_;
     rtsp_publish_media media_;
     std::vector<track_state> track_states_;
     boost::asio::steady_timer rtcp_timer_;

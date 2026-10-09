@@ -31,7 +31,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     rtsp_publish_session(worker_context& worker,
                          boost::asio::ip::address bind_address,
                          std::function<void(std::span<const std::uint8_t>)> write,
-                         std::function<void()> media_handler);
+                         std::function<void()> input_handler);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
@@ -65,7 +65,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     boost::asio::ip::address bind_address_;
     std::function<void(std::span<const std::uint8_t>)> write_handler_;
     std::function<void()> shutdown_handler_;
-    std::function<void()> media_handler_;
+    std::function<void()> input_handler_;
     std::unique_ptr<rtsp_publish_media> tcp_media_;
     std::vector<tcp_track_state> tcp_track_states_;
     boost::asio::steady_timer tcp_rtcp_timer_;

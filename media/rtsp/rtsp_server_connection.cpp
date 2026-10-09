@@ -45,7 +45,7 @@ void rtsp_server_connection::startup()
                 }
             }
         });
-    // 计时从连接建立开始，只由推流解复用出的媒体帧刷新；播放连接停止计时。
+    // 收到数据即刷新（UDP 推流由 UDP 会话收到 RTP 时刷新）；播放连接停止计时。
     idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtsp_server_connection>(self)]()
                       {
                           if (const auto owner = weak.lock())
@@ -125,6 +125,7 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
             shutdown();
             return;
         }
+        idle_timer_.touch();
         auto remaining = std::span{buffer.data(), bytes};
 
         while (!remaining.empty())

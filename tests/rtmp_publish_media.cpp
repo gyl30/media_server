@@ -105,15 +105,14 @@ class frame_sink final : public media_sink
     worker_context& worker_;
 };
 
-// 发布会话、下游 sink 与发布出的帧计数。
+// 发布会话与下游 sink。
 struct publisher
 {
     worker_context worker;
-    std::size_t notifications{};
     rtmp_publish_session session;
     std::shared_ptr<frame_sink> sink = std::make_shared<frame_sink>(worker);
 
-    explicit publisher(const std::string& name) : session(worker, name, [this]() { ++notifications; }) {}
+    explicit publisher(const std::string& name) : session(worker, name) {}
 
     void register_video(double audio_codec)
     {
@@ -140,7 +139,6 @@ void video_messages()
     publisher publish("rtmp/video");
     publish.register_video(0);
     publish.attach("rtmp/video");
-    require(publish.notifications == 0, "sequence header reported as media");
 
     // AVC end-of-sequence 被解复用器忽略，不是媒体。
     const auto end_of_sequence = video_tag(0x02, {});
@@ -148,11 +146,11 @@ void video_messages()
     {
         require(publish.session.on_video(end_of_sequence.data(), end_of_sequence.size(), timestamp) == 0, "end of sequence rejected");
     }
-    require(publish.notifications == 0 && publish.sink->frames.empty(), "end of sequence reported as media");
+    require(publish.sink->frames.empty(), "end of sequence reported as media");
 
     const auto frame = video_tag(0x01, annex_b_to_length_prefixed(h264_idr));
     require(publish.session.on_video(frame.data(), frame.size(), 400) == 0, "video frame rejected");
-    require(publish.notifications == 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().key_frame &&
+    require(publish.sink->frames.size() == 1 && publish.sink->frames.front().key_frame &&
                 publish.sink->frames.front().payload->size() > h264_idr.size(),
             "video frame not published as media");
     publish.session.shutdown();
@@ -168,17 +166,16 @@ void empty_g711_audio()
     audio.front() = 0x70;
     require(publish.session.on_audio(audio.data(), audio.size(), 0) == 0, "g711 frame rejected");
     publish.attach("rtmp/g711");
-    const auto before = publish.notifications;
 
     const std::array<std::uint8_t, 1> empty_audio{0x70};
     for (std::uint32_t timestamp = 20; timestamp < 400; timestamp += 20)
     {
         require(publish.session.on_audio(empty_audio.data(), empty_audio.size(), timestamp) == 0, "empty g711 rejected");
     }
-    require(publish.notifications == before && publish.sink->frames.empty(), "empty g711 reported as media");
+    require(publish.sink->frames.empty(), "empty g711 reported as media");
 
     require(publish.session.on_audio(audio.data(), audio.size(), 400) == 0, "g711 frame rejected");
-    require(publish.notifications == before + 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 160,
+    require(publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 160,
             "g711 frame not published as media");
     publish.session.shutdown();
     std::cout << "empty_g711_audio: PASS\n";
@@ -199,13 +196,13 @@ void empty_aac_audio()
     {
         require(publish.session.on_audio(empty_audio.data(), empty_audio.size(), timestamp) == 0, "empty aac rejected");
     }
-    require(publish.notifications == 0 && publish.sink->frames.empty(), "empty aac reported as media");
+    require(publish.sink->frames.empty(), "empty aac reported as media");
 
     std::array<std::uint8_t, 22> audio{};
     audio[0] = 0xaf;
     audio[1] = 0x01;
     require(publish.session.on_audio(audio.data(), audio.size(), 400) == 0, "aac frame rejected");
-    require(publish.notifications == 1 && publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 7 + 20,
+    require(publish.sink->frames.size() == 1 && publish.sink->frames.front().payload->size() == 7 + 20,
             "aac frame not published as media");
     publish.session.shutdown();
     std::cout << "empty_aac_audio: PASS\n";

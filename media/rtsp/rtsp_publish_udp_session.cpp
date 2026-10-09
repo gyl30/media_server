@@ -25,10 +25,11 @@ rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
                                                    boost::asio::ip::address bind_address,
                                                    std::string stream_name,
                                                    std::vector<rtsp_publish_track_description> descriptions,
-                                                   std::function<void()> media_handler)
+                                                   std::function<void()> input_handler)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
-      media_(worker_, std::move(stream_name), std::move(descriptions), std::move(media_handler)),
+      input_handler_(std::move(input_handler)),
+      media_(worker_, std::move(stream_name), std::move(descriptions)),
       track_states_(media_.descriptions().size()),
       rtcp_timer_(worker_.io())
 {
@@ -64,6 +65,7 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
             }
             return;
         }
+        input_handler_();
         if (bytes < 12)
         {
             continue;

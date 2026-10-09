@@ -29,12 +29,8 @@ constexpr char rtcp_name[] = "media_server";
 
 rtsp_publish_media::rtsp_publish_media(worker_context& worker,
                                        std::string media_stream_name,
-                                       std::vector<rtsp_publish_track_description> descriptions,
-                                       std::function<void()> media_handler)
-    : worker_(worker),
-      media_stream_name_(std::move(media_stream_name)),
-      descriptions_(std::move(descriptions)),
-      media_handler_(std::move(media_handler))
+                                       std::vector<rtsp_publish_track_description> descriptions)
+    : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
 {
 }
 
@@ -241,7 +237,6 @@ int rtsp_publish_media::on_demuxed_packet(avpacket_t* packet)
         .key_frame = (packet->flags & AVPACKET_FLAG_KEY) != 0,
         .payload = std::move(payload),
     });
-    media_handler_();
     return 0;
 }
 

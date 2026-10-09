@@ -73,7 +73,7 @@ void rtmp_session::startup()
                 }
             }
         });
-    // 计时从连接建立开始，只由发布出的媒体帧刷新；播放连接停止计时。
+    // 收到数据即刷新；播放连接停止计时。
     idle_timer_.start(self, media_idle_timeout, [weak = std::weak_ptr<rtmp_session>(self)]()
                       {
                           if (const auto owner = weak.lock())
@@ -125,6 +125,7 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
         {
             break;
         }
+        idle_timer_.touch();
         if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
         {
             break;
@@ -269,8 +270,7 @@ int rtmp_session::on_publish(std::string_view app, std::string_view stream)
         return -1;
     }
 
-    // publish_ 由本会话持有，回调只会在 rtmp_server_input 内同步执行。
-    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target, [this]() { idle_timer_.touch(); });
+    auto publish = std::make_unique<rtmp_publish_session>(worker_, *target);
     if (!publish->startup())
     {
         return -1;

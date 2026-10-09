@@ -39,11 +39,9 @@ struct rtsp_publish_track_description
 class rtsp_publish_media final
 {
    public:
-    // media_handler 在解复用出完整媒体帧时调用，供输入空闲计时使用。
     rtsp_publish_media(worker_context& worker,
                        std::string media_stream_name,
-                       std::vector<rtsp_publish_track_description> descriptions,
-                       std::function<void()> media_handler);
+                       std::vector<rtsp_publish_track_description> descriptions);
 
    public:
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
@@ -67,7 +65,6 @@ class rtsp_publish_media final
     worker_context& worker_;
     std::string media_stream_name_;
     std::vector<rtsp_publish_track_description> descriptions_;
-    std::function<void()> media_handler_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};

@@ -352,7 +352,12 @@ void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_conte
     for (;;)
     {
         const auto bytes = transport_->read(buffer, yield, error);
-        if (error || rtsp_client_input(client, buffer.data(), bytes) != 0)
+        if (error)
+        {
+            return;
+        }
+        idle_timer_.touch();
+        if (rtsp_client_input(client, buffer.data(), bytes) != 0)
         {
             return;
         }
@@ -401,15 +406,7 @@ int rtsp_pull_session::on_setup()
         return -1;
     }
 
-    auto media = std::make_unique<rtsp_pull_media>(worker_,
-                                                   stream_name_,
-                                                   [weak = weak_from_this()]()
-                                                   {
-                                                       if (const auto owner = weak.lock())
-                                                       {
-                                                           owner->idle_timer_.touch();
-                                                       }
-                                                   });
+    auto media = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
     if (!media->startup(std::move(descriptions)))
     {
         return -1;

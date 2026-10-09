@@ -2,6 +2,8 @@
 #include <functional>
 #include <optional>
 #include <cstdint>
+#include <memory>
+#include <span>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -9,6 +11,7 @@
 #include <vector>
 
 #include "media/codec/codec_utils.h"
+#include "media/core/media_stream.h"
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
 #include "media/gb28181/gb28181_rtp_receiver.h"
@@ -217,12 +220,60 @@ std::vector<std::vector<std::uint8_t>> make_rtp(int audio_codec, std::size_t aud
     return make_rtp(audio_codec, [audio_bytes](std::int64_t) { return std::vector<std::uint8_t>(audio_bytes, 0x55); });
 }
 
+// 接收器加下游计数 sink：流登记后立即挂接，统计下游实际收到的媒体帧。
+class frame_counter final : public media_sink
+{
+   public:
+    explicit frame_counter(worker_context& worker) : worker_(worker) {}
+
+    worker_context& worker() noexcept override { return worker_; }
+    void on_frame(const media_frame&) override { ++frames; }
+    void on_end() override {}
+
+    std::size_t frames{};
+
+   private:
+    worker_context& worker_;
+};
+
+class counted_receiver
+{
+   public:
+    counted_receiver(const std::string& stream_name, std::uint32_t expected_ssrc)
+        : receiver_(worker_, stream_name, payload_type, expected_ssrc), sink_(std::make_shared<frame_counter>(worker_))
+    {
+    }
+
+    [[nodiscard]] bool startup() { return receiver_.startup(); }
+    void shutdown() { receiver_.shutdown(); }
+    [[nodiscard]] std::size_t frames() const noexcept { return sink_->frames; }
+
+    gb28181_rtp_receive_result receive_rtp(std::span<const std::uint8_t> packet)
+    {
+        const auto result = receiver_.receive_rtp(packet);
+        if (!attached_)
+        {
+            if (const auto stream = stream_registry::instance().find(receiver_.stream_name()))
+            {
+                stream->add_sink(sink_);
+                attached_ = true;
+            }
+        }
+        worker_.io().poll();
+        return result;
+    }
+
+   private:
+    worker_context worker_;
+    gb28181_rtp_receiver receiver_;
+    std::shared_ptr<frame_counter> sink_;
+    bool attached_{};
+};
+
 // 送入全部 RTP，返回发布的媒体帧数；遇到致命结果返回 nullopt。
 std::optional<std::size_t> feed(const std::string& stream_name, const std::vector<std::vector<std::uint8_t>>& packets, std::size_t expected_tracks)
 {
-    worker_context worker;
-    std::size_t frames{};
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc, [&frames]() { ++frames; });
+    counted_receiver receiver(stream_name, ssrc);
     require(receiver.startup(), stream_name + ": receiver startup failed");
     for (const auto& packet : packets)
     {
@@ -235,21 +286,19 @@ std::optional<std::size_t> feed(const std::string& stream_name, const std::vecto
     const auto stream = stream_registry::instance().find(stream_name);
     require(stream && stream->tracks().size() == expected_tracks, stream_name + ": unexpected tracks");
     receiver.shutdown();
-    return frames;
+    return receiver.frames();
 }
 
 void check(const char* name, int audio_codec, std::size_t audio_bytes, std::size_t expected_tracks)
 {
-    worker_context worker;
     const std::string stream_name = std::string("gb/test/") + name;
-    std::size_t frames{};
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc, [&frames]() { ++frames; });
+    counted_receiver receiver(stream_name, ssrc);
     require(receiver.startup(), std::string(name) + ": receiver startup failed");
     for (const auto& packet : make_rtp(audio_codec, audio_bytes))
     {
         require(receiver.receive_rtp(packet) != gb28181_rtp_receive_result::fatal, std::string(name) + ": stream rejected");
     }
-    require(frames != 0, std::string(name) + ": published frames not reported");
+    require(receiver.frames() != 0, std::string(name) + ": published frames not reported");
     const auto stream = stream_registry::instance().find(stream_name);
     require(stream && stream->tracks().size() == expected_tracks && stream->tracks().front().codec == codec_id::h264,
             std::string(name) + ": unexpected tracks");
@@ -260,7 +309,7 @@ void device_selected_ssrc()
 {
     worker_context worker;
     const std::string stream_name = "gb/test/device_ssrc";
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U, []() {});
+    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U);
     require(receiver.startup(), "device ssrc: receiver startup failed");
     const auto packets = make_rtp(PSI_STREAM_AUDIO_G711A, 320);
     for (const auto& packet : packets)
@@ -279,16 +328,14 @@ void device_selected_ssrc()
 }
 void empty_payload_is_not_media()
 {
-    worker_context worker;
-    std::size_t frames{};
-    gb28181_rtp_receiver receiver(worker, "gb/test/empty_payload", payload_type, ssrc, [&frames]() { ++frames; });
+    counted_receiver receiver("gb/test/empty_payload", ssrc);
     require(receiver.startup(), "empty payload: receiver startup failed");
     for (const auto& packet : make_rtp(PSI_STREAM_AUDIO_G711A, 320))
     {
         require(receiver.receive_rtp(packet) != gb28181_rtp_receive_result::fatal, "empty payload: stream rejected");
     }
-    const auto before = frames;
-    // 只有 RTP 头、没有 PS 载荷的包不是媒体，不能刷新输入空闲期限。
+    const auto before = receiver.frames();
+    // 只有 RTP 头、没有 PS 载荷的包不是媒体，不能产生下游帧。
     for (std::uint16_t sequence = 1000; sequence < 1100; ++sequence)
     {
         std::array<std::uint8_t, 12> header{0x80, payload_type, static_cast<std::uint8_t>(sequence >> 8U), static_cast<std::uint8_t>(sequence),
@@ -298,7 +345,7 @@ void empty_payload_is_not_media()
         // ignored 才能保证 UDP 会话不会把对端锁定到发送空包的端点。
         require(receiver.receive_rtp(header) == gb28181_rtp_receive_result::ignored, "empty payload: header-only rtp accepted");
     }
-    require(before != 0 && frames == before, "empty payload: header-only rtp reported as media");
+    require(before != 0 && receiver.frames() == before, "empty payload: header-only rtp reported as media");
     receiver.shutdown();
     std::cout << "empty_payload_is_not_media: PASS\n";
 }
@@ -347,10 +394,8 @@ std::pair<std::vector<std::vector<std::uint8_t>>, std::size_t> make_aac_rtp()
 
 void empty_aac_is_not_media()
 {
-    worker_context worker;
-    std::size_t frames{};
     const std::string stream_name = "gb/test/empty_aac";
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc, [&frames]() { ++frames; });
+    counted_receiver receiver(stream_name, ssrc);
     require(receiver.startup(), "empty aac: receiver startup failed");
     const auto [packets, split] = make_aac_rtp();
     for (std::size_t index = 0; index < split; ++index)
@@ -361,12 +406,12 @@ void empty_aac_is_not_media()
     require(stream && stream->tracks().size() == 2 && stream->tracks().back().codec == codec_id::aac, "empty aac: aac track not registered");
     // 第二阶段第一个 PES 会刷出第一阶段最后一个缓冲的 AAC 帧，因此从刷出之后开始计数。
     require(receiver.receive_rtp(packets[split]) != gb28181_rtp_receive_result::fatal, "empty aac: first empty pes rejected");
-    const auto before = frames;
+    const auto before = receiver.frames();
     for (std::size_t index = split + 1; index < packets.size(); ++index)
     {
         require(receiver.receive_rtp(packets[index]) != gb28181_rtp_receive_result::fatal, "empty aac: empty pes rejected");
     }
-    require(before != 0 && frames == before, "empty aac: header-only aac reported as media");
+    require(before != 0 && receiver.frames() == before, "empty aac: header-only aac reported as media");
     receiver.shutdown();
     std::cout << "empty_aac_is_not_media: PASS\n";
 }

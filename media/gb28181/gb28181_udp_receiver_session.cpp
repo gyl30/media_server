@@ -25,7 +25,7 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
                                                            std::string stream_name,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
-    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc, [this]() { idle_timer_.touch(); }),
+    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc),
       rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_timer_(worker_.io()),
@@ -125,6 +125,7 @@ void gb28181_udp_receiver_session::run_rtp(boost::asio::yield_context yield)
             shutdown();
             return;
         }
+        idle_timer_.touch();
 
         const auto result = receiver_.receive_rtp(std::span{buffer.data(), bytes});
         if (result == gb28181_rtp_receive_result::fatal)

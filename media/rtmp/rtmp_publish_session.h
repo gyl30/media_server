@@ -22,8 +22,7 @@ class worker_context;
 class rtmp_publish_session final
 {
    public:
-    // media_handler 在发布媒体帧时调用，供输入空闲计时使用。
-    rtmp_publish_session(worker_context& worker, std::string stream_name, std::function<void()> media_handler);
+    rtmp_publish_session(worker_context& worker, std::string stream_name);
 
    public:
     bool startup();
@@ -49,7 +48,6 @@ class rtmp_publish_session final
 
    private:
     std::shared_ptr<media_stream> stream_;
-    std::function<void()> media_handler_;
     flv_demuxer_t* demuxer_{};
     rtmp_timestamp_state timestamp_;
     std::optional<media_track> initial_video_track_;

@@ -89,9 +89,8 @@ int main()
     try
     {
         worker_context worker;
-        std::size_t notifications{};
         const std::string name = "rtsp/pull-unready";
-        rtsp_pull_media media(worker, name, [&notifications]() { ++notifications; });
+        rtsp_pull_media media(worker, name);
         std::vector<rtsp_pull_track_description> descriptions;
         // SDP 未携带参数集：视频轨道要等带内 SPS/PPS 才能就绪。
         descriptions.push_back(rtsp_pull_track_description{
@@ -120,7 +119,6 @@ int main()
 
         send_audio(100);
         require(stream_registry::instance().find(name) == nullptr, "stream registered without video config");
-        require(notifications == 0, "unready audio reported as published media");
 
         std::uint16_t video_sequence = 1;
         const auto units = nal_units(h264_idr);
@@ -147,7 +145,8 @@ int main()
         require(std::ranges::any_of(sink->frames, [](const media_frame& frame) { return frame.track == 1 && frame.key_frame; }),
                 "video frame not delivered downstream");
         send_audio(20);
-        require(notifications != 0, "published media not reported after ready");
+        require(std::ranges::any_of(sink->frames, [](const media_frame& frame) { return frame.track == 2; }),
+                "audio frame not delivered after ready");
         media.shutdown();
         std::cout << "rtsp pull unready audio: PASS\n";
         return 0;
