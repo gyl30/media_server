@@ -19,6 +19,7 @@ extern "C"
 #include "mpeg-proto.h"
 #include "mpeg-util.h"
 #include "rtp-payload.h"
+#include "rtsp-demuxer.h"
 }
 
 namespace
@@ -87,6 +88,7 @@ struct rtp_writer
 
 using audio_frame_source = std::function<std::vector<std::uint8_t>(std::int64_t)>;
 using psm_rewrite = std::function<void(std::vector<std::array<std::uint8_t, 2>>&)>;
+using ps_transform = std::function<void(std::vector<std::uint8_t>&)>;
 
 // 改写 PSM 时使用的特殊条目标记：
 // invalid_psm_entry 写成 es_info_length 越界的坏条目；descriptor_overflow_entry 写成类型为 G.722、
@@ -166,7 +168,8 @@ std::vector<std::vector<std::uint8_t>> make_rtp(int audio_codec,
                                                 const audio_frame_source& audio_frame,
                                                 std::int64_t frames = 10,
                                                 std::int64_t rewrite_from = -1,
-                                                const psm_rewrite& rewrite = {})
+                                                const psm_rewrite& rewrite = {},
+                                                const ps_transform& transform = {})
 {
     ps_writer ps;
     const ps_muxer_func_t ps_functions{&ps_writer::alloc, &ps_writer::free, &ps_writer::write};
@@ -203,8 +206,12 @@ std::vector<std::vector<std::uint8_t>> make_rtp(int audio_codec,
     rtp_payload_t rtp_functions{&rtp_writer::alloc, &rtp_writer::free, &rtp_writer::packet};
     auto* encoder = rtp_payload_encode_create(payload_type, "PS", 1, ssrc, &rtp_functions, &rtp);
     std::uint32_t timestamp = 0;
-    for (const auto& packet : ps.packets)
+    for (auto& packet : ps.packets)
     {
+        if (transform)
+        {
+            transform(packet);
+        }
         require(rtp_payload_encode_input(encoder, packet.data(), static_cast<int>(packet.size()), timestamp) == 0, "rtp encode failed");
         timestamp += 3'600;
     }
@@ -232,7 +239,7 @@ bool feed(const std::string& stream_id, const std::vector<std::vector<std::uint8
         }
     }
     const auto stream = stream_registry::instance().find(stream_id);
-    require(stream && stream->tracks().size() == expected_tracks, stream_id + ": unexpected tracks");
+    require(expected_tracks == 0 ? !stream : stream && stream->tracks().size() == expected_tracks, stream_id + ": unexpected tracks");
     receiver.shutdown();
     return true;
 }
@@ -450,6 +457,201 @@ void psm_history_capacity()
     require(!extensions, "psm with repeated extension stream ids rejected; topology change missed");
     std::cout << "psm_history_capacity: PASS\n";
 }
+
+std::optional<std::pair<std::size_t, std::size_t>> psm_bounds(const std::vector<std::uint8_t>& packet)
+{
+    for (std::size_t index = 0; index + 6 <= packet.size(); ++index)
+    {
+        if (packet[index] == 0 && packet[index + 1] == 0 && packet[index + 2] == 1 && packet[index + 3] == 0xbc)
+        {
+            const auto bytes = static_cast<std::size_t>((packet[index + 4] << 8U) | packet[index + 5]) + 6;
+            require(index + bytes <= packet.size(), "truncated generated psm");
+            return std::pair{index, bytes};
+        }
+    }
+    return std::nullopt;
+}
+
+ps_transform consecutive_psm(const psm_rewrite& rewrite, bool before)
+{
+    return [rewrite, before](std::vector<std::uint8_t>& packet)
+    {
+        const auto bounds = psm_bounds(packet);
+        if (!bounds)
+        {
+            return;
+        }
+        const auto [offset, bytes] = *bounds;
+        std::vector<std::uint8_t> extra(packet.begin() + static_cast<std::ptrdiff_t>(offset),
+                                       packet.begin() + static_cast<std::ptrdiff_t>(offset + bytes));
+        require(rewrite_psm(extra, rewrite), "consecutive psm rewrite failed");
+        packet.insert(packet.begin() + static_cast<std::ptrdiff_t>(offset + (before ? 0 : bytes)), extra.begin(), extra.end());
+    };
+}
+
+struct demux_observation
+{
+    std::vector<std::array<int, 3>> streams;
+    std::size_t packets{};
+
+    static void on_stream(void* param, int stream, int codec, const void*, int, int finish)
+    {
+        static_cast<demux_observation*>(param)->streams.push_back({stream, codec, finish});
+    }
+    static int on_packet(void* param, avpacket_t*)
+    {
+        ++static_cast<demux_observation*>(param)->packets;
+        return 0;
+    }
+};
+
+demux_observation observe_demux(const std::vector<std::vector<std::uint8_t>>& packets)
+{
+    demux_observation observation;
+    auto* demuxer = rtsp_demuxer_create(0, 500, &demux_observation::on_packet, &observation);
+    require(demuxer != nullptr, "observation demuxer create failed");
+    require(rtsp_demuxer_add_payload(demuxer, 90'000, payload_type, "PS", nullptr) == 0, "observation payload failed");
+    require(rtsp_demuxer_set_ps_notify(demuxer, &demux_observation::on_stream, &observation) == 0, "observation notify failed");
+    for (const auto& packet : packets)
+    {
+        const auto result = rtsp_demuxer_input(demuxer, packet.data(), static_cast<int>(packet.size()));
+        if (result < 0)
+        {
+            rtsp_demuxer_destroy(demuxer);
+            require(false, "observation demux input failed");
+        }
+    }
+    rtsp_demuxer_destroy(demuxer);
+    return observation;
+}
+
+void psm_packet_boundaries()
+{
+    const auto g711 = [](std::int64_t) { return std::vector<std::uint8_t>(320, 0x55); };
+    const auto no_audio = [](std::int64_t) { return std::vector<std::uint8_t>{}; };
+    require(feed("gb/test/video_only", make_rtp(0, no_audio), 1), "video-only rejected");
+    require(feed("gb/test/aac_config_pending", make_rtp(PSI_STREAM_AAC, no_audio), 0),
+            "declared AAC without config was treated as absent audio");
+    const std::vector<std::uint8_t> asc{0x11, 0x90};
+    const std::vector<std::uint8_t> raw_aac(32, 0x55);
+    require(feed("gb/test/aac", make_rtp(PSI_STREAM_AAC, [&](std::int64_t) { return make_adts_frame(asc, raw_aac); }), 2), "AAC rejected");
+
+    for (const auto& [codec, sid] : std::array<std::array<std::uint8_t, 2>, 4>{{
+             {PSI_STREAM_H264, 0xe1}, {PSI_STREAM_H264, 0xe0},
+             {PSI_STREAM_AUDIO_G711A, 0xc1}, {PSI_STREAM_AUDIO_G711A, 0xc0}}})
+    {
+        require(!feed("gb/test/duplicate_" + std::to_string(sid),
+                      make_rtp(PSI_STREAM_AUDIO_G711A, g711, 10, 0,
+                               [codec, sid](auto& entries) { entries.push_back({codec, sid}); }), 2),
+                "duplicate supported PSM stream accepted");
+    }
+    const auto empty = make_rtp(0, no_audio, 10, 0, [](auto& entries) { entries.clear(); });
+    require(feed("gb/test/initial_empty_psm", empty, 0),
+            "initial empty PSM published media");
+    const auto missing = make_rtp(0, no_audio, 10, -1, {},
+                                  [](auto& packet)
+                                  {
+                                      if (const auto bounds = psm_bounds(packet))
+                                      {
+                                          const auto [offset, bytes] = *bounds;
+                                          packet.erase(packet.begin() + static_cast<std::ptrdiff_t>(offset),
+                                                       packet.begin() + static_cast<std::ptrdiff_t>(offset + bytes));
+                                      }
+                                  });
+    require(feed("gb/test/no_psm", missing, 0), "input without PSM published media");
+    for (const auto* packets : {&empty, &missing})
+    {
+        const auto observed = observe_demux(*packets);
+        require(observed.streams.empty() && observed.packets > 0, "unannounced video was not demuxed without PSM notification");
+    }
+    const auto repeated = observe_demux(make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20));
+    require(repeated.streams == std::vector<std::array<int, 3>>{{0xc0, PSI_STREAM_AUDIO_G711A, 0}, {0xe0, PSI_STREAM_H264, 1}},
+            "same complete PSM was notified repeatedly or finish was not on its last entry");
+    const auto emptied = observe_demux(make_rtp(0, no_audio, 20, 10, [](auto& entries) { entries.clear(); }));
+    require(emptied.streams == std::vector<std::array<int, 3>>{{0xe0, PSI_STREAM_H264, 1}, {-1, 0, 1}},
+            "nonempty-to-empty PSM did not notify an empty completion");
+
+    const psm_rewrite duplicate_video = [](auto& entries) { entries.push_back({PSI_STREAM_H264, 0xe1}); };
+    require(feed("gb/test/consecutive_invalid_valid",
+                 make_rtp(PSI_STREAM_AUDIO_G711A, g711, 10, -1, {}, consecutive_psm(duplicate_video, true)), 2),
+            "superseded invalid topology was applied before a packet");
+    require(!feed("gb/test/consecutive_valid_invalid",
+                  make_rtp(PSI_STREAM_AUDIO_G711A, g711, 10, -1, {}, consecutive_psm(duplicate_video, false)), 2),
+            "last invalid topology was not applied on a packet");
+    const psm_rewrite video_only = [](auto& entries)
+    {
+        std::erase_if(entries, [](const auto& entry) { return entry[0] == PSI_STREAM_AUDIO_G711A; });
+    };
+    // 最新 PSM 只声明视频，但历史 C0 映射仍能输出实际 G.711A packet。
+    require(!feed("gb/test/pes_conflicts_with_latest_psm",
+                  make_rtp(PSI_STREAM_AUDIO_G711A, g711, 10, -1, {}, consecutive_psm(video_only, false)), 1),
+            "historical supported audio packet bypassed latest PSM");
+    std::cout << "psm_packet_boundaries: PASS\n";
+}
+
+void supported_pes_identity_changes()
+{
+    const auto g711 = [](std::int64_t) { return std::vector<std::uint8_t>(320, 0x55); };
+    for (const auto& [codec, old_sid] : std::array<std::array<std::uint8_t, 2>, 2>{{
+             {PSI_STREAM_H264, 0xe0}, {PSI_STREAM_AUDIO_G711A, 0xc0}}})
+    {
+        const auto new_sid = static_cast<std::uint8_t>(old_sid + 1U);
+        bool changed{};
+        const auto packets = make_rtp(PSI_STREAM_AUDIO_G711A, g711, 20, 10,
+                                      [codec, new_sid](auto& entries)
+                                      {
+                                          for (auto& entry : entries)
+                                          {
+                                              if (entry[0] == codec)
+                                              {
+                                                  entry[1] = new_sid;
+                                              }
+                                          }
+                                      },
+                                      [codec, old_sid, new_sid, &changed](auto& packet)
+                                      {
+                                          if (const auto bounds = psm_bounds(packet))
+                                          {
+                                              const auto [offset, bytes] = *bounds;
+                                              const auto info = static_cast<std::size_t>((packet[offset + 8] << 8U) | packet[offset + 9]);
+                                              for (auto entry = offset + 12 + info; entry + 4 <= offset + bytes - 4; entry += 4)
+                                              {
+                                                  changed = changed || (packet[entry] == codec && packet[entry + 1] == new_sid);
+                                              }
+                                          }
+                                          if (!changed)
+                                          {
+                                              return;
+                                          }
+                                          for (std::size_t index = 0; index + 4 <= packet.size(); ++index)
+                                          {
+                                              if (packet[index] == 0 && packet[index + 1] == 0 && packet[index + 2] == 1 && packet[index + 3] == old_sid)
+                                              {
+                                                  packet[index + 3] = new_sid;
+                                              }
+                                          }
+                                      });
+        require(changed, "PES identity test did not reach changed PSM");
+        worker_context worker;
+        const auto stream_id = "gb/test/pes_sid_change_" + std::to_string(old_sid);
+        gb28181_rtp_receiver receiver(worker, stream_id, payload_type, ssrc);
+        require(receiver.startup(), "PES identity receiver startup failed");
+        bool rejected{};
+        for (const auto& packet : packets)
+        {
+            if (receiver.receive_rtp(packet) == gb28181_rtp_receive_result::fatal)
+            {
+                const auto stream = stream_registry::instance().find(stream_id);
+                require(stream && stream->tracks().size() == 2, "PES identity rejection occurred before registration");
+                rejected = true;
+                break;
+            }
+        }
+        receiver.shutdown();
+        require(rejected, "supported PES identity change accepted");
+    }
+    std::cout << "supported_pes_identity_changes: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -466,6 +668,8 @@ int main()
         real_mp3_audio();
         psm_topology_changes();
         psm_history_capacity();
+        psm_packet_boundaries();
+        supported_pes_identity_changes();
         return 0;
     }
     catch (const std::exception& error)
