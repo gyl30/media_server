@@ -549,7 +549,7 @@ void whep_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || self->packetizer_)
+            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || self->srtp_)
             {
                 return;
             }

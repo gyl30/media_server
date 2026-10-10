@@ -7,6 +7,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/asio/steady_timer.hpp>
 #include <boost/json.hpp>
 #include <ada.h>
 
@@ -170,7 +171,23 @@ void admission(bool publishing, const std::string& scenario)
             created_session_id = session_id;
             const std::string resource_path(location);
             const auto resource_target = ada::parse<ada::url_aggregator>("http://localhost" + resource_path);
-            if (publishing)
+            if (scenario == "establishment_timeout")
+            {
+                boost::asio::steady_timer timeout(worker.io());
+                timeout.expires_after(16s);
+                timeout.async_wait(yield);
+                http::request<http::string_body> inspect(publishing ? http::verb::delete_ : http::verb::get, resource_path, 11);
+                const auto expired = publishing ? handle_whip_request(inspect, worker, *resource_target, application_config, http_socket, yield) :
+                                                 handle_whep_request(inspect, worker, *resource_target, application_config, http_socket, yield);
+                if (expired.result() != http::status::not_found)
+                {
+                    throw std::runtime_error("unestablished session survived establishment timeout: resource status " +
+                                             std::to_string(expired.result_int()) + " expected 404");
+                }
+                require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
+                        "unestablished WHIP retained receiver registration");
+            }
+            else if (publishing)
             {
                 require(session_registry::instance().find_receiver_session(stream_id) != nullptr, "verified WHIP not registered");
                 http::request<http::string_body> remove(http::verb::delete_, resource_path, 11);
@@ -204,7 +221,7 @@ void admission(bool publishing, const std::string& scenario)
         listener.close();
         worker.request_stop();
     }, completed);
-    worker.io().run_for(5s);
+    worker.io().run_for(scenario == "establishment_timeout" ? 18s : 5s);
     if (failure)
     {
         std::rethrow_exception(failure);
@@ -221,16 +238,24 @@ void admission(bool publishing, const std::string& scenario)
 }
 }    // namespace
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
         media_port_pool::init(54'000, 54'031);
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "transport_failure", "rejected", "closed_http", "accepted", "replacement"})
+        if (argc == 2)
+        {
+            const std::string scenario(argv[1]);
+            require(scenario == "whep_timeout" || scenario == "whip_timeout", "unknown test scenario");
+            admission(scenario == "whip_timeout", "establishment_timeout");
+            return 0;
+        }
+        require(argc == 1, "unexpected test argument");
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "establishment_timeout"})
         {
             admission(false, scenario);
         }
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "rejected", "closed_http", "accepted"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "rejected", "closed_http", "accepted", "establishment_timeout"})
         {
             admission(true, scenario);
         }

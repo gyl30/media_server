@@ -432,7 +432,7 @@ void whip_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->local_port_ == 0 || self->media_receiver_)
+            if (error || self->local_port_ == 0 || self->srtp_)
             {
                 return;
             }
