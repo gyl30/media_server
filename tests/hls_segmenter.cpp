@@ -6,9 +6,15 @@
 #include <string>
 #include <vector>
 
+#include <boost/beast/http.hpp>
+#include <boost/scope/scope_exit.hpp>
+
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
+#include "media/core/stream_registry.h"
+#include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
+#include "media/http/hls_http_session.h"
 #include "media/net/worker_context.h"
 
 namespace
@@ -88,6 +94,75 @@ void opus_only(worker_context& worker)
     segmenter->shutdown();
     std::cout << "opus_only: PASS\n";
 }
+
+void denied_hls_resources(worker_context& worker)
+{
+    using tcp = boost::asio::ip::tcp;
+    namespace http = boost::beast::http;
+    const auto loopback = boost::asio::ip::address_v4::loopback();
+    tcp::acceptor signaling(worker.io(), {loopback, 0});
+    config application_config;
+    application_config.signaling_url = *ada::parse<ada::url_aggregator>(
+        "http://127.0.0.1:" + std::to_string(signaling.local_endpoint().port()));
+    worker.spawn([&](boost::asio::yield_context yield)
+                 {
+                     auto socket = signaling.async_accept(yield);
+                     boost::beast::flat_buffer buffer;
+                     http::request<http::string_body> request;
+                     http::async_read(socket, buffer, request, yield);
+                     http::response<http::empty_body> response(http::status::forbidden, 11);
+                     response.content_length(0);
+                     http::async_write(socket, response, yield);
+                 });
+
+    auto source = std::make_shared<media_stream>("00000000-0000-0000-0000-000000000001", worker);
+    require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
+                                .clock_rate = 90'000, .codec_config = {}}}), "tracks rejected");
+    require(stream_registry::instance().add(source), "source registration failed");
+    const std::weak_ptr<media_stream> lifetime = source;
+    boost::scope::scope_exit cleanup([&]()
+                                    {
+                                        hls::shutdown();
+                                        if (source)
+                                        {
+                                            stream_registry::instance().remove(*source);
+                                            source->end();
+                                        }
+                                        worker.io().poll();
+                                    });
+
+    tcp::acceptor ingress(worker.io(), {loopback, 0});
+    boost::beast::tcp_stream client(worker.io());
+    client.connect(ingress.local_endpoint());
+    http::request<http::string_body> request(http::verb::get,
+        "/play/hls/" + source->stream_id() + "/" + std::string(64, 'a') + "/index.m3u8", 11);
+    std::make_shared<hls_http_session>(worker, boost::beast::tcp_stream(ingress.accept()),
+                                     std::move(request), application_config)->startup();
+
+    http::response<http::string_body> response;
+    boost::system::error_code read_error;
+    bool completed = false;
+    client.expires_after(std::chrono::seconds(3));
+    worker.spawn([&](boost::asio::yield_context yield)
+                 {
+                     boost::beast::flat_buffer buffer;
+                     http::async_read(client, buffer, response, yield[read_error]);
+                     completed = true;
+                 });
+    while (!completed)
+    {
+        worker.io().run_one();
+    }
+    require(!read_error && response.result() == http::status::forbidden, "invalid HLS token accepted");
+    require(response.find(http::field::location) == response.end(), "denied HLS request created a viewer URL");
+    client.socket().close();
+    stream_registry::instance().remove(*source);
+    source->end();
+    source.reset();
+    worker.io().poll();
+    require(lifetime.expired(), "denied HLS request retained the source through a segmenter or viewer");
+    std::cout << "denied HLS request creates no segmenter or viewer: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -98,6 +173,7 @@ int main()
         video_with_opus(worker);
         audio_only(worker);
         opus_only(worker);
+        denied_hls_resources(worker);
         return 0;
     }
     catch (const std::exception& error)

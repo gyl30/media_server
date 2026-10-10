@@ -129,6 +129,11 @@ def main():
                     print(f"{protocol} authenticated publish + fixed tracks: PASS", flush=True)
 
                 source, alternate = source_ids
+                for token in (secrets.token_hex(32), signaling.issue("play", source, ttl=0)):
+                    status, headers, _ = request(http, f"/play/hls/{source}/{token}/index.m3u8")
+                    assert status == 403 and "Location" not in headers, (status, headers)
+                print("HLS invalid/expired authorization rejected: PASS", flush=True)
+                hls_viewers = []
                 for protocol in ("rtmp", "rtsp", "flv", "hls", "whep"):
                     token = signaling.issue("play", source)
 
@@ -157,8 +162,21 @@ def main():
                                 assert status == 200 and body.startswith(b"#EXTM3U"), (status, body)
                                 segments = [line for line in body.decode().splitlines() if line and not line.startswith("#")]
                                 assert segments and all(line.endswith(".ts") and line[:-3].isdigit() for line in segments), segments
-                                assert request(http, location.rsplit("/", 1)[0] + "/" + segments[-1])[0] == 200
+                                segment = segments[-1]
+                                status, _, packet = request(http, location.rsplit("/", 1)[0] + "/" + segment)
+                                assert status == 200 and packet, (status, packet)
                                 assert request(http, location.rsplit("/", 1)[0] + "/18446744073709551615.ts")[0] == 404
+                                second_token = signaling.issue("play", stream_id)
+                                status, headers, _ = request(http, f"/play/hls/{stream_id}/{second_token}/index.m3u8")
+                                assert status == 307 and not signaling.pending(second_token), (status, headers)
+                                second = headers["Location"]
+                                assert second != location, "viewers must have independent playback identities"
+                                status, _, shared_packet = request(http, second.rsplit("/", 1)[0] + "/" + segment)
+                                assert status == 200 and shared_packet == packet, "viewers did not share the existing segment"
+                                decode(ffmpeg, f"http://127.0.0.1:{http}{second}", protocol, True)
+                                hls_viewers.extend((location, second))
+                            else:
+                                assert status in (403, 404) and "Location" not in headers, (status, headers)
                         else:
                             status, headers, answer = request(http, f"/play/whep/{stream_id}/{token}", "POST", offer("recvonly"), "application/sdp")
                             assert (status == 201) == accepted, (protocol, status, answer)
@@ -213,6 +231,18 @@ def main():
                     assert request(http, "/receivers/delete", "POST", json.dumps({"stream_id": stream_id}))[0] == 404
                 for publisher in publishers:
                     publisher.wait(timeout=5)
+                for location in hls_viewers:
+                    deadline = time.monotonic() + 5
+                    while True:
+                        status, _, body = request(http, location)
+                        assert status == 200, (status, body)
+                        if b"#EXT-X-ENDLIST" in body:
+                            break
+                        assert time.monotonic() < deadline, "HLS source end was not delivered"
+                        time.sleep(0.05)
+                    segment = [line for line in body.decode().splitlines() if line and not line.startswith("#")][-1]
+                    assert request(http, location.rsplit("/", 1)[0] + "/" + segment)[0] == 200
+                print("HLS shared viewers decode + retained playlist/segment after source end: PASS", flush=True)
                 assert request(http, f"/publish/whip/{whip_id}", "POST", offer("sendonly"), "application/sdp")[0] != 201
                 for protocol, stream_id in zip(("rtmp", "rtsp"), source_ids):
                     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-re", "-i", str(fixture), "-c", "copy", "-t", "1"]

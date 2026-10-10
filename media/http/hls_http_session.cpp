@@ -93,12 +93,6 @@ void hls_http_session::handle_request(boost::asio::yield_context yield)
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
             return;
         }
-        const auto segmenter = hls::get_or_create(source);
-        if (!segmenter)
-        {
-            send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
-            return;
-        }
         if (!verify_stream(config_, token, "play", stream_id, yield))
         {
             send_text_response(boost::beast::http::status::forbidden, "text/plain", "playback denied\n", false);
@@ -106,6 +100,12 @@ void hls_http_session::handle_request(boost::asio::yield_context yield)
         }
         if (!stream_.socket().is_open())
         {
+            return;
+        }
+        const auto segmenter = hls::get_or_create(source);
+        if (!segmenter)
+        {
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
             return;
         }
         const auto viewer = hls_play_session::create(worker_, segmenter);

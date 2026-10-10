@@ -1,6 +1,7 @@
 import json
 import secrets
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -25,7 +26,8 @@ class SignalingStub:
                     token = body.get("token")
                     expected = stub.tokens.get(token)
                     accepted = (self.path == "/internal/verify" and expected is not None
-                                and expected == (body.get("operation"), body.get("stream_id")))
+                                and expected[:2] == (body.get("operation"), body.get("stream_id"))
+                                and (expected[2] is None or time.monotonic() < expected[2]))
                     if accepted:
                         del stub.tokens[token]
                 gate = stub.response_gate
@@ -52,10 +54,11 @@ class SignalingStub:
     def url(self):
         return f"http://127.0.0.1:{self.server.server_port}"
 
-    def issue(self, operation, stream_id=None):
+    def issue(self, operation, stream_id=None, ttl=None):
         token = secrets.token_hex(32)
         with self.lock:
-            self.tokens[token] = (operation, token if stream_id is None else stream_id)
+            self.tokens[token] = (operation, token if stream_id is None else stream_id,
+                                  None if ttl is None else time.monotonic() + ttl)
         return token
 
     def pending(self, token):
