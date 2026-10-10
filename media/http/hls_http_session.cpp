@@ -141,9 +141,31 @@ void hls_http_session::handle_request(boost::asio::yield_context yield)
     const auto segmenter = viewer->segmenter();
     if (!segment_sequence)
     {
-        playlist_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        wait_for_playlist(segmenter);
-        return;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        for (;;)
+        {
+            if (!stream_.socket().is_open())
+            {
+                return;
+            }
+            if (segmenter->has_segments())
+            {
+                send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", segmenter->playlist(), request_.keep_alive());
+                return;
+            }
+            if (std::chrono::steady_clock::now() >= deadline)
+            {
+                send_text_response(boost::beast::http::status::service_unavailable, "text/plain", "hls playlist not ready\n", false);
+                return;
+            }
+            wait_timer_.expires_after(std::chrono::milliseconds(100));
+            boost::system::error_code error;
+            wait_timer_.async_wait(yield[error]);
+            if (error)
+            {
+                return;
+            }
+        }
     }
 
     const auto segment = segmenter->segment_buffer(*segment_sequence);
@@ -153,37 +175,6 @@ void hls_http_session::handle_request(boost::asio::yield_context yield)
         return;
     }
     send_binary_response(boost::beast::http::status::ok, "video/mp2t", segment, request_.keep_alive());
-}
-
-void hls_http_session::wait_for_playlist(std::shared_ptr<hls_segmenter> segmenter)
-{
-    if (!stream_.socket().is_open())
-    {
-        return;
-    }
-    if (segmenter->has_segments())
-    {
-        const auto playlist = segmenter->playlist();
-        send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", playlist, request_.keep_alive());
-        return;
-    }
-    if (std::chrono::steady_clock::now() >= playlist_deadline_)
-    {
-        send_text_response(boost::beast::http::status::service_unavailable, "text/plain", "hls playlist not ready\n", false);
-        return;
-    }
-
-    wait_timer_.expires_after(std::chrono::milliseconds(100));
-    const auto self = shared_from_this();
-    wait_timer_.async_wait(
-        [self, segmenter = std::move(segmenter)](const boost::system::error_code& error) mutable
-        {
-            if (error)
-            {
-                return;
-            }
-            self->wait_for_playlist(std::move(segmenter));
-        });
 }
 
 void hls_http_session::send_redirect(std::string location)

@@ -1,7 +1,6 @@
 #ifndef MEDIA_HTTP_HLS_HTTP_SESSION_H
 #define MEDIA_HTTP_HLS_HTTP_SESSION_H
 
-#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,7 +31,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
 
    private:
     void handle_request(boost::asio::yield_context yield);
-    void wait_for_playlist(std::shared_ptr<hls_segmenter> segmenter);
     void send_redirect(std::string location);
     void send_text_response(boost::beast::http::status status,
                             std::string_view content_type,
@@ -58,7 +56,6 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     const config& config_;
     worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer wait_timer_;
-    std::chrono::steady_clock::time_point playlist_deadline_;
 };
 
 }    // namespace media_server

@@ -1,9 +1,11 @@
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <boost/beast/http.hpp>
@@ -14,6 +16,7 @@
 #include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
+#include "media/hls/hls_play_session.h"
 #include "media/http/hls_http_session.h"
 #include "media/net/worker_context.h"
 
@@ -163,6 +166,85 @@ void denied_hls_resources(worker_context& worker)
     require(lifetime.expired(), "denied HLS request retained the source through a segmenter or viewer");
     std::cout << "denied HLS request creates no segmenter or viewer: PASS\n";
 }
+
+void playlist_wait(std::string_view scenario)
+{
+    using tcp = boost::asio::ip::tcp;
+    namespace http = boost::beast::http;
+    worker_context worker;
+    auto source = std::make_shared<media_stream>("hls/wait", worker);
+    require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
+                                .clock_rate = 90'000, .codec_config = {}}}), "wait test tracks rejected");
+    auto segmenter = std::make_shared<hls_segmenter>();
+    require(segmenter->startup(source), "wait test segmenter failed");
+    auto viewer = hls_play_session::create(worker, segmenter);
+    const auto loopback = boost::asio::ip::address_v4::loopback();
+    tcp::acceptor ingress(worker.io(), {loopback, 0});
+    boost::beast::tcp_stream client(worker.io());
+    client.connect(ingress.local_endpoint());
+    config application_config;
+    http::request<http::string_body> request(http::verb::get,
+        "/play/hls/session/" + viewer->secret() + "/index.m3u8", 11);
+    auto session = std::make_shared<hls_http_session>(worker, boost::beast::tcp_stream(ingress.accept()),
+                                                     std::move(request), application_config);
+    const std::weak_ptr<hls_http_session> lifetime = session;
+    session->startup();
+    session.reset();
+    boost::asio::steady_timer trigger(worker.io());
+    if (scenario != "timeout")
+    {
+        trigger.expires_after(std::chrono::milliseconds(150));
+        trigger.async_wait([&](boost::system::error_code error)
+                           {
+                               if (error)
+                               {
+                                   return;
+                               }
+                               if (scenario == "cancel")
+                               {
+                                   worker.request_stop();
+                                   return;
+                               }
+                               source->publish(make_frame(1, 0, true, {h264_idr.begin(), h264_idr.end()}));
+                               source->publish(make_frame(1, 2'500'000'000, true, {h264_idr.begin(), h264_idr.end()}));
+                               source->end();
+                           });
+    }
+
+    http::response<http::string_body> response;
+    boost::system::error_code read_error;
+    bool completed = false;
+    client.expires_after(std::chrono::seconds(12));
+    const auto started = std::chrono::steady_clock::now();
+    worker.spawn([&](boost::asio::yield_context yield)
+                 {
+                     boost::beast::flat_buffer buffer;
+                     http::async_read(client, buffer, response, yield[read_error]);
+                     completed = true;
+                     worker.request_stop();
+                 });
+    worker.io().run_for(std::chrono::seconds(13));
+    require(completed, "playlist request exceeded deadline");
+    if (scenario == "cancel")
+    {
+        require(static_cast<bool>(read_error), "cancelled playlist request completed successfully");
+        require(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "playlist shutdown waited for timeout");
+    }
+    else if (scenario == "timeout")
+    {
+        require(!read_error && response.result() == http::status::service_unavailable, "empty playlist did not time out with 503");
+        require(std::chrono::steady_clock::now() - started >= std::chrono::seconds(10), "playlist deadline became shorter");
+    }
+    else
+    {
+        require(!read_error && response.result() == http::status::ok, "waiting playlist did not become ready");
+        require(response.body().starts_with("#EXTM3U") && response.body().contains("#EXT-X-ENDLIST"),
+                "playlist lost delayed frames or source end");
+    }
+    require(lifetime.expired(), "playlist wait retained HTTP session after shutdown");
+    segmenter->shutdown();
+    std::cout << "playlist_wait " << scenario << ": PASS\n";
+}
 }    // namespace
 
 int main()
@@ -174,6 +256,10 @@ int main()
         audio_only(worker);
         opus_only(worker);
         denied_hls_resources(worker);
+        for (const auto scenario : {"ready", "timeout", "cancel"})
+        {
+            playlist_wait(scenario);
+        }
         return 0;
     }
     catch (const std::exception& error)
