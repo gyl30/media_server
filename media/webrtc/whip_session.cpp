@@ -48,22 +48,21 @@ bool whip_session::startup(const webrtc_media_offer& transport_offer,
     remote_ice_ufrag_ = transport_offer.ice_ufrag;
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
-        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
             if (!error)
             {
                 return;
             }
-            const auto locked = weak.lock();
-            if (!locked || locked->local_port_ == 0)
+            if (self->local_port_ == 0)
             {
                 return;
             }
             if (error != boost::asio::error::operation_aborted)
             {
-                spdlog::debug("webrtc udp send failed session {} error {}", locked->id_, error.message());
+                spdlog::debug("webrtc udp send failed session {} error {}", self->id_, error.message());
             }
-            locked->shutdown();
+            self->shutdown();
         });
     dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
