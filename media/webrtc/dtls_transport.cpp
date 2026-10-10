@@ -199,6 +199,10 @@ void dtls_transport::reset()
 
 bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 {
+    if (!ssl_)
+    {
+        return false;
+    }
     spdlog::trace("webrtc dtls datagram input size {} content_type {}", packet.size(), packet.front());
     const auto written = BIO_write(SSL_get_rbio(ssl_.get()), packet.data(), static_cast<int>(packet.size()));
     if (written != static_cast<int>(packet.size()))
@@ -245,7 +249,7 @@ bool dtls_transport::handle_datagram(std::span<const std::uint8_t> packet)
 
 bool dtls_transport::handle_timeout()
 {
-    if (DTLSv1_handle_timeout(ssl_.get()) < 0 || !pump_outgoing())
+    if (!ssl_ || DTLSv1_handle_timeout(ssl_.get()) < 0 || !pump_outgoing())
     {
         reset();
         return false;
