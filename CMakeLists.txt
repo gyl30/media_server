@@ -425,6 +425,10 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/stream_auth.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
         set_tests_properties(stream_auth PROPERTIES TIMEOUT 180)
+        add_test(NAME stream_auth_udp
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/stream_auth.py
+                $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} udp)
+        set_tests_properties(stream_auth_udp PROPERTIES TIMEOUT 180)
     endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME accept_recovery

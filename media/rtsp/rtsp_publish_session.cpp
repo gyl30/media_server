@@ -234,7 +234,7 @@ int rtsp_publish_session::on_setup(
             }
             handler();
         });
-    const auto result = udp_session_->startup(server, track_index, *selected, session_id_);
+    const auto result = udp_session_->startup(session_id_) ? udp_session_->on_setup(server, track_index, *selected, session_id_) : -1;
     write_handler_ = {};
     return result;
 }

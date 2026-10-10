@@ -83,6 +83,8 @@ def wait_receiver(port, stream_id, present):
 
 def main():
     server_bin, ffmpeg = sys.argv[1:3]
+    publish_transport = sys.argv[3] if len(sys.argv) > 3 else "tcp"
+    assert publish_transport in ("tcp", "udp"), publish_transport
     held = [socket.socket() for _ in range(3)]
     for connection in held:
         connection.bind(("127.0.0.1", 0))
@@ -122,7 +124,7 @@ def main():
                         assert receiver_ids(http) == receivers_before, "rejected ANNOUNCE changed receiver registrations"
                     url = f"rtmp://127.0.0.1:{rtmp}/live/{stream_id}" if protocol == "rtmp" else f"rtsp://127.0.0.1:{rtsp}/{stream_id}"
                     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture), "-c", "copy"]
-                    command += ["-f", "flv"] if protocol == "rtmp" else ["-rtsp_transport", "tcp", "-f", "rtsp"]
+                    command += ["-f", "flv"] if protocol == "rtmp" else ["-rtsp_transport", publish_transport, "-f", "rtsp"]
                     publisher = subprocess.Popen([*command, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     publishers.append(publisher)
                     wait_receiver(http, stream_id, True)
