@@ -77,6 +77,7 @@ struct webrtc_answer_config
 };
 
 [[nodiscard]] std::optional<webrtc_offer> parse_webrtc_offer(std::string_view sdp);
+[[nodiscard]] const webrtc_media_offer* find_webrtc_transport(const webrtc_offer& offer);
 [[nodiscard]] std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer,
                                                               const std::vector<media_track>& tracks,
                                                               const webrtc_answer_config& config);

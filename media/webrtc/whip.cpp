@@ -86,6 +86,14 @@ create_result create(worker_context& worker,
         return failed(create_error::invalid_offer);
     }
 
+    const auto* transport_media = find_webrtc_transport(*offer);
+    if (transport_media == nullptr || (transport_media->direction != "sendonly" && transport_media->direction != "sendrecv") ||
+        transport_media->ice_ufrag.empty() || transport_media->ice_pwd.empty() ||
+        !dtls_transport::valid_sha256_fingerprint(transport_media->fingerprint))
+    {
+        return failed(create_error::invalid_offer);
+    }
+
     boost::system::error_code address_error;
     const auto advertised_address = boost::asio::ip::make_address(application_config.webrtc_address, address_error);
     if (address_error || advertised_address.is_unspecified())
@@ -94,11 +102,9 @@ create_result create(worker_context& worker,
         return failed(create_error::internal_error);
     }
 
-    auto certificate = dtls_certificate::create();
-    if (!certificate)
+    if (!verify_stream(application_config, stream_id, "publish", stream_id, yield) || !socket.is_open())
     {
-        spdlog::error("whip create dtls certificate failed");
-        return failed(create_error::internal_error);
+        return failed(create_error::forbidden);
     }
 
     const auto port = media_port_pool::instance().acquire();
@@ -114,6 +120,12 @@ create_result create(worker_context& worker,
     if (udp_error)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
+        return failed(create_error::internal_error);
+    }
+    auto certificate = dtls_certificate::create();
+    if (!certificate)
+    {
+        spdlog::error("whip create dtls certificate failed");
         return failed(create_error::internal_error);
     }
     webrtc_answer_config answer_config{
@@ -134,21 +146,9 @@ create_result create(worker_context& worker,
     {
         return failed(create_error::invalid_offer);
     }
-    const auto media = std::find_if(offer->media.begin(), offer->media.end(),
-                                  [&answer](const webrtc_media_offer& value) { return value.mid == answer->transport_mid; });
-    if (media == offer->media.end() || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
-        !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
-    {
-        return failed(create_error::invalid_offer);
-    }
-    if (!verify_stream(application_config, stream_id, "publish", stream_id, yield) || !socket.is_open())
-    {
-        return failed(create_error::forbidden);
-    }
-
     auto session = std::make_shared<whip_session>(worker, std::string(stream_id), std::move(transport), std::move(answer_config));
     release_port.set_active(false);
-    if (!session->startup(*media, *answer, *certificate))
+    if (!session->startup(*transport_media, *answer, *certificate))
     {
         session->shutdown();
         return failed(create_error::internal_error);

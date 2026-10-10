@@ -502,20 +502,12 @@ struct bundle_transport_selection
 
 std::optional<bundle_transport_selection> select_bundle_transport(const webrtc_offer& offer)
 {
-    if (offer.bundle_mids.empty())
+    const auto* transport_media = find_webrtc_transport(offer);
+    if (transport_media == nullptr)
     {
         return std::nullopt;
     }
-
-    const auto& transport_mid = offer.bundle_mids.front();
-    const auto transport_media = std::find_if(
-        offer.media.begin(), offer.media.end(), [&transport_mid](const webrtc_media_offer& media) { return media.mid == transport_mid; });
-    if (transport_media == offer.media.end() || transport_media->port == 0)
-    {
-        return std::nullopt;
-    }
-
-    const auto transport_index = static_cast<std::size_t>(std::distance(offer.media.begin(), transport_media));
+    const auto transport_index = static_cast<std::size_t>(transport_media - offer.media.data());
     std::vector<std::size_t> negotiation_order;
     negotiation_order.reserve(offer.media.size());
     negotiation_order.push_back(transport_index);
@@ -526,7 +518,7 @@ std::optional<bundle_transport_selection> select_bundle_transport(const webrtc_o
             negotiation_order.push_back(index);
         }
     }
-    return bundle_transport_selection{.mid = transport_mid, .negotiation_order = std::move(negotiation_order)};
+    return bundle_transport_selection{.mid = transport_media->mid, .negotiation_order = std::move(negotiation_order)};
 }
 
 void append_transport(std::ostringstream& answer, const webrtc_answer_config& config)
@@ -717,6 +709,23 @@ bool valid_bundle_mids(const webrtc_offer& offer)
 }
 
 }    // namespace
+
+const webrtc_media_offer* find_webrtc_transport(const webrtc_offer& offer)
+{
+    if (offer.bundle_mids.empty())
+    {
+        return nullptr;
+    }
+    const auto& mid = offer.bundle_mids.front();
+    const auto media = std::find_if(offer.media.begin(), offer.media.end(),
+                                  [&mid](const webrtc_media_offer& value) { return value.mid == mid; });
+    if (media == offer.media.end() || media->port == 0 || !bundle_media_supported(*media) ||
+        (lower_copy(media->type) != "video" && lower_copy(media->type) != "audio"))
+    {
+        return nullptr;
+    }
+    return &*media;
+}
 
 std::optional<webrtc_offer> parse_webrtc_offer(std::string_view text)
 {

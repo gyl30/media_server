@@ -1,10 +1,12 @@
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include <openssl/ssl.h>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/ip/udp.hpp>
@@ -29,6 +31,8 @@ using namespace media_server;
 using namespace std::chrono_literals;
 using tcp = boost::asio::ip::tcp;
 namespace http = boost::beast::http;
+bool fail_ssl_context{};
+unsigned failed_ssl_contexts{};
 
 void require(bool condition, const char* message)
 {
@@ -45,16 +49,20 @@ void admission(bool publishing, const std::string& scenario)
     tcp::socket http_socket(worker.io());
     http_socket.open(tcp::v4());
     boost::asio::ip::udp::socket occupied_port(worker.io());
-    if (scenario == "transport_failure")
+    std::vector<std::uint16_t> reserved_ports;
+    if (scenario == "rejected_exhausted")
     {
-        occupied_port.open(boost::asio::ip::udp::v4());
-        occupied_port.bind({boost::asio::ip::make_address("127.0.0.1"), 54'000});
+        while (const auto port = media_port_pool::instance().acquire())
+        {
+            reserved_ports.push_back(*port);
+        }
     }
     config application_config;
     application_config.webrtc_address = "127.0.0.1";
     application_config.signaling_url = *ada::parse<ada::url_aggregator>("http://127.0.0.1:" + std::to_string(listener.local_endpoint().port()));
     const std::string stream_id(64, 'a');
     const std::string token = publishing ? stream_id : std::string(64, 'b');
+    std::optional<std::string> pending_token{token};
     const auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "test certificate failed");
     const auto mid = std::string("0");
@@ -81,6 +89,32 @@ void admission(bool publishing, const std::string& scenario)
         const auto fingerprint = certificate->sha256_fingerprint();
         offer.replace(offer.find(fingerprint), fingerprint.size(), "invalid");
     }
+    if (scenario == "codec_mismatch")
+    {
+        const std::string codec = publishing ? "H264/90000" : "PCMA/8000";
+        offer.replace(offer.find(codec), codec.size(), publishing ? "VP8/90000" : "PCMU/8000");
+        if (!publishing)
+        {
+            const std::string media = "m=audio 9 UDP/TLS/RTP/SAVPF 8";
+            offer.replace(offer.find(media), media.size(), "m=audio 9 UDP/TLS/RTP/SAVPF 0");
+            offer.replace(offer.find("a=rtpmap:8"), std::string_view("a=rtpmap:8").size(), "a=rtpmap:0");
+        }
+    }
+    if (scenario == "missing_bundle")
+    {
+        const std::string bundle = "a=group:BUNDLE " + mid + "\r\n";
+        offer.erase(offer.find(bundle), bundle.size());
+    }
+    if (scenario == "invalid_transport")
+    {
+        const std::string setup = "a=setup:actpass";
+        offer.replace(offer.find(setup), setup.size(), "a=setup:active");
+    }
+    if (scenario == "missing_mid_extension")
+    {
+        const std::string extension = "a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n";
+        offer.erase(offer.find(extension), extension.size());
+    }
     auto source = std::make_shared<media_stream>(stream_id, worker);
     auto track = media_track{.id = 1, .kind = media_kind::audio, .codec = aac_source ? codec_id::aac : codec_id::g711a,
                              .clock_rate = aac_source ? 48'000U : 8'000U,
@@ -95,6 +129,7 @@ void admission(bool publishing, const std::string& scenario)
     std::shared_ptr<media_stream> replacement;
     std::exception_ptr failure;
     unsigned verify_requests{};
+    const auto failed_contexts_before = failed_ssl_contexts;
     std::string created_session_id;
     const auto completed = [&](std::exception_ptr error)
     {
@@ -106,39 +141,77 @@ void admission(bool publishing, const std::string& scenario)
     };
     boost::asio::spawn(worker.io(), [&](boost::asio::yield_context yield)
     {
-        tcp::socket socket(worker.io());
-        boost::system::error_code error;
-        listener.async_accept(socket, yield[error]);
-        if (error == boost::asio::error::operation_aborted)
+        for (;;)
         {
-            return;
+            tcp::socket socket(worker.io());
+            boost::system::error_code error;
+            listener.async_accept(socket, yield[error]);
+            if (error == boost::asio::error::operation_aborted)
+            {
+                return;
+            }
+            require(!error, "verification accept failed");
+            boost::beast::flat_buffer buffer;
+            http::request<http::string_body> request;
+            http::async_read(socket, buffer, request, yield[error]);
+            require(!error && request.target() == "/internal/verify", "invalid verification request");
+            ++verify_requests;
+            require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
+                    "WHIP registered before authorization completed");
+            const auto body = boost::json::parse(request.body()).as_object();
+            require(body.at("token").as_string() == token && body.at("stream_id").as_string() == stream_id &&
+                    body.at("operation").as_string() == (publishing ? "publish" : "play"), "verification identity changed");
+            if (verify_requests == 1)
+            {
+                std::vector<std::uint16_t> available_ports;
+                while (const auto port = media_port_pool::instance().acquire())
+                {
+                    available_ports.push_back(*port);
+                }
+                require(available_ports.size() == (scenario == "rejected_exhausted" ? 0U : 16U),
+                        "media port allocated before authorization");
+                for (auto port = available_ports.rbegin(); port != available_ports.rend(); ++port)
+                {
+                    media_port_pool::instance().release(*port);
+                }
+            }
+            const bool authorized = scenario != "rejected" && scenario != "rejected_exhausted" && pending_token.has_value();
+            if (authorized)
+            {
+                pending_token.reset();
+                if (scenario == "closed_http")
+                {
+                    http_socket.close();
+                }
+                if (scenario == "port_exhausted")
+                {
+                    while (const auto port = media_port_pool::instance().acquire())
+                    {
+                        reserved_ports.push_back(*port);
+                    }
+                }
+                if (scenario == "transport_failure")
+                {
+                    occupied_port.open(boost::asio::ip::udp::v4());
+                    occupied_port.bind({boost::asio::ip::make_address("127.0.0.1"), 54'000});
+                }
+                if (scenario == "startup_failure")
+                {
+                    fail_ssl_context = true;
+                }
+                if (scenario == "replacement" || scenario == "replacement_aac")
+                {
+                    stream_registry::instance().remove(*source);
+                    source->end();
+                    replacement = std::make_shared<media_stream>(stream_id, worker);
+                    require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
+                }
+            }
+            http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
+            response.prepare_payload();
+            http::async_write(socket, response, yield[error]);
+            require(!error, "verification response failed");
         }
-        require(!error, "verification accept failed");
-        boost::beast::flat_buffer buffer;
-        http::request<http::string_body> request;
-        http::async_read(socket, buffer, request, yield[error]);
-        require(!error && request.target() == "/internal/verify", "invalid verification request");
-        ++verify_requests;
-        require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
-                "WHIP registered before authorization completed");
-        const auto body = boost::json::parse(request.body()).as_object();
-        require(body.at("token").as_string() == token && body.at("stream_id").as_string() == stream_id &&
-                body.at("operation").as_string() == (publishing ? "publish" : "play"), "verification identity changed");
-        if (scenario == "closed_http")
-        {
-            http_socket.close();
-        }
-        if (scenario == "replacement" || scenario == "replacement_aac")
-        {
-            stream_registry::instance().remove(*source);
-            source->end();
-            replacement = std::make_shared<media_stream>(stream_id, worker);
-            require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
-        }
-        http::response<http::empty_body> response(scenario == "rejected" ? http::status::forbidden : http::status::ok, 11);
-        response.prepare_payload();
-        http::async_write(socket, response, yield[error]);
-        require(!error, "verification response failed");
     }, completed);
     boost::asio::spawn(worker.io(), [&](boost::asio::yield_context yield)
     {
@@ -173,13 +246,15 @@ void admission(bool publishing, const std::string& scenario)
         http::status expected = http::status::created;
         if (scenario == "invalid_path" || scenario == "reserved_path") expected = http::status::not_found;
         if (scenario == "query" || scenario == "invalid_offer" || scenario == "normalized_path" || scenario == "encoded_path") expected = http::status::bad_request;
-        if (scenario == "unsupported_offer" || scenario == "missing_ice" || scenario == "invalid_fingerprint")
+        if (scenario == "unsupported_offer" || scenario == "missing_ice" || scenario == "invalid_fingerprint" ||
+            scenario == "missing_bundle" || scenario == "invalid_transport" || scenario == "missing_mid_extension")
         {
             expected = http::status::bad_request;
         }
         if (scenario == "missing_source") expected = http::status::conflict;
-        if (scenario == "transport_failure") expected = http::status::internal_server_error;
-        if (scenario == "rejected" || scenario == "closed_http") expected = http::status::forbidden;
+        if (scenario == "codec_mismatch") expected = http::status::bad_request;
+        if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure") expected = http::status::internal_server_error;
+        if (scenario == "rejected" || scenario == "rejected_exhausted" || scenario == "closed_http") expected = http::status::forbidden;
         if (response.result() != expected)
         {
             throw std::runtime_error(scenario + " admission response " + std::to_string(response.result_int()) +
@@ -187,9 +262,17 @@ void admission(bool publishing, const std::string& scenario)
         }
         const bool precheck_failed = scenario == "invalid_path" || scenario == "query" || scenario == "invalid_offer" ||
             scenario == "normalized_path" || scenario == "encoded_path" || scenario == "reserved_path" ||
-            scenario == "missing_source" || scenario == "transport_failure" || scenario == "unsupported_offer" ||
-            scenario == "missing_ice" || scenario == "invalid_fingerprint";
+            scenario == "missing_source" || scenario == "unsupported_offer" ||
+            scenario == "missing_ice" || scenario == "invalid_fingerprint" || scenario == "missing_bundle" ||
+            scenario == "invalid_transport" || scenario == "missing_mid_extension";
         require(verify_requests == (precheck_failed ? 0U : 1U), "precheck consumed authorization or verification missing");
+        require(pending_token.has_value() == (precheck_failed || scenario == "rejected" || scenario == "rejected_exhausted"),
+                "token consumption differs from signaling authorization");
+        if (scenario == "startup_failure")
+        {
+            require(!fail_ssl_context && failed_ssl_contexts == failed_contexts_before + 1U,
+                    "session startup failure was not exercised");
+        }
         if (expected == http::status::created)
         {
             const auto location = response[http::field::location];
@@ -244,6 +327,27 @@ void admission(bool publishing, const std::string& scenario)
         }
         require(!publishing || expected == http::status::created || !session_registry::instance().find_receiver_session(stream_id),
                 "unauthorized WHIP became registered");
+        for (auto port = reserved_ports.rbegin(); port != reserved_ports.rend(); ++port)
+        {
+            media_port_pool::instance().release(*port);
+        }
+        reserved_ports.clear();
+        if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure" ||
+            scenario == "codec_mismatch" || scenario == "closed_http")
+        {
+            if (occupied_port.is_open())
+            {
+                occupied_port.close();
+            }
+            if (!http_socket.is_open())
+            {
+                http_socket.open(tcp::v4());
+            }
+            const auto replay = publishing ? handle_whip_request(request, worker, *target, application_config, http_socket, yield) :
+                                             handle_whep_request(request, worker, *target, application_config, http_socket, yield);
+            require(replay.result() == http::status::forbidden && verify_requests == 2U && !pending_token,
+                    "post-authorization failure restored token or admitted replay");
+        }
         listener.close();
         worker.request_stop();
     }, completed);
@@ -260,23 +364,50 @@ void admission(bool publishing, const std::string& scenario)
     }
     if (source_present) stream_registry::instance().remove(*source);
     if (replacement) stream_registry::instance().remove(*replacement);
-    const auto available = media_port_pool::instance().acquire();
-    require(available && *available == 54'000, "failed or stopped session leaked media port");
+    std::vector<std::uint16_t> available_ports;
+    while (const auto port = media_port_pool::instance().acquire())
+    {
+        require(*port == 54'000 + available_ports.size() * 2U, "failed or stopped session leaked or reordered media port");
+        available_ports.push_back(*port);
+    }
+    require(available_ports.size() == 16U, "failed or stopped session leaked media port");
     if (occupied_port.is_open())
     {
         occupied_port.close();
     }
-    boost::asio::ip::udp::socket reused(worker.io(), {boost::asio::ip::address_v4::loopback(), *available});
-    media_port_pool::instance().release(*available);
+    boost::asio::ip::udp::socket reused(worker.io(), {boost::asio::ip::address_v4::loopback(), available_ports.front()});
+    for (auto port = available_ports.rbegin(); port != available_ports.rend(); ++port)
+    {
+        media_port_pool::instance().release(*port);
+    }
     std::cout << (publishing ? "WHIP " : "WHEP ") << scenario << ": PASS\n";
 }
 }    // namespace
+
+extern "C" SSL_CTX* __real_SSL_CTX_new(const SSL_METHOD* method);
+
+extern "C" SSL_CTX* __wrap_SSL_CTX_new(const SSL_METHOD* method)
+{
+    if (fail_ssl_context)
+    {
+        fail_ssl_context = false;
+        ++failed_ssl_contexts;
+        return nullptr;
+    }
+    return __real_SSL_CTX_new(method);
+}
 
 int main(int argc, char** argv)
 {
     try
     {
         media_port_pool::init(54'000, 54'031);
+        if (argc == 3)
+        {
+            require(std::string_view(argv[1]) == "whip" || std::string_view(argv[1]) == "whep", "unknown protocol");
+            admission(std::string_view(argv[1]) == "whip", argv[2]);
+            return 0;
+        }
         if (argc == 2)
         {
             const std::string scenario(argv[1]);
@@ -285,11 +416,11 @@ int main(int argc, char** argv)
             return 0;
         }
         require(argc == 1, "unexpected test argument");
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "replacement_aac", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "missing_bundle", "invalid_transport", "missing_mid_extension", "transport_failure", "port_exhausted", "startup_failure", "codec_mismatch", "rejected", "rejected_exhausted", "closed_http", "accepted", "replacement", "replacement_aac", "establishment_timeout"})
         {
             admission(false, scenario);
         }
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "missing_bundle", "invalid_transport", "missing_mid_extension", "transport_failure", "port_exhausted", "startup_failure", "codec_mismatch", "rejected", "rejected_exhausted", "closed_http", "accepted", "establishment_timeout"})
         {
             admission(true, scenario);
         }

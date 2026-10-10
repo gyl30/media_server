@@ -369,6 +369,7 @@ if(BUILD_TESTING)
 
     add_executable(webrtc_auth_tests tests/webrtc_auth.cpp)
     target_link_libraries(webrtc_auth_tests PRIVATE media_core media_server_link_options)
+    target_link_options(webrtc_auth_tests PRIVATE -Wl,--wrap=SSL_CTX_new)
     add_test(NAME webrtc_auth COMMAND webrtc_auth_tests)
     set_tests_properties(webrtc_auth PROPERTIES TIMEOUT 45)
     find_program(MEDIA_SERVER_TEST_FFMPEG ffmpeg)
