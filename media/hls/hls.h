@@ -8,6 +8,7 @@
 namespace media_server
 {
 class hls_segmenter;
+class media_stream;
 class worker_context;
 }
 
@@ -19,7 +20,7 @@ inline constexpr std::size_t segment_window_size = 6;
 
 void startup(worker_context& worker);
 
-[[nodiscard]] std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_id);
+[[nodiscard]] std::shared_ptr<hls_segmenter> get_or_create(const std::shared_ptr<media_stream>& stream);
 
 void shutdown();
 

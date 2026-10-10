@@ -43,6 +43,7 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     [[nodiscard]] std::expected<std::string, whep_session_startup_error> startup(webrtc_offer offer,
                                                       boost::asio::ip::address advertised_address,
                                                       std::shared_ptr<dtls_certificate> certificate);
+    void activate();
     void shutdown();
 
    public:
@@ -89,7 +90,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_ufrag_;
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
-    webrtc_answer answer_;
     std::atomic_bool shutdown_requested_{};
 };
 

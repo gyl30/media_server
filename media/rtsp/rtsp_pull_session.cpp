@@ -7,9 +7,9 @@
 #include <string_view>
 
 #include <spdlog/spdlog.h>
-#include <boost/url/url.hpp>
+#include <ada.h>
+#include <charconv>
 #include <boost/asio/post.hpp>
-#include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
 
 #include "media/rtsp/rtsp_sdp.h"
@@ -246,27 +246,38 @@ void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const vo
 
 std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
 {
-    const auto parsed = boost::urls::parse_uri(url);
-    if (!parsed || parsed->scheme() != "rtsp" || !parsed->has_authority() || parsed->has_userinfo())
+    const auto parsed = ada::parse<ada::url_aggregator>(url);
+    if (!parsed || parsed->get_protocol() != "rtsp:" || parsed->has_credentials())
     {
         return std::nullopt;
     }
 
-    const auto host = parsed->host_address();
+    auto host = parsed->get_hostname();
     if (host.empty())
     {
         return std::nullopt;
     }
 
-    if (parsed->has_port() && parsed->port_number() == 0)
+    std::uint16_t port = 554;
+    const auto port_text = parsed->get_port();
+    if (!port_text.empty())
     {
-        return std::nullopt;
+        const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
+        if (error != std::errc{} || end != port_text.data() + port_text.size() || port == 0)
+        {
+            return std::nullopt;
+        }
+    }
+    if (host.starts_with('[') && host.ends_with(']'))
+    {
+        host.remove_prefix(1);
+        host.remove_suffix(1);
     }
 
     parsed_url result;
-    result.request_url = std::string(parsed->buffer());
+    result.request_url = std::string(parsed->get_href());
     result.host = std::string(host);
-    result.port = parsed->has_port() ? parsed->port_number() : static_cast<std::uint16_t>(554);
+    result.port = port;
     return result;
 }
 

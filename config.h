@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <algorithm>
 
+#include <ada.h>
+
 namespace media_server
 {
 
@@ -19,6 +21,7 @@ struct config
     std::string webrtc_address{"127.0.0.1"};
     // 为空时控制接口只接受回环地址来源。
     std::string control_token;
+    ada::url_aggregator signaling_url{*ada::parse<ada::url_aggregator>("http://127.0.0.1:9090")};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     bool help{};
 };

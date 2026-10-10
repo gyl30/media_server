@@ -3,10 +3,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-from fanout_support import stop_process, wait_for_listener, wait_for_stream
+from fanout_support import stop_process, wait_for_listener
+from signaling_stub import SignalingStub
 
 
 def main():
@@ -28,21 +30,27 @@ def main():
         ports = [connection.getsockname()[1] for connection in held]
         for connection in held:
             connection.close()
-        with (output / "server.log").open("w") as server_log, (output / "publish.log").open("w") as publish_log:
+        with SignalingStub() as signaling, (output / "server.log").open("w") as server_log, (output / "publish.log").open("w") as publish_log:
             server = subprocess.Popen([server_bin, "--threads", "2", "--rtmp-port", str(ports[0]), "--rtsp-port", str(ports[1]),
-                                       "--http-port", str(ports[2]), "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1"],
+                                       "--http-port", str(ports[2]), "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1",
+                                       "--signaling-url", signaling.url],
                                       stdout=server_log, stderr=subprocess.STDOUT)
             publisher = None
             try:
                 wait_for_listener("127.0.0.1", ports[0])
+                stream_id = signaling.issue("publish")
                 publisher = subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture),
-                                              "-c", "copy", "-f", "flv", f"rtmp://127.0.0.1:{ports[0]}/verify/decode"],
+                                              "-c", "copy", "-f", "flv", f"rtmp://127.0.0.1:{ports[0]}/live/{stream_id}"],
                                              stdout=publish_log, stderr=subprocess.STDOUT)
-                wait_for_stream("127.0.0.1", ports[2], "verify/decode")
+                deadline = time.monotonic() + 10
+                while "rtmp publish tracks ready" not in (output / "server.log").read_text():
+                    assert publisher.poll() is None and time.monotonic() < deadline, (output / "server.log").read_text()
+                    time.sleep(0.05)
                 for attempt in range(3):
+                    token = signaling.issue("play", stream_id)
                     decoded = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "info", "-rw_timeout", "2000000",
                                               "-analyzeduration", "500000", "-probesize", "500000",
-                                              "-i", f"rtmp://127.0.0.1:{ports[0]}/verify/decode", "-map", "0:v:0", "-map", "0:a:0",
+                                              "-i", f"rtmp://127.0.0.1:{ports[0]}/{stream_id}/{token}", "-map", "0:v:0", "-map", "0:a:0",
                                               "-t", "1", "-f", "null", "-"], capture_output=True, text=True, timeout=10)
                     assert decoded.returncode == 0, decoded.stderr
                     expected_video = "hevc" if video_codec == "h265" else "h264"

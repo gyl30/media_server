@@ -4,7 +4,6 @@
 #include <openssl/crypto.h>
 
 #include <boost/json.hpp>
-#include <boost/url/parse.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/post.hpp>
 
@@ -17,6 +16,9 @@
 #include "media/http/rtsp_pull_http.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
+#include "media/http/http_target.h"
+#include "media/webrtc/whep.h"
+#include "media/webrtc/whip.h"
 
 namespace media_server
 {
@@ -94,14 +96,14 @@ void http_session::run(boost::asio::yield_context yield)
 
 void http_session::handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, boost::asio::yield_context yield)
 {
-    const auto parsed = boost::urls::parse_origin_form(request.target());
+    const auto parsed = parse_http_target(request.target());
     if (!parsed)
     {
         send_text_response(request, boost::beast::http::status::bad_request, "bad request target\n", yield);
         return;
     }
 
-    const auto encoded_path = parsed->encoded_path();
+    const auto encoded_path = parsed->get_pathname();
     const std::string_view path(encoded_path.data(), encoded_path.size());
     if (path == "/")
     {
@@ -138,7 +140,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/receivers")
     {
-        if (request.method() != boost::beast::http::verb::get || !parsed->params().empty())
+        if (request.method() != boost::beast::http::verb::get || parsed->has_search())
         {
             send_text_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", yield, "GET");
             return;
@@ -165,7 +167,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
             boost::system::error_code error;
             const auto value = boost::json::parse(request.body(), error);
             const auto* stream_id = !error && value.is_object() ? value.as_object().if_contains("stream_id") : nullptr;
-            if (parsed->has_query() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() || stream_id->as_string().empty())
+            if (parsed->has_search() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() || stream_id->as_string().empty())
             {
                 status = boost::beast::http::status::bad_request;
                 failure = "invalid_request";
@@ -203,25 +205,24 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
     {
-        write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_), yield);
+        write_string_response(request, media_server::handle_whep_request(request, worker_, *parsed, config_, stream_.socket(), yield), yield);
         return;
     }
     if (path == "/publish/whip" || path.starts_with("/publish/whip/"))
     {
-        write_string_response(request, media_server::handle_whip_request(request, worker_, *parsed, config_), yield);
+        write_string_response(request, media_server::handle_whip_request(request, worker_, *parsed, config_, stream_.socket(), yield), yield);
         return;
     }
     if (path == "/play/hls" || path.starts_with("/play/hls/"))
     {
-        const auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request));
+        const auto session = std::make_shared<hls_http_session>(worker_, std::move(stream_), std::move(request), config_);
         session->startup();
         return;
     }
 
-    const auto decoded_path = parsed->path();
-    if (decoded_path.ends_with(".flv"))
+    if (path.ends_with(".flv"))
     {
-        const auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request));
+        const auto session = std::make_shared<http_flv_session>(worker_, std::move(stream_), std::move(request), config_);
         session->startup();
         return;
     }
@@ -248,6 +249,18 @@ void http_session::write_string_response(boost::beast::http::request<boost::beas
     else
     {
         boost::beast::http::async_write(stream_, response, yield[error]);
+    }
+    if (error && response.result() == boost::beast::http::status::created)
+    {
+        const auto location = response[boost::beast::http::field::location];
+        if (location.starts_with("/play/whep/session/"))
+        {
+            static_cast<void>(whep::remove(location.substr(std::string_view("/play/whep/session/").size())));
+        }
+        else if (location.starts_with("/publish/whip/session/"))
+        {
+            static_cast<void>(whip::remove(location.substr(std::string_view("/publish/whip/session/").size())));
+        }
     }
     shutdown();
 }

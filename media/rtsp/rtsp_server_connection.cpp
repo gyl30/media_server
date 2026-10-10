@@ -8,6 +8,9 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
+#include "config.h"
+#include "media/http/signaling_verify.h"
+#include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_play_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
@@ -25,8 +28,8 @@ namespace
 constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
 }    // namespace
 
-rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket)
-    : worker_(worker), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
+rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& application_config)
+    : worker_(worker), config_(application_config), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
 {
 }
 
@@ -96,6 +99,9 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
 
 void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_context yield)
 {
+    const auto transport = transport_;
+    input_yield_ = &yield;
+    boost::scope::scope_exit clear_yield([this]() { input_yield_ = nullptr; });
     rtp_over_rtsp_t interleaved{};
     interleaved.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved.param = this;
@@ -113,7 +119,7 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
     for (;;)
     {
         boost::system::error_code error;
-        const auto bytes = transport_->read(buffer, yield, error);
+        const auto bytes = transport->read(buffer, yield, error);
         if (error)
         {
             if (yield.cancelled() == boost::asio::cancellation_type::none)
@@ -177,6 +183,10 @@ void rtsp_server_connection::shutdown()
 int rtsp_server_connection::send_callback(void* param, const void* data, std::size_t bytes)
 {
     auto* self = static_cast<rtsp_server_connection*>(param);
+    if (!self->transport_)
+    {
+        return -1;
+    }
     self->transport_->write(std::span{static_cast<const std::uint8_t*>(data), bytes});
     return 0;
 }
@@ -208,18 +218,26 @@ void rtsp_server_connection::interleaved_callback(void* param, std::uint8_t chan
 
 int rtsp_server_connection::describe_callback(void* param, rtsp_server_t* server, const char* uri)
 {
-    auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->publish_session_)
+    try
     {
-        spdlog::debug("rtsp describe rejected while publishing");
+        auto* self = static_cast<rtsp_server_connection*>(param);
+        if (self->publish_session_)
+        {
+            spdlog::debug("rtsp describe rejected while publishing");
+            return -1;
+        }
+        if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : ""))
+        {
+            spdlog::debug("rtsp describe invalid target: {}", uri != nullptr ? uri : "");
+            return -1;
+        }
+        return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
+    }
+    catch (const std::exception& error)
+    {
+        spdlog::error("rtsp describe failed: {}", error.what());
         return -1;
     }
-    if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", false))
-    {
-        spdlog::debug("rtsp describe invalid target: {}", uri != nullptr ? uri : "");
-        return -1;
-    }
-    return self->play_session_->on_describe(server, uri != nullptr ? uri : "");
 }
 
 int rtsp_server_connection::setup_callback(
@@ -230,7 +248,7 @@ int rtsp_server_connection::setup_callback(
     {
         return self->publish_session_->on_setup(server, uri != nullptr ? uri : "", session != nullptr ? session : "", transports, count);
     }
-    if (!self->play_session_ && !self->admit_play(uri != nullptr ? uri : "", true))
+    if (!self->play_session_)
     {
         spdlog::debug("rtsp setup invalid target: {}", uri != nullptr ? uri : "");
         return -1;
@@ -267,34 +285,61 @@ int rtsp_server_connection::teardown_callback(void* param, rtsp_server_t* server
 
 int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length)
 {
-    auto* self = static_cast<rtsp_server_connection*>(param);
-    if (self->play_session_ || self->publish_session_)
+    try
     {
-        spdlog::debug("rtsp announce rejected with active session");
-        return -1;
-    }
-    const auto owner = self->shared_from_this();
-    auto publish = std::make_shared<rtsp_publish_session>(
-        self->worker_,
-        self->local_address_,
-        [owner](std::span<const std::uint8_t> data) { owner->transport_->write(data); },
-        [weak = std::weak_ptr<rtsp_server_connection>(owner)]()
+        auto* self = static_cast<rtsp_server_connection*>(param);
+        if (self->play_session_ || self->publish_session_)
         {
-            if (const auto locked = weak.lock())
+            spdlog::debug("rtsp announce rejected with active session");
+            return -1;
+        }
+        const auto target = parse_rtsp_target(uri != nullptr ? uri : "");
+        if (!target || !valid_stream_token(target->stream_id))
+        {
+            return -1;
+        }
+        const auto owner = self->shared_from_this();
+        auto publish = std::make_shared<rtsp_publish_session>(
+            self->worker_,
+            self->local_address_,
+            [owner](std::span<const std::uint8_t> data)
             {
-                locked->idle_timer_.touch();
-            }
-        });
-    publish->set_shutdown_handler([owner]() { owner->shutdown(); });
-    if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))
+                if (owner->transport_)
+                {
+                    owner->transport_->write(data);
+                }
+            },
+            [weak = std::weak_ptr<rtsp_server_connection>(owner)]()
+            {
+                if (const auto locked = weak.lock())
+                {
+                    locked->idle_timer_.touch();
+                }
+            });
+        publish->set_shutdown_handler([owner]() { owner->shutdown(); });
+        if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))
+        {
+            spdlog::debug("rtsp announce rejected");
+            publish->shutdown();
+            return -1;
+        }
+        if (!verify_stream(self->config_, target->stream_id, "publish", target->stream_id, *self->input_yield_) || !self->transport_)
+        {
+            publish->shutdown();
+            return -1;
+        }
+        self->publish_session_ = publish;
+        if (!session_registry::instance().add_receiver_session(target->stream_id, owner))
+        {
+            return -1;
+        }
+        return rtsp_server_reply_announce(server, 200);
+    }
+    catch (const std::exception& error)
     {
-        spdlog::debug("rtsp announce rejected");
-        publish->shutdown();
+        spdlog::error("rtsp announce failed: {}", error.what());
         return -1;
     }
-
-    self->publish_session_ = publish;
-    return rtsp_server_reply_announce(server, 200);
 }
 
 int rtsp_server_connection::record_callback(
@@ -325,29 +370,49 @@ int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* s
     return rtsp_server_reply_get_parameter(server, 200, nullptr, 0);
 }
 
-bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
+bool rtsp_server_connection::admit_play(std::string_view uri)
 {
     auto target = parse_rtsp_target(uri);
     if (!target)
     {
         return false;
     }
-    if (track_uri)
+    const auto separator = target->stream_id.find('/');
+    if (separator == std::string::npos)
     {
-        const auto separator = target->stream_id.rfind('/');
-        if (separator == std::string::npos || separator == 0)
-        {
-            return false;
-        }
-        target->stream_id.resize(separator);
+        return false;
+    }
+    const auto stream_id = std::string_view(target->stream_id).substr(0, separator);
+    const auto token = std::string_view(target->stream_id).substr(separator + 1);
+    if (!valid_stream_id(stream_id) || !valid_stream_token(token))
+    {
+        return false;
+    }
+    auto stream = stream_registry::instance().find(stream_id);
+    if (!stream)
+    {
+        return false;
     }
 
     const auto owner = shared_from_this();
-    play_session_ = std::make_shared<rtsp_play_session>(worker_,
-                                                        std::move(target->stream_id),
+    auto player = std::make_shared<rtsp_play_session>(worker_,
+                                                        std::move(stream),
+                                                        target->stream_id,
                                                         local_address_,
-                                                        [owner](std::vector<std::uint8_t> data) { owner->transport_->write(std::move(data)); });
-    play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
+                                                        [owner](std::vector<std::uint8_t> data)
+                                                        {
+                                                            if (owner->transport_)
+                                                            {
+                                                                owner->transport_->write(std::move(data));
+                                                            }
+                                                        });
+    player->set_shutdown_handler([owner]() { owner->shutdown(); });
+    if (player->prepare_presentation() != 0 || !verify_stream(config_, token, "play", stream_id, *input_yield_) || !transport_)
+    {
+        player->shutdown();
+        return false;
+    }
+    play_session_ = std::move(player);
     idle_timer_.stop();
     return true;
 }
@@ -357,6 +422,7 @@ void rtsp_server_connection::safe_shutdown()
     idle_timer_.stop();
     if (publish_session_)
     {
+        session_registry::instance().remove_receiver_session(publish_session_->stream_id(), *this);
         publish_session_->shutdown();
         publish_session_.reset();
     }
@@ -365,7 +431,10 @@ void rtsp_server_connection::safe_shutdown()
         play_session_->shutdown();
         play_session_.reset();
     }
-    transport_->shutdown();
+    if (const auto transport = std::exchange(transport_, {}))
+    {
+        transport->shutdown();
+    }
 }
 
 }    // namespace media_server

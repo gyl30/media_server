@@ -28,6 +28,7 @@ class rtmp_publish_session final
     void shutdown();
 
    public:
+    [[nodiscard]] const std::string& stream_id() const { return stream_->stream_id(); }
     int on_video(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_audio(const void* data, std::size_t bytes, std::uint32_t timestamp);
     int on_script(std::span<const std::uint8_t> data);

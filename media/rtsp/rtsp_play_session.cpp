@@ -52,13 +52,15 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                     std::string stream_id,
+                                     std::shared_ptr<media_stream> stream,
+                                     std::string path,
                                      boost::asio::ip::address local_address,
                                      write_handler write)
     : worker_(worker),
-      stream_id_(std::move(stream_id)),
+      path_(std::move(path)),
       local_address_(std::move(local_address)),
-      write_handler_(std::move(write))
+      write_handler_(std::move(write)),
+      stream_(std::move(stream))
 {
 }
 
@@ -235,14 +237,13 @@ int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
         spdlog::debug("rtsp play describe after setup");
         return -1;
     }
-    if (rtsp_path_from_uri(uri) != stream_id_)
+    if (rtsp_path_from_uri(uri) != path_)
     {
         return rtsp_server_reply_describe(server, 404, "");
     }
-    const auto prepare_result = prepare_presentation();
-    if (prepare_result != 0)
+    if (!stream_current())
     {
-        return rtsp_server_reply_describe(server, prepare_result, "");
+        return rtsp_server_reply_describe(server, 404, "");
     }
 
     auto control_base = uri.substr(0, uri.find('?'));
@@ -290,20 +291,11 @@ int rtsp_play_session::on_setup(
     const auto path = rtsp_path_from_uri(uri);
     if (!stream_)
     {
-        const auto separator = path.rfind('/');
-        if (separator == std::string::npos || path.substr(0, separator) != stream_id_)
-        {
-            return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
-        }
-        const auto prepare_result = prepare_presentation();
-        if (prepare_result != 0)
-        {
-            return rtsp_server_reply_setup(server, prepare_result, nullptr, nullptr);
-        }
+        return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
 
     auto iterator = std::ranges::find_if(
-        track_states_, [&path, this](const auto& item) { return path == stream_->stream_id() + "/trackID=" + std::to_string(item.first); });
+        track_states_, [&path, this](const auto& item) { return path == path_ + "/trackID=" + std::to_string(item.first); });
     if (iterator == track_states_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -371,7 +363,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return -1;
     }
     const auto path = rtsp_path_from_uri(uri);
-    if (path != stream_->stream_id())
+    if (path != path_)
     {
         std::size_t setup_track_count{};
         bool setup_track_path{};
@@ -382,7 +374,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
                 continue;
             }
             ++setup_track_count;
-            setup_track_path = setup_track_path || path == stream_->stream_id() + "/trackID=" + std::to_string(id);
+            setup_track_path = setup_track_path || path == path_ + "/trackID=" + std::to_string(id);
         }
         if (setup_track_count != 1 || !setup_track_path)
         {
@@ -498,19 +490,17 @@ int rtsp_play_session::prepare_presentation()
 {
     track_states_.clear();
     waiting_video_track_.reset();
-    stream_.reset();
     if (muxer_ != nullptr)
     {
         rtsp_muxer_destroy(muxer_);
         muxer_ = nullptr;
     }
 
-    auto stream = stream_registry::instance().find(stream_id_);
-    if (!stream)
+    if (!stream_)
     {
         return 404;
     }
-    const auto& snapshot = stream->tracks();
+    const auto& snapshot = stream_->tracks();
     auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
     if (prepared_muxer == nullptr)
     {
@@ -612,7 +602,6 @@ int rtsp_play_session::prepare_presentation()
         return 415;
     }
 
-    stream_ = std::move(stream);
     track_states_ = std::move(prepared_tracks);
     muxer_ = prepared_muxer;
     cleanup_muxer.set_active(false);

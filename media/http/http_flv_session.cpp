@@ -3,7 +3,6 @@
 #include <utility>
 #include <algorithm>
 
-#include <boost/url/parse.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/beast/http/chunk_encode.hpp>
@@ -12,14 +11,17 @@
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
+#include "media/http/signaling_verify.h"
+#include "media/http/http_target.h"
 
 namespace media_server
 {
 
-http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request)
+http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& application_config)
     : worker_(worker),
       stream_(std::move(stream)),
       request_(std::move(request)),
+      config_(application_config),
       muxer_(
           [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
           { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); })
@@ -46,32 +48,42 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         return;
     }
 
-    const auto target = boost::urls::parse_origin_form(request_.target()).value();
-    std::vector<std::string> path;
-    for (const auto segment : target.segments())
+    const std::string_view raw_target(request_.target().data(), request_.target().size());
+    if (raw_target.find_first_of("%?#") != std::string_view::npos)
     {
-        path.emplace_back(segment);
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid playback target\n", yield);
+        return;
     }
-    if (path.empty() || !path.back().ends_with(".flv"))
+    const auto target = parse_http_target(raw_target);
+    if (!target)
+    {
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid playback target\n", yield);
+        return;
+    }
+    std::vector<std::string> path;
+    auto pathname = target->get_pathname().substr(1);
+    for (;;)
+    {
+        const auto separator = pathname.find('/');
+        path.emplace_back(pathname.substr(0, separator));
+        if (separator == std::string_view::npos)
+        {
+            break;
+        }
+        pathname.remove_prefix(separator + 1);
+    }
+    if (path.size() != 2 || !path[1].ends_with(".flv"))
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", yield);
         return;
     }
 
-    path.back().resize(path.back().size() - 4);
-    std::string stream_id;
-    for (const auto& segment : path)
+    path[1].resize(path[1].size() - 4);
+    const auto& stream_id = path[0];
+    const auto& token = path[1];
+    if (!valid_stream_id(stream_id) || !valid_stream_token(token))
     {
-        if (!stream_id.empty())
-        {
-            stream_id.push_back('/');
-        }
-        stream_id.append(segment);
-    }
-
-    if (target.has_query() || stream_id.empty())
-    {
-        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream name\n", yield);
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid playback target\n", yield);
         return;
     }
 
@@ -79,6 +91,37 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     if (!media_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);
+        return;
+    }
+
+    bool has_audio = false;
+    bool has_video = false;
+    for (const auto& track : media_stream->tracks())
+    {
+        has_audio = has_audio || track.kind == media_kind::audio;
+        has_video = has_video || track.kind == media_kind::video;
+    }
+    writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_session::writer_callback, this);
+    if (writer_ == nullptr)
+    {
+        send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "flv writer unavailable\n", yield);
+        return;
+    }
+    for (const auto& track : media_stream->tracks())
+    {
+        if (track.kind == media_kind::video)
+        {
+            waiting_video_track_ = track.id;
+        }
+        if (!muxer_.on_track(track))
+        {
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "unsupported flv track\n", yield);
+            return;
+        }
+    }
+    if (!verify_stream(config_, token, "play", stream_id, yield))
+    {
+        send_text_response(boost::beast::http::status::forbidden, "text/plain", "playback denied\n", yield);
         return;
     }
 
@@ -95,30 +138,6 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         boost::system::error_code error;
         boost::beast::http::async_write_header(stream_, serializer, yield[error]);
         if (error)
-        {
-            return;
-        }
-    }
-
-    bool has_audio = false;
-    bool has_video = false;
-    for (const auto& track : media_stream->tracks())
-    {
-        has_audio = has_audio || track.kind == media_kind::audio;
-        has_video = has_video || track.kind == media_kind::video;
-    }
-    writer_ = flv_writer_create2(has_audio ? 1 : 0, has_video ? 1 : 0, &http_flv_session::writer_callback, this);
-    if (writer_ == nullptr)
-    {
-        return;
-    }
-    for (const auto& track : media_stream->tracks())
-    {
-        if (track.kind == media_kind::video)
-        {
-            waiting_video_track_ = track.id;
-        }
-        if (!muxer_.on_track(track))
         {
             return;
         }

@@ -157,35 +157,55 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
         stream_ = audio_egress_->output_stream();
     }
 
-    auto answer_sdp = std::move(answer->sdp);
-    answer->transport_mid.clear();
-    answer_ = std::move(*answer);
-
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
+    packetizer_ = std::make_unique<webrtc_packetizer>(
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
+        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
+    if (!packetizer_->startup(
+        stream_->tracks(),
+        webrtc_packetizer_config{
+            .video_codec = answer->video_codec.value_or(codec_id::h264),
+            .audio_codec = audio_egress_ ? codec_id::opus : answer->audio_codec.value_or(codec_id::aac),
+            .video_payload_type = answer->video_payload_type.value_or(-1),
+            .audio_payload_type = answer->audio_payload_type.value_or(-1),
+            .video_mid = answer->video_mid.value_or(""),
+            .audio_mid = answer->audio_mid.value_or(""),
+            .video_mid_extension_id = answer->video_mid_extension_id.value_or(-1),
+            .audio_mid_extension_id = answer->audio_mid_extension_id.value_or(-1),
+            .rtcp_cname = id_,
+        }))
+    {
+        return std::unexpected(whep_session_startup_error::internal_error);
+    }
 
     for (const auto& track : stream_->tracks())
     {
-        if (answer_.video_codec && track.kind == media_kind::video && track.codec == *answer_.video_codec)
+        if (answer->video_codec && track.kind == media_kind::video && track.codec == *answer->video_codec)
         {
             waiting_video_track_ = track.id;
             break;
         }
     }
-    stream_->add_sink(shared_from_this());
-
-    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->stream_id(), advertised_address.to_string(), local_port_);
+    spdlog::debug("webrtc whep session prepared {} stream {} candidate {} {}", id_, stream_->stream_id(), advertised_address.to_string(), local_port_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,
         ice_ufrag_,
         remote_ice_ufrag_,
-        answer_.video_payload_type.value_or(-1),
-        answer_.audio_payload_type.value_or(-1),
-        answer_.audio_channel_count.value_or(0),
-        answer_.audio_bitrate.value_or(0),
-        answer_.audio_max_playback_rate.value_or(0));
+        answer->video_payload_type.value_or(-1),
+        answer->audio_payload_type.value_or(-1),
+        answer->audio_channel_count.value_or(0),
+        answer->audio_bitrate.value_or(0),
+        answer->audio_max_playback_rate.value_or(0));
+    return std::move(answer->sdp);
+}
+
+void whep_session::activate()
+{
+    const auto self = shared_from_this();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
+    stream_->add_sink(self);
     startup_establishment_timeout();
-    return answer_sdp;
+    spdlog::info("webrtc whep session started {} stream {}", id_, stream_->stream_id());
 }
 
 void whep_session::shutdown()
@@ -212,7 +232,6 @@ void whep_session::safe_shutdown()
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
-    answer_ = {};
     udp_transport_->shutdown();
     media_port_pool::instance().release(local_port_);
     local_port_ = 0;
@@ -224,7 +243,7 @@ const std::string& whep_session::id() const noexcept { return id_; }
 
 void whep_session::on_frame(const media_frame& frame)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || !packetizer_)
+    if (shutdown_requested_.load(std::memory_order_acquire) || !srtp_)
     {
         return;
     }
@@ -423,30 +442,7 @@ bool whep_session::startup_media()
         return false;
     }
 
-    const auto self = shared_from_this();
-    auto packetizer = std::make_unique<webrtc_packetizer>(
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
-    if (!packetizer->startup(
-        stream_->tracks(),
-        webrtc_packetizer_config{
-            .video_codec = answer_.video_codec.value_or(codec_id::h264),
-            .audio_codec = audio_egress_ ? codec_id::opus : answer_.audio_codec.value_or(codec_id::aac),
-            .video_payload_type = answer_.video_payload_type.value_or(-1),
-            .audio_payload_type = answer_.audio_payload_type.value_or(-1),
-            .video_mid = answer_.video_mid.value_or(""),
-            .audio_mid = answer_.audio_mid.value_or(""),
-            .video_mid_extension_id = answer_.video_mid_extension_id.value_or(-1),
-            .audio_mid_extension_id = answer_.audio_mid_extension_id.value_or(-1),
-            .rtcp_cname = id_,
-        }))
-    {
-        return false;
-    }
-
     srtp_ = std::move(srtp);
-    packetizer_ = std::move(packetizer);
-    answer_ = {};
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);

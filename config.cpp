@@ -38,6 +38,7 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string rtsp_port{std::to_string(result.rtsp_port)};
     std::string http_port{std::to_string(result.http_port)};
     std::string threads{std::to_string(result.threads)};
+    std::string signaling_url{result.signaling_url.get_href()};
 
     boost::program_options::options_description options("options");
     options.add_options()("help", "show help")("rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
@@ -46,7 +47,8 @@ int parse_config(int argc, char** argv, config* cfg)
         "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
         "webrtc-address", boost::program_options::value<std::string>(&result.webrtc_address), "webrtc address")(
         "threads", boost::program_options::value<std::string>(&threads), "worker thread count")(
-        "control-token", boost::program_options::value<std::string>(&result.control_token), "bearer token required by control API; empty allows loopback only");
+        "control-token", boost::program_options::value<std::string>(&result.control_token), "bearer token required by control API; empty allows loopback only")(
+        "signaling-url", boost::program_options::value<std::string>(&signaling_url), "HTTP signaling base URL; default http://127.0.0.1:9090");
 
     boost::program_options::variables_map values;
     try
@@ -84,6 +86,18 @@ int parse_config(int argc, char** argv, config* cfg)
         return 1;
     }
     result.threads = thread_count;
+
+    const auto parsed_signaling_url = ada::parse<ada::url_aggregator>(signaling_url);
+    if (!parsed_signaling_url || !signaling_url.starts_with("http://") || parsed_signaling_url->get_protocol() != "http:" ||
+        parsed_signaling_url->get_hostname().empty() || parsed_signaling_url->has_credentials() ||
+        parsed_signaling_url->has_search() || parsed_signaling_url->has_hash() || parsed_signaling_url->get_port() == "0" ||
+        signaling_url.find('\\') != std::string::npos ||
+        std::any_of(signaling_url.begin(), signaling_url.end(), [](unsigned char character) { return character <= 0x20 || character == 0x7f; }))
+    {
+        print_usage(options);
+        return 1;
+    }
+    result.signaling_url = *parsed_signaling_url;
 
     boost::system::error_code bind_address_error;
     const auto bind_address = boost::asio::ip::make_address(result.bind_address, bind_address_error);

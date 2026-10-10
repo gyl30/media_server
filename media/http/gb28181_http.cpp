@@ -59,9 +59,9 @@ gb28181_http_response make_empty_response(const gb28181_http_request& request, b
     return response;
 }
 
-std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request, const boost::urls::url_view& target)
+std::optional<gb28181_http_response> validate_request(const gb28181_http_request& request, const ada::url_aggregator& target)
 {
-    if (!target.params().empty())
+    if (target.has_search())
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
@@ -185,10 +185,10 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
 
 gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request& request,
                                                       worker_context& worker,
-                                                      const boost::urls::url_view& target,
+                                                      const ada::url_aggregator& target,
                                                       boost::asio::ip::address bind_address)
 {
-    const auto path = target.encoded_path();
+    const auto path = target.get_pathname();
     if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/update")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
@@ -232,10 +232,10 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
 
 gb28181_http_response handle_gb28181_sender_request(const gb28181_http_request& request,
                                                     worker_context& worker,
-                                                    const boost::urls::url_view& target,
+                                                    const ada::url_aggregator& target,
                                                     boost::asio::ip::address bind_address)
 {
-    const auto path = target.encoded_path();
+    const auto path = target.get_pathname();
     if (path != "/gb28181/sender/create" && path != "/gb28181/sender/delete")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

@@ -1,9 +1,10 @@
-#include <iterator>
 #include <utility>
 
 #include "media/webrtc/whep.h"
 #include "media/http/whep_http.h"
 #include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
+#include "media/http/signaling_verify.h"
 
 namespace media_server
 {
@@ -71,9 +72,22 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
 }
 
 whep_http_string_response handle_whep_post(
-    const whep_http_request& request, worker_context& worker, std::string stream_id, const config& application_config)
+    const whep_http_request& request,
+    worker_context& worker,
+    std::string_view stream_id,
+    std::string_view token,
+    const config& application_config,
+    const boost::asio::ip::tcp::socket& socket,
+    boost::asio::yield_context yield)
 {
-    auto result = whep::create(worker, stream_id, request.body(), application_config);
+    auto stream = stream_registry::instance().find(stream_id);
+    if (!stream)
+    {
+        auto response = make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream not found\n");
+        response.set(boost::beast::http::field::retry_after, std::to_string(whep_retry_after_seconds));
+        return response;
+    }
+    auto result = whep::create(worker, std::move(stream), token, request.body(), application_config, socket, yield);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -84,14 +98,10 @@ whep_http_string_response handle_whep_post(
             response.set(boost::beast::http::field::access_control_expose_headers, "Location");
             return response;
         }
-        case whep::create_error::stream_not_found:
-        {
-            auto response = make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream not found\n");
-            response.set(boost::beast::http::field::retry_after, std::to_string(whep_retry_after_seconds));
-            return response;
-        }
         case whep::create_error::invalid_offer:
             return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
+        case whep::create_error::forbidden:
+            return make_string_response(request, boost::beast::http::status::forbidden, "text/plain", "stream authorization failed\n");
         case whep::create_error::internal_error:
             return make_string_response(request, boost::beast::http::status::internal_server_error, "text/plain", "whep session create failed\n");
     }
@@ -111,17 +121,28 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 
 whep_http_string_response handle_whep_request(const whep_http_request& request,
                                               worker_context& worker,
-                                              const boost::urls::url_view& target,
-                                              const config& application_config)
+                                              const ada::url_aggregator& target,
+                                              const config& application_config,
+                                              const boost::asio::ip::tcp::socket& socket,
+                                              boost::asio::yield_context yield)
 {
-    const auto segments = target.segments();
-    if (segments.size() <= 2)
+    const std::string_view path(request.target().data(), request.target().size());
+    if (!target.get_search().empty() || !target.get_hash().empty() || path.find_first_of("%?#\\ \r\n\t") != std::string_view::npos ||
+        path != target.get_pathname())
+    {
+        return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid path\n");
+    }
+    constexpr std::string_view prefix = "/play/whep/";
+    if (!path.starts_with(prefix))
     {
         return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
-    auto first = std::next(segments.begin(), 2);
-    const bool session_resource = segments.size() == 4 && *first == "session";
-    const bool endpoint_resource = *first != "session";
+    const auto resource = path.substr(prefix.size());
+    const auto separator = resource.find('/');
+    const auto first = resource.substr(0, separator);
+    const auto second = separator == std::string_view::npos ? std::string_view{} : resource.substr(separator + 1);
+    const bool session_resource = first == "session" && !second.empty() && second.find('/') == std::string_view::npos;
+    const bool endpoint_resource = first != "session" && valid_stream_id(first) && valid_stream_token(second);
     if (!session_resource && !endpoint_resource)
     {
         return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
@@ -135,7 +156,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
     {
         if (session_resource)
         {
-            return handle_whep_session_get(request, *std::next(first));
+            return handle_whep_session_get(request, second);
         }
         return make_empty_response(request, boost::beast::http::status::ok, "application/sdp");
     }
@@ -146,21 +167,11 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         {
             return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
-        std::string stream_id;
-        for (auto iterator = first; iterator != segments.end(); ++iterator)
-        {
-            const auto segment = *iterator;
-            if (!stream_id.empty())
-            {
-                stream_id.push_back('/');
-            }
-            stream_id.append(segment);
-        }
-        return handle_whep_post(request, worker, std::move(stream_id), application_config);
+        return handle_whep_post(request, worker, first, second, application_config, socket, yield);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {
-        return handle_whep_delete(request, *std::next(first));
+        return handle_whep_delete(request, second);
     }
 
     const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";

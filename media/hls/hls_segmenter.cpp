@@ -151,7 +151,7 @@ void hls_segmenter::shutdown()
     finish();
 }
 
-std::string hls_segmenter::playlist(std::string_view base_path, std::string_view query) const
+std::string hls_segmenter::playlist() const
 {
     std::scoped_lock lock(mutex_);
     std::ostringstream output;
@@ -167,12 +167,7 @@ std::string hls_segmenter::playlist(std::string_view base_path, std::string_view
     for (const auto& item : segments_)
     {
         output << "#EXTINF:" << std::fixed << std::setprecision(3) << item.duration << ",\n";
-        output << base_path << '/' << item.sequence << ".ts";
-        if (!query.empty())
-        {
-            output << '?' << query;
-        }
-        output << '\n';
+        output << item.sequence << ".ts\n";
     }
     if (ended_at_.has_value())
     {

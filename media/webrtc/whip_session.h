@@ -19,6 +19,7 @@
 #include "media/net/udp_transport.h"
 #include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/whip_media_receiver.h"
+#include "media/core/session_registry.h"
 
 namespace media_server
 {
@@ -30,7 +31,7 @@ enum class whip_session_startup_error
     internal_error,
 };
 
-class whip_session final : public std::enable_shared_from_this<whip_session>
+class whip_session final : public session, public std::enable_shared_from_this<whip_session>
 {
    public:
     whip_session(worker_context& worker, std::string stream_id);
@@ -39,7 +40,8 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     [[nodiscard]] std::expected<std::string, whip_session_startup_error> startup(webrtc_offer offer,
                                                       boost::asio::ip::address advertised_address,
                                                       std::shared_ptr<dtls_certificate> certificate);
-    void shutdown();
+    void activate();
+    void shutdown() override;
 
    public:
     [[nodiscard]] const std::string& id() const noexcept;
@@ -77,7 +79,6 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
     std::string ice_ufrag_;
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
-    webrtc_answer answer_;
 };
 
 }    // namespace media_server

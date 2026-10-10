@@ -138,14 +138,26 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
         return std::unexpected(whip_session_startup_error::internal_error);
     }
 
-    auto answer_sdp = std::move(answer->sdp);
-    answer->transport_mid.clear();
-    answer_ = std::move(*answer);
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
+    media_receiver_ = std::make_unique<whip_media_receiver>(worker_, stream_id_);
+    if (!media_receiver_->startup(whip_media_receiver_config{
+            .video_codec = *answer->video_codec,
+            .video_payload_type = *answer->video_payload_type,
+            .audio_payload_type = answer->audio_payload_type.value_or(-1),
+            .audio_channel_count = static_cast<std::uint16_t>(answer->audio_channel_count.value_or(2)),
+        }))
+    {
+        return std::unexpected(whip_session_startup_error::internal_error);
+    }
+    spdlog::debug("webrtc whip session prepared {} stream {} candidate {} {}", id_, stream_id_, advertised_address.to_string(), local_port_);
+    return std::move(answer->sdp);
+}
 
-    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_id_, advertised_address.to_string(), local_port_);
+void whip_session::activate()
+{
+    const auto self = shared_from_this();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     startup_establishment_timeout();
-    return answer_sdp;
+    spdlog::info("webrtc whip session started {} stream {}", id_, stream_id_);
 }
 
 void whip_session::shutdown()
@@ -156,6 +168,7 @@ void whip_session::shutdown()
 
 void whip_session::safe_shutdown()
 {
+    session_registry::instance().remove_receiver_session(stream_id_, *this);
     dtls_.reset();
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
@@ -164,7 +177,6 @@ void whip_session::safe_shutdown()
     dtls_timer_.cancel();
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
-    answer_ = {};
     udp_transport_->shutdown();
     if (local_port_ != 0)
     {
@@ -316,7 +328,7 @@ void whip_session::handle_dtls(std::span<const std::uint8_t> packet)
 
 void whip_session::handle_srtp(std::span<const std::uint8_t> packet)
 {
-    if (!media_receiver_)
+    if (!srtp_)
     {
         return;
     }
@@ -345,20 +357,7 @@ bool whip_session::startup_media()
         return false;
     }
 
-    auto receiver = std::make_unique<whip_media_receiver>(worker_, stream_id_);
-    if (!receiver->startup(whip_media_receiver_config{
-            .video_codec = *answer_.video_codec,
-            .video_payload_type = *answer_.video_payload_type,
-            .audio_payload_type = answer_.audio_payload_type.value_or(-1),
-            .audio_channel_count = static_cast<std::uint16_t>(answer_.audio_channel_count.value_or(2)),
-        }))
-    {
-        return false;
-    }
-
     srtp_ = std::move(srtp);
-    media_receiver_ = std::move(receiver);
-    answer_ = {};
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
     return true;

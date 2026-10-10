@@ -10,7 +10,7 @@
 #include "media/webrtc/whep.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_session.h"
-#include "media/core/stream_registry.h"
+#include "media/http/signaling_verify.h"
 #include "media/webrtc/dtls_certificate.h"
 
 namespace media_server::whep
@@ -37,32 +37,18 @@ void cleanup_expired(state& current)
     std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
 }
 
-void release_session(state& current, const whep_session& expected)
-{
-    const auto iterator = current.sessions.find(expected.id());
-    if (iterator == current.sessions.end())
-    {
-        return;
-    }
-    const auto session = iterator->second.lock();
-    if (!session || session.get() == &expected)
-    {
-        current.sessions.erase(iterator);
-    }
-}
-
 }    // namespace
 
-create_result create(worker_context& worker, std::string_view stream_id, std::string_view offer_sdp, const config& application_config)
+create_result create(worker_context& worker,
+                     std::shared_ptr<media_stream> stream,
+                     std::string_view token,
+                     std::string_view offer_sdp,
+                     const config& application_config,
+                     const boost::asio::ip::tcp::socket& socket,
+                     boost::asio::yield_context yield)
 {
+    const auto& stream_id = stream->stream_id();
     spdlog::debug("whep create stream {} offer_bytes {}", stream_id, offer_sdp.size());
-
-    auto stream = stream_registry::instance().find(stream_id);
-    if (!stream)
-    {
-        spdlog::debug("whep create stream not found {}", stream_id);
-        return failed(create_error::stream_not_found);
-    }
 
     auto offer = parse_webrtc_offer(offer_sdp);
     if (!offer)
@@ -110,6 +96,17 @@ create_result create(worker_context& worker, std::string_view stream_id, std::st
     }
 
     auto session = std::make_shared<whep_session>(worker, stream);
+    auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
+    if (!answer_sdp)
+    {
+        session->shutdown();
+        return failed(answer_sdp.error() == whep_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
+    }
+    if (!verify_stream(application_config, token, "play", stream_id, yield) || !socket.is_open())
+    {
+        session->shutdown();
+        return failed(create_error::forbidden);
+    }
     const auto& session_id = session->id();
     bool session_id_collision = false;
     {
@@ -124,16 +121,7 @@ create_result create(worker_context& worker, std::string_view stream_id, std::st
         session->shutdown();
         return failed(create_error::internal_error);
     }
-    auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
-    if (!answer_sdp)
-    {
-        session->shutdown();
-        auto& current = runtime();
-        std::scoped_lock lock(current.mutex);
-        release_session(current, *session);
-        return failed(answer_sdp.error() == whep_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
-    }
-
+    session->activate();
     spdlog::info("whep session created {} stream {}", session_id, stream_id);
     return {.error = create_error::none, .session_id = session_id, .answer_sdp = std::move(*answer_sdp)};
 }

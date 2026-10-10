@@ -13,6 +13,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/worker_context.h"
+#include "config.h"
 
 namespace media_server
 {
@@ -24,14 +25,14 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
 
-    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request);
+    hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& application_config);
 
    public:
     void startup();
 
    private:
-    void handle_request();
-    void wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter);
+    void handle_request(boost::asio::yield_context yield);
+    void wait_for_playlist(std::shared_ptr<hls_segmenter> segmenter);
     void send_redirect(std::string location);
     void send_text_response(boost::beast::http::status status,
                             std::string_view content_type,
@@ -54,6 +55,7 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
     boost::beast::tcp_stream stream_;
     boost::beast::flat_buffer buffer_;
     request_type request_;
+    const config& config_;
     worker_context::shutdown_subscription shutdown_subscription_;
     boost::asio::steady_timer wait_timer_;
     std::chrono::steady_clock::time_point playlist_deadline_;

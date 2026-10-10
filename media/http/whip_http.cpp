@@ -1,9 +1,9 @@
-#include <iterator>
 #include <utility>
 
 #include "media/webrtc/whip.h"
 #include "media/http/whip_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/signaling_verify.h"
 
 namespace media_server
 {
@@ -52,9 +52,14 @@ whip_http_string_response handle_options(const whip_http_request& request, bool 
 }
 
 whip_http_string_response handle_post(
-    const whip_http_request& request, worker_context& worker, std::string stream_id, const config& application_config)
+    const whip_http_request& request,
+    worker_context& worker,
+    std::string_view stream_id,
+    const config& application_config,
+    const boost::asio::ip::tcp::socket& socket,
+    boost::asio::yield_context yield)
 {
-    auto result = whip::create(worker, stream_id, request.body(), application_config);
+    auto result = whip::create(worker, stream_id, request.body(), application_config, socket, yield);
     switch (result.error)
     {
         case whip::create_error::none:
@@ -69,6 +74,8 @@ whip_http_string_response handle_post(
             return make_string_response(request, boost::beast::http::status::conflict, "text/plain", "stream already exists\n");
         case whip::create_error::invalid_offer:
             return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid or unsupported sdp offer\n");
+        case whip::create_error::forbidden:
+            return make_string_response(request, boost::beast::http::status::forbidden, "text/plain", "stream authorization failed\n");
         case whip::create_error::internal_error:
             return make_string_response(request, boost::beast::http::status::internal_server_error, "text/plain", "whip session create failed\n");
     }
@@ -88,17 +95,28 @@ whip_http_string_response handle_delete(const whip_http_request& request, std::s
 
 whip_http_string_response handle_whip_request(const whip_http_request& request,
                                               worker_context& worker,
-                                              const boost::urls::url_view& target,
-                                              const config& application_config)
+                                              const ada::url_aggregator& target,
+                                              const config& application_config,
+                                              const boost::asio::ip::tcp::socket& socket,
+                                              boost::asio::yield_context yield)
 {
-    const auto segments = target.segments();
-    if (segments.size() <= 2)
+    const std::string_view path(request.target().data(), request.target().size());
+    if (!target.get_search().empty() || !target.get_hash().empty() || path.find_first_of("%?#\\ \r\n\t") != std::string_view::npos ||
+        path != target.get_pathname())
+    {
+        return make_string_response(request, boost::beast::http::status::bad_request, "text/plain", "invalid path\n");
+    }
+    constexpr std::string_view prefix = "/publish/whip/";
+    if (!path.starts_with(prefix))
     {
         return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
     }
-    auto first = std::next(segments.begin(), 2);
-    const bool session_resource = segments.size() == 4 && *first == "session";
-    const bool endpoint_resource = *first != "session";
+    const auto resource = path.substr(prefix.size());
+    const auto separator = resource.find('/');
+    const auto first = resource.substr(0, separator);
+    const auto second = separator == std::string_view::npos ? std::string_view{} : resource.substr(separator + 1);
+    const bool session_resource = first == "session" && !second.empty() && second.find('/') == std::string_view::npos;
+    const bool endpoint_resource = separator == std::string_view::npos && first != "session" && valid_stream_token(first);
     if (!session_resource && !endpoint_resource)
     {
         return make_string_response(request, boost::beast::http::status::not_found, "text/plain", "not found\n");
@@ -116,22 +134,12 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
         {
             return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
-        std::string stream_id;
-        for (auto iterator = first; iterator != segments.end(); ++iterator)
-        {
-            const auto segment = *iterator;
-            if (!stream_id.empty())
-            {
-                stream_id.push_back('/');
-            }
-            stream_id.append(segment);
-        }
-        return handle_post(request, worker, std::move(stream_id), application_config);
+        return handle_post(request, worker, first, application_config, socket, yield);
     }
 
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {
-        return handle_delete(request, *std::next(first));
+        return handle_delete(request, second);
     }
 
     const std::string_view allow = session_resource ? "DELETE, OPTIONS" : "POST, OPTIONS";

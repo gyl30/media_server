@@ -8,7 +8,7 @@
 
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
-#include "media/core/stream_registry.h"
+#include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
 
 namespace media_server::hls
@@ -69,19 +69,15 @@ void startup(worker_context& worker)
                  });
 }
 
-std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_id)
+std::shared_ptr<hls_segmenter> get_or_create(const std::shared_ptr<media_stream>& stream)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     const auto now = std::chrono::steady_clock::now();
     remove_expired_segmenters(now);
 
+    const auto& stream_id = stream->stream_id();
     auto existing = current.segmenters.find(stream_id);
-    auto stream = stream_registry::instance().find(stream_id);
-    if (!stream)
-    {
-        return existing != current.segmenters.end() ? existing->second.segmenter : std::shared_ptr<hls_segmenter>{};
-    }
 
     if (existing != current.segmenters.end())
     {

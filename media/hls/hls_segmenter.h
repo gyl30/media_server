@@ -28,7 +28,7 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     void on_frame(const media_frame& frame) override;
     void on_end() override;
 
-    [[nodiscard]] std::string playlist(std::string_view base_path, std::string_view query = {}) const;
+    [[nodiscard]] std::string playlist() const;
     [[nodiscard]] std::shared_ptr<const std::vector<std::uint8_t>> segment_buffer(std::uint64_t sequence) const;
     [[nodiscard]] bool has_segments() const;
     [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> ended_at() const;

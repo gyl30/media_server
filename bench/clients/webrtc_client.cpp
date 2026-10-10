@@ -20,7 +20,7 @@
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/crc.hpp>
-#include <boost/url/parse.hpp>
+#include <ada.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/ssl.h>
@@ -678,21 +678,27 @@ std::uint64_t webrtc_client_peer::unprotect_failures() const noexcept { return i
 bool post_webrtc_offer(std::string_view url, std::string_view offer, webrtc_http_response& response, std::string& error)
 {
     namespace http = boost::beast::http;
-    const auto parsed = boost::urls::parse_uri(url);
-    if (!parsed || parsed->scheme() != "http" || parsed->host_address().empty() || parsed->has_userinfo() || parsed->has_fragment())
+    const auto parsed = ada::parse<ada::url_aggregator>(url);
+    if (!parsed || parsed->get_protocol() != "http:" || parsed->get_hostname().empty() || parsed->has_credentials() || parsed->has_hash())
     {
         error = "invalid HTTP WebRTC URL";
         return false;
     }
-    const auto host = std::string(parsed->host_address());
-    const auto port = parsed->has_port() ? parsed->port_number() : static_cast<std::uint16_t>(80);
-    const auto target = std::string(parsed->encoded_target());
+    auto hostname = parsed->get_hostname();
+    if (hostname.starts_with('[') && hostname.ends_with(']'))
+    {
+        hostname.remove_prefix(1);
+        hostname.remove_suffix(1);
+    }
+    const auto host = std::string(hostname);
+    const auto port = parsed->get_port().empty() ? std::string_view("80") : parsed->get_port();
+    const auto target = std::string(parsed->get_pathname()) + std::string(parsed->get_search());
 
     boost::asio::io_context io;
     boost::asio::ip::tcp::resolver resolver(io);
     boost::beast::tcp_stream stream(io);
     boost::system::error_code operation_error;
-    const auto endpoints = resolver.resolve(host, std::to_string(port), operation_error);
+    const auto endpoints = resolver.resolve(host, port, operation_error);
     if (operation_error)
     {
         error = "HTTP resolve: " + operation_error.message();
@@ -706,7 +712,7 @@ bool post_webrtc_offer(std::string_view url, std::string_view offer, webrtc_http
         return false;
     }
     http::request<http::string_body> request{http::verb::post, target, 11};
-    request.set(http::field::host, parsed->host());
+    request.set(http::field::host, parsed->get_host());
     request.set(http::field::content_type, "application/sdp");
     request.body() = offer;
     request.prepare_payload();
@@ -729,7 +735,7 @@ bool post_webrtc_offer(std::string_view url, std::string_view offer, webrtc_http
     response.location = std::string(http_response[http::field::location]);
     if (response.location.starts_with('/'))
     {
-        response.location = "http://" + std::string(parsed->encoded_authority()) + response.location;
+        response.location = "http://" + std::string(parsed->get_host()) + response.location;
     }
     return true;
 }
@@ -737,19 +743,25 @@ bool post_webrtc_offer(std::string_view url, std::string_view offer, webrtc_http
 bool delete_webrtc_resource(std::string_view url, std::string& error)
 {
     namespace http = boost::beast::http;
-    const auto parsed = boost::urls::parse_uri(url);
-    if (!parsed || parsed->scheme() != "http" || parsed->host_address().empty() || parsed->has_userinfo() || parsed->has_fragment())
+    const auto parsed = ada::parse<ada::url_aggregator>(url);
+    if (!parsed || parsed->get_protocol() != "http:" || parsed->get_hostname().empty() || parsed->has_credentials() || parsed->has_hash())
     {
         error = "invalid HTTP WebRTC resource URL";
         return false;
     }
-    const auto host = std::string(parsed->host_address());
-    const auto port = parsed->has_port() ? parsed->port_number() : static_cast<std::uint16_t>(80);
+    auto hostname = parsed->get_hostname();
+    if (hostname.starts_with('[') && hostname.ends_with(']'))
+    {
+        hostname.remove_prefix(1);
+        hostname.remove_suffix(1);
+    }
+    const auto host = std::string(hostname);
+    const auto port = parsed->get_port().empty() ? std::string_view("80") : parsed->get_port();
     boost::asio::io_context io;
     boost::asio::ip::tcp::resolver resolver(io);
     boost::beast::tcp_stream stream(io);
     boost::system::error_code operation_error;
-    const auto endpoints = resolver.resolve(host, std::to_string(port), operation_error);
+    const auto endpoints = resolver.resolve(host, port, operation_error);
     if (operation_error)
     {
         error = "HTTP resolve: " + operation_error.message();
@@ -762,8 +774,8 @@ bool delete_webrtc_resource(std::string_view url, std::string& error)
         error = "HTTP connect: " + operation_error.message();
         return false;
     }
-    http::request<http::empty_body> request{http::verb::delete_, std::string(parsed->encoded_target()), 11};
-    request.set(http::field::host, parsed->host());
+    http::request<http::empty_body> request{http::verb::delete_, std::string(parsed->get_pathname()) + std::string(parsed->get_search()), 11};
+    request.set(http::field::host, parsed->get_host());
     http::write(stream, request, operation_error);
     if (operation_error)
     {

@@ -1,6 +1,6 @@
 #include <utility>
 
-#include <boost/url/parse.hpp>
+#include <ada.h>
 
 #include "media/rtsp/rtsp_uri.h"
 
@@ -9,42 +9,26 @@ namespace media_server
 
 std::string rtsp_path_from_uri(std::string_view uri)
 {
-    const auto parsed = boost::urls::parse_uri_reference(uri);
-    if (!parsed)
+    const auto parsed = ada::parse<ada::url_aggregator>(uri);
+    const auto authority = uri.find("://");
+    const auto path_start = authority == std::string_view::npos ? std::string_view::npos : uri.find('/', authority + 3);
+    if (!parsed || parsed->get_protocol() != "rtsp:" || parsed->has_search() || parsed->has_hash() ||
+        path_start == std::string_view::npos || parsed->get_pathname() != uri.substr(path_start))
     {
         return {};
     }
 
-    std::string result;
-    for (const auto segment : parsed->segments())
+    auto path = parsed->get_pathname();
+    if (path.starts_with('/'))
     {
-        const std::string value(segment);
-        if (!result.empty())
-        {
-            result.push_back('/');
-        }
-        result.append(value);
+        path.remove_prefix(1);
     }
-    return result;
+    return std::string(path);
 }
 
 std::optional<rtsp_target> parse_rtsp_target(std::string_view uri)
 {
-    const auto parsed = boost::urls::parse_uri_reference(uri);
-    if (!parsed || parsed->has_fragment())
-    {
-        return std::nullopt;
-    }
-
-    std::string stream_id;
-    for (const auto segment : parsed->segments())
-    {
-        if (!stream_id.empty())
-        {
-            stream_id.push_back('/');
-        }
-        stream_id.append(segment);
-    }
+    auto stream_id = rtsp_path_from_uri(uri);
     if (stream_id.empty())
     {
         return std::nullopt;

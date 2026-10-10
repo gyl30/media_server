@@ -148,7 +148,7 @@ void rtsp_sender_clock(workers& context)
     auto source = std::make_shared<media_stream>("verify/sender-clock", context.source);
     std::vector<std::pair<std::uint64_t, std::uint32_t>> reports;
     auto player = std::make_shared<rtsp_play_session>(context.source,
-        source->stream_id(), boost::asio::ip::make_address("127.0.0.1"),
+        source, source->stream_id(), boost::asio::ip::make_address("127.0.0.1"),
         [&](std::vector<std::uint8_t> packet)
         {
             if (packet[1] == 1)
@@ -173,6 +173,7 @@ void rtsp_sender_clock(workers& context)
         require(source->set_tracks({{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
                                      .clock_rate = 8'000, .channel_count = 1, .codec_config = {}}}), "RTSP clock tracks failed");
         require(stream_registry::instance().add(source), "RTSP clock registration failed");
+        require(player->prepare_presentation() == 0, "RTSP clock presentation failed");
         rtsp_header_transport_t transport{};
         require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=0-1", &transport) == 0, "RTSP transport parse failed");
         require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/sender-clock/trackID=1", {}, &transport, 1) == 0,
@@ -310,7 +311,7 @@ void derived_generation_lifetimes(workers& context)
                auto second = acquire_whep_audio_egress(source, context.source, {.channels = 2, .bitrate = 64000, .max_playback_rate = 48000});
                require(audio && audio == second && audio != previous_audio, "AAC egress shared across wrong generation");
                require(audio->output_stream()->tracks().at(1).codec == codec_id::opus, "derived audio is not Opus");
-               auto segmenter = hls::get_or_create(source->stream_id());
+               auto segmenter = hls::get_or_create(source);
                require(segmenter && segmenter != previous_hls && !segmenter->ended_at(), "HLS shared across wrong generation");
                if (previous_hls)
                {

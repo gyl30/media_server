@@ -14,6 +14,7 @@
 
 #include "media/net/idle_timer.h"
 #include "media/net/tcp_transport.h"
+#include "media/core/session_registry.h"
 
 extern "C"
 {
@@ -24,17 +25,18 @@ namespace media_server
 {
 
 class worker_context;
+struct config;
 class rtsp_publish_session;
 class rtsp_play_session;
 
-class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_server_connection>
+class rtsp_server_connection final : public session, public std::enable_shared_from_this<rtsp_server_connection>
 {
    public:
-    rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket);
+    rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& application_config);
 
    public:
     void startup();
-    void shutdown();
+    void shutdown() override;
 
    private:
     static int send_callback(void* param, const void* data, std::size_t bytes);
@@ -55,18 +57,20 @@ class rtsp_server_connection final : public std::enable_shared_from_this<rtsp_se
     void run_read(rtsp_server_t* server, boost::asio::yield_context yield);
 
    private:
-    [[nodiscard]] bool admit_play(std::string_view uri, bool track_uri);
+    [[nodiscard]] bool admit_play(std::string_view uri);
 
    private:
     void safe_shutdown();
 
    private:
     worker_context& worker_;
+    const config& config_;
     std::shared_ptr<tcp_transport> transport_;
     std::shared_ptr<rtsp_publish_session> publish_session_;
     std::shared_ptr<rtsp_play_session> play_session_;
     boost::asio::ip::address local_address_;
     idle_timer idle_timer_;
+    boost::asio::yield_context* input_yield_{};
 };
 
 }    // namespace media_server

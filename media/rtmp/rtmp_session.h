@@ -12,27 +12,27 @@
 
 #include "media/net/idle_timer.h"
 #include "media/net/tcp_transport.h"
+#include "media/core/session_registry.h"
 
 struct rtmp_server_t;
 
 namespace media_server
 {
 
-[[nodiscard]] std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_view stream);
-
+struct config;
 class worker_context;
 class rtmp_publish_session;
 class rtmp_play_session;
 
-class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
+class rtmp_session final : public session, public std::enable_shared_from_this<rtmp_session>
 {
    public:
-    rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket);
+    rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& application_config);
     ~rtmp_session();
 
    public:
     void startup();
-    void shutdown();
+    void shutdown() override;
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);
@@ -59,11 +59,13 @@ class rtmp_session final : public std::enable_shared_from_this<rtmp_session>
 
    private:
     worker_context& worker_;
+    const config& config_;
     std::shared_ptr<tcp_transport> transport_;
     rtmp_server_t* rtmp_context_{};
     std::unique_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;
     idle_timer idle_timer_;
+    boost::asio::yield_context* input_yield_{};
 };
 
 }    // namespace media_server

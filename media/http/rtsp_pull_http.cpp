@@ -131,9 +131,9 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     };
 }
 
-std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_request& request, const boost::urls::url_view& target)
+std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_request& request, const ada::url_aggregator& target)
 {
-    if (!target.params().empty())
+    if (target.has_search())
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
@@ -181,9 +181,9 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
 
 }    // namespace
 
-rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request, worker_context& worker, const boost::urls::url_view& target)
+rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request, worker_context& worker, const ada::url_aggregator& target)
 {
-    const auto path = target.encoded_path();
+    const auto path = target.get_pathname();
     if (path != "/rtsp/pull/create")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");

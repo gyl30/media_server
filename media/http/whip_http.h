@@ -5,7 +5,8 @@
 
 #include <boost/beast/http.hpp>
 #include <boost/asio/spawn.hpp>
-#include <boost/url/url_view.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <ada.h>
 
 #include "config.h"
 
@@ -18,8 +19,10 @@ using whip_http_string_response = boost::beast::http::response<boost::beast::htt
 
 [[nodiscard]] whip_http_string_response handle_whip_request(const whip_http_request& request,
                                                             worker_context& worker,
-                                                            const boost::urls::url_view& target,
-                                                            const config& application_config);
+                                                            const ada::url_aggregator& target,
+                                                            const config& application_config,
+                                                            const boost::asio::ip::tcp::socket& socket,
+                                                            boost::asio::yield_context yield);
 
 }    // namespace media_server
 

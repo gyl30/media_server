@@ -100,9 +100,9 @@ bool service::run_server()
             *workers_,
             bind_address,
             config_.rtmp_port,
-            [](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto session = std::make_shared<rtmp_session>(worker, std::move(socket));
+                auto session = std::make_shared<rtmp_session>(worker, std::move(socket), config_);
                 session->startup();
             },
             network_error))
@@ -114,9 +114,9 @@ bool service::run_server()
             *workers_,
             bind_address,
             config_.rtsp_port,
-            [](worker_context& worker, boost::asio::ip::tcp::socket socket)
+            [this](worker_context& worker, boost::asio::ip::tcp::socket socket)
             {
-                auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket));
+                auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), config_);
                 connection->startup();
             },
             network_error))
@@ -143,9 +143,9 @@ bool service::run_server()
     spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);
     spdlog::info("rtsp listen {}:{}", config_.bind_address, config_.rtsp_port);
     spdlog::info("http listen {}:{}", config_.bind_address, config_.http_port);
-    spdlog::info("rtmp publish play path app/stream");
-    spdlog::info("rtsp play path app/stream");
-    spdlog::info("http flv path app/stream.flv");
+    spdlog::info("rtmp publish path live/stream_id play path stream_id/token");
+    spdlog::info("rtsp publish path stream_id play path stream_id/token");
+    spdlog::info("http flv path stream_id/token.flv");
     return true;
 }
 

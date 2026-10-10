@@ -40,6 +40,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     void shutdown();
 
    public:
+    [[nodiscard]] const std::string& stream_id() const { return stream_id_; }
     [[nodiscard]] bool on_interleaved(std::uint8_t channel, std::span<const std::uint8_t> data);
     int on_setup(
         rtsp_server_t* server, std::string_view uri, std::string_view session, const rtsp_header_transport_t transports[], std::size_t count);

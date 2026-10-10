@@ -3,7 +3,6 @@
 #include <charconv>
 #include <optional>
 
-#include <boost/url/parse.hpp>
 #include <boost/asio/post.hpp>
 
 #include "media/hls/hls.h"
@@ -11,12 +10,15 @@
 #include "media/net/worker_context.h"
 #include "media/hls/hls_play_session.h"
 #include "media/http/hls_http_session.h"
+#include "media/http/signaling_verify.h"
+#include "media/http/http_target.h"
+#include "media/core/stream_registry.h"
 
 namespace media_server
 {
 
-hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request)
-    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), wait_timer_(worker_.io())
+hls_http_session::hls_http_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& application_config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(application_config), wait_timer_(worker_.io())
 {
 }
 
@@ -29,10 +31,10 @@ void hls_http_session::startup()
         shutdown();
         return;
     }
-    handle_request();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->handle_request(yield); });
 }
 
-void hls_http_session::handle_request()
+void hls_http_session::handle_request(boost::asio::yield_context yield)
 {
     if (!stream_.socket().is_open())
     {
@@ -44,76 +46,73 @@ void hls_http_session::handle_request()
         return;
     }
 
-    const auto parsed = boost::urls::parse_origin_form(request_.target());
-    if (!parsed)
+    const std::string_view raw_target(request_.target().data(), request_.target().size());
+    if (raw_target.find_first_of("%?#") != std::string_view::npos)
     {
         send_text_response(boost::beast::http::status::bad_request, "text/plain", "bad request target\n", false);
         return;
     }
-    const auto target = *parsed;
+    const auto target = parse_http_target(raw_target);
+    if (!target)
+    {
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "bad request target\n", false);
+        return;
+    }
     std::vector<std::string> path;
-    for (const auto segment : target.segments())
+    auto pathname = target->get_pathname().substr(1);
+    for (;;)
     {
-        path.emplace_back(segment);
+        const auto separator = pathname.find('/');
+        path.emplace_back(pathname.substr(0, separator));
+        if (separator == std::string_view::npos)
+        {
+            break;
+        }
+        pathname.remove_prefix(separator + 1);
     }
 
-    if (path.size() < 4 || path[0] != "play" || path[1] != "hls")
+    if (path.size() != 5 || path[0] != "play" || path[1] != "hls")
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
         return;
     }
 
-    const auto& file = path.back();
-    std::string stream_id;
-    for (std::size_t index = 2; index + 1 < path.size(); ++index)
+    const auto& file = path[4];
+    if (path[2] != "session")
     {
-        if (!stream_id.empty())
+        const auto& stream_id = path[2];
+        const auto& token = path[3];
+        if (file != "index.m3u8" || !valid_stream_id(stream_id) || !valid_stream_token(token))
         {
-            stream_id.push_back('/');
-        }
-        stream_id.append(path[index]);
-    }
-
-    if (stream_id.empty())
-    {
-        send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
-        return;
-    }
-
-    std::optional<std::string> secret;
-    for (const auto parameter : target.params())
-    {
-        if (parameter.key != "session")
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid hls query\n", false);
+            send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid playback target\n", false);
             return;
         }
-        if (secret || !parameter.has_value)
+        const auto source = stream_registry::instance().find(stream_id);
+        if (!source)
         {
-            send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);
+            send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
             return;
         }
-        secret = parameter.value;
-    }
-
-    if (!secret && file == "index.m3u8")
-    {
-        const auto segmenter = hls::get_or_create(stream_id);
+        const auto segmenter = hls::get_or_create(source);
         if (!segmenter)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
             return;
         }
-        const auto viewer = hls_play_session::create(worker_, std::move(stream_id), segmenter);
-        send_redirect(std::string(target.encoded_path()) + "?session=" + viewer->secret());
+        if (!verify_stream(config_, token, "play", stream_id, yield))
+        {
+            send_text_response(boost::beast::http::status::forbidden, "text/plain", "playback denied\n", false);
+            return;
+        }
+        if (!stream_.socket().is_open())
+        {
+            return;
+        }
+        const auto viewer = hls_play_session::create(worker_, segmenter);
+        send_redirect("/play/hls/session/" + viewer->secret() + "/index.m3u8");
         return;
     }
 
-    if (!secret)
-    {
-        send_text_response(boost::beast::http::status::forbidden, "text/plain", "hls session required\n", false);
-        return;
-    }
     std::optional<std::uint64_t> segment_sequence;
     if (file != "index.m3u8")
     {
@@ -133,7 +132,7 @@ void hls_http_session::handle_request()
         segment_sequence = sequence;
     }
 
-    const auto viewer = hls_play_session::find(*secret, stream_id);
+    const auto viewer = hls_play_session::find(path[3]);
     if (!viewer)
     {
         send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);
@@ -143,7 +142,7 @@ void hls_http_session::handle_request()
     if (!segment_sequence)
     {
         playlist_deadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
-        wait_for_playlist(viewer, segmenter);
+        wait_for_playlist(segmenter);
         return;
     }
 
@@ -156,7 +155,7 @@ void hls_http_session::handle_request()
     send_binary_response(boost::beast::http::status::ok, "video/mp2t", segment, request_.keep_alive());
 }
 
-void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewer, std::shared_ptr<hls_segmenter> segmenter)
+void hls_http_session::wait_for_playlist(std::shared_ptr<hls_segmenter> segmenter)
 {
     if (!stream_.socket().is_open())
     {
@@ -164,7 +163,7 @@ void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewe
     }
     if (segmenter->has_segments())
     {
-        const auto playlist = segmenter->playlist(".", "session=" + viewer->secret());
+        const auto playlist = segmenter->playlist();
         send_text_response(boost::beast::http::status::ok, "application/vnd.apple.mpegurl", playlist, request_.keep_alive());
         return;
     }
@@ -177,13 +176,13 @@ void hls_http_session::wait_for_playlist(std::shared_ptr<hls_play_session> viewe
     wait_timer_.expires_after(std::chrono::milliseconds(100));
     const auto self = shared_from_this();
     wait_timer_.async_wait(
-        [self, viewer = std::move(viewer), segmenter = std::move(segmenter)](const boost::system::error_code& error) mutable
+        [self, segmenter = std::move(segmenter)](const boost::system::error_code& error) mutable
         {
             if (error)
             {
                 return;
             }
-            self->wait_for_playlist(std::move(viewer), std::move(segmenter));
+            self->wait_for_playlist(std::move(segmenter));
         });
 }
 
@@ -282,7 +281,14 @@ void hls_http_session::read_request()
                                    buffer_,
                                    request_,
                                    [self](const boost::system::error_code& error, std::size_t)
-                                   { error ? self->shutdown() : self->handle_request(); });
+                                   {
+                                       if (error)
+                                       {
+                                           self->shutdown();
+                                           return;
+                                       }
+                                       self->worker_.spawn([self](boost::asio::yield_context yield) { self->handle_request(yield); });
+                                   });
 }
 
 void hls_http_session::shutdown()

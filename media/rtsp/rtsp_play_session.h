@@ -31,7 +31,8 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
    public:
     using write_handler = std::function<void(std::vector<std::uint8_t>)>;
     rtsp_play_session(worker_context& worker,
-                      std::string stream_id,
+                      std::shared_ptr<media_stream> stream,
+                      std::string path,
                       boost::asio::ip::address local_address,
                       write_handler write);
 
@@ -39,6 +40,7 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }
 
    public:
+    [[nodiscard]] int prepare_presentation();
     void shutdown();
 
    public:
@@ -76,7 +78,6 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     static int muxer_packet_callback(void* param, int payload_index, const void* data, int bytes, std::uint32_t timestamp, int flags);
 
    private:
-    [[nodiscard]] int prepare_presentation();
     int on_muxer_packet(int payload_index, const void* data, int bytes);
     void write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes);
     [[nodiscard]] bool stream_current() const;
@@ -87,7 +88,7 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
+    std::string path_;
     boost::asio::ip::address local_address_;
     write_handler write_handler_;
     std::function<void()> shutdown_handler_;

@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <functional>
+#include <vector>
 
 #include "media/flv/flv_muxer.h"
 #include "media/core/media_sink.h"
@@ -24,6 +25,7 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
                       end_handler handle_source_end);
 
    public:
+    [[nodiscard]] bool prepare();
     [[nodiscard]] bool startup();
     void shutdown();
 
@@ -35,8 +37,17 @@ class rtmp_play_session final : public media_sink, public std::enable_shared_fro
     void safe_shutdown();
 
    private:
+    struct packet
+    {
+        int type;
+        std::vector<std::uint8_t> data;
+        std::uint32_t timestamp;
+    };
+
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
+    flv_muxer::packet_handler packet_handler_;
+    std::optional<std::vector<packet>> initial_packets_{std::in_place};
     flv_muxer muxer_;
     end_handler end_handler_;
     std::optional<track_id> waiting_video_track_;

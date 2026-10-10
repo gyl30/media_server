@@ -28,6 +28,16 @@ include(cmake/ffmpeg.cmake)
 include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
 
+set(BUILD_SHARED_LIBS OFF)
+set(ADA_TESTING OFF CACHE BOOL "" FORCE)
+set(ADA_BENCHMARKS OFF CACHE BOOL "" FORCE)
+set(ADA_TOOLS OFF CACHE BOOL "" FORCE)
+set(ADA_USE_SIMDUTF OFF CACHE BOOL "" FORCE)
+set(ADA_INCLUDE_URL_PATTERN OFF CACHE BOOL "" FORCE)
+add_subdirectory(third/ada EXCLUDE_FROM_ALL)
+unset(BUILD_SHARED_LIBS)
+target_include_directories(ada SYSTEM INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third/ada/include>)
+
 option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
 set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, undefined, thread")
 set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefined thread)
@@ -241,6 +251,8 @@ add_library(media_core STATIC
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
     media/http/rtsp_pull_http.cpp
+    media/http/signaling_verify.cpp
+    media/http/http_target.cpp
     media/http/whep_http.cpp
     media/http/whip_http.cpp
     media/http/http_session.cpp
@@ -286,6 +298,7 @@ target_include_directories(media_core SYSTEM PUBLIC
 
 target_link_libraries(media_core PUBLIC
     media_server_build_options
+    ada::ada
     ireader_media
     Threads::Threads
     OpenSSL::SSL
@@ -348,6 +361,16 @@ if(BUILD_TESTING)
     target_link_libraries(media_lifecycle_tests PRIVATE media_core media_server_link_options)
     add_test(NAME media_lifecycle COMMAND media_lifecycle_tests)
     set_tests_properties(media_lifecycle PROPERTIES TIMEOUT 30)
+    add_executable(signaling_verify_tests tests/signaling_verify.cpp)
+    target_link_libraries(signaling_verify_tests PRIVATE media_core media_server_link_options)
+    target_link_options(signaling_verify_tests PRIVATE -Wl,--wrap=getaddrinfo)
+    add_test(NAME signaling_verify COMMAND signaling_verify_tests)
+    set_tests_properties(signaling_verify PROPERTIES TIMEOUT 20)
+
+    add_executable(webrtc_auth_tests tests/webrtc_auth.cpp)
+    target_link_libraries(webrtc_auth_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME webrtc_auth COMMAND webrtc_auth_tests)
+    set_tests_properties(webrtc_auth PROPERTIES TIMEOUT 30)
     find_program(MEDIA_SERVER_TEST_FFMPEG ffmpeg)
     if(MEDIA_SERVER_TEST_FFMPEG)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -367,6 +390,10 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/input_idle.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
         set_tests_properties(input_idle PROPERTIES TIMEOUT 90)
+        add_test(NAME stream_auth
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/stream_auth.py
+                $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
+        set_tests_properties(stream_auth PROPERTIES TIMEOUT 180)
     endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME accept_recovery
@@ -382,15 +409,17 @@ if(BUILD_TESTING)
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/control_auth.py $<TARGET_FILE:media_server>)
     set_tests_properties(control_auth PROPERTIES TIMEOUT 30)
     add_test(NAME media_server_help COMMAND media_server --help)
-    foreach(invalid_case IN ITEMS threads port bind_address webrtc_address)
+    foreach(invalid_case IN ITEMS threads port bind_address webrtc_address signaling_url)
         if(invalid_case STREQUAL "threads")
             set(invalid_arguments --threads 0)
         elseif(invalid_case STREQUAL "port")
             set(invalid_arguments --rtmp-port 65536)
         elseif(invalid_case STREQUAL "bind_address")
             set(invalid_arguments --bind-address 0.0.0.0)
-        else()
+        elseif(invalid_case STREQUAL "webrtc_address")
             set(invalid_arguments --webrtc-address invalid)
+        else()
+            set(invalid_arguments --signaling-url https://127.0.0.1:9090)
         endif()
         add_test(NAME media_server_invalid_${invalid_case}
             COMMAND ${CMAKE_COMMAND}

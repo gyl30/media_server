@@ -52,7 +52,7 @@ def main():
             "delete no token": status(base + "/receivers/delete", body={"stream_id": "missing"}),
             "delete wrong token": status(base + "/receivers/delete", "wrong", {"stream_id": "missing"}),
             "delete right token missing": status(base + "/receivers/delete", "secret", {"stream_id": "missing"}),
-            "play route": status(base + "/live/missing.flv"),
+            "play route": status(base + "/" + "0" * 64 + "/" + "1" * 64 + ".flv"),
         }
         receiver = {"stream_id": "control-auth-receiver", "transport": "udp", "payload_type": 96, "ssrc": 1234}
         results["receiver create"] = status(base + "/gb28181/receiver/create", "secret", receiver)
