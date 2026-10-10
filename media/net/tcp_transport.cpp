@@ -64,7 +64,7 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
     // 对端停止读取时在途写不会完成，因此入队时限制尚未开始发送的字节数。
     if (writing && queued_write_bytes_ - write_queue_.front()->size() + data.size() > write_high_water_mark)
     {
-        const auto callback = std::move(write_callback_);
+        const auto callback = std::exchange(write_callback_, {});
         if (callback)
         {
             callback(boost::asio::error::no_buffer_space, 0);
