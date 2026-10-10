@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -57,13 +58,14 @@ void admission(bool publishing, const std::string& scenario)
     const auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "test certificate failed");
     const auto mid = std::string("0");
+    const bool aac_source = scenario == "replacement_aac";
     auto offer = std::string("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE ") + mid + "\r\n" +
-        (publishing ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n" : "m=audio 9 UDP/TLS/RTP/SAVPF 8\r\n") +
+        (publishing ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n" : aac_source ? "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" : "m=audio 9 UDP/TLS/RTP/SAVPF 8\r\n") +
         "c=IN IP4 0.0.0.0\r\na=mid:" + mid + "\r\na=rtcp-mux\r\na=setup:actpass\r\n"
         "a=ice-ufrag:test-remote\r\na=ice-pwd:test-remote-password\r\na=fingerprint:sha-256 " + certificate->sha256_fingerprint() + "\r\n"
         "a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n" +
         (publishing ? "a=sendonly\r\na=rtpmap:102 H264/90000\r\na=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n" :
-                      "a=recvonly\r\na=rtpmap:8 PCMA/8000\r\n");
+                      aac_source ? "a=recvonly\r\na=rtpmap:111 opus/48000/2\r\n" : "a=recvonly\r\na=rtpmap:8 PCMA/8000\r\n");
     if (scenario == "unsupported_offer")
     {
         const auto direction = publishing ? "a=sendonly" : "a=recvonly";
@@ -80,8 +82,10 @@ void admission(bool publishing, const std::string& scenario)
         offer.replace(offer.find(fingerprint), fingerprint.size(), "invalid");
     }
     auto source = std::make_shared<media_stream>(stream_id, worker);
-    auto track = media_track{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
-                             .clock_rate = 8'000U, .channel_count = 1, .codec_config = {}};
+    auto track = media_track{.id = 1, .kind = media_kind::audio, .codec = aac_source ? codec_id::aac : codec_id::g711a,
+                             .clock_rate = aac_source ? 48'000U : 8'000U,
+                             .channel_count = static_cast<std::uint16_t>(aac_source ? 2 : 1),
+                             .codec_config = aac_source ? std::vector<std::uint8_t>{0x11, 0x90} : std::vector<std::uint8_t>{}};
     require(source->set_tracks({track}), "test tracks rejected");
     const bool source_present = !publishing && scenario != "missing_source";
     if (source_present)
@@ -124,7 +128,7 @@ void admission(bool publishing, const std::string& scenario)
         {
             http_socket.close();
         }
-        if (scenario == "replacement")
+        if (scenario == "replacement" || scenario == "replacement_aac")
         {
             stream_registry::instance().remove(*source);
             source->end();
@@ -218,7 +222,7 @@ void admission(bool publishing, const std::string& scenario)
             }
             else
             {
-                if (scenario == "replacement")
+                if (scenario == "replacement" || scenario == "replacement_aac")
                 {
                     // 源终止通过 owner executor 关闭 socket，等整个 executor drain 后检查释放。
                 }
@@ -250,11 +254,19 @@ void admission(bool publishing, const std::string& scenario)
     }
     require(worker.stop_requested(), "test exceeded deadline");
     require(!session_registry::instance().find_receiver_session(stream_id), "WHIP shutdown retained registry entry");
-    if (scenario == "replacement") require(!whep::contains(created_session_id), "WHEP switched to replacement source after verification");
+    if (scenario == "replacement" || scenario == "replacement_aac")
+    {
+        require(!whep::contains(created_session_id), "WHEP switched to replacement source after verification");
+    }
     if (source_present) stream_registry::instance().remove(*source);
     if (replacement) stream_registry::instance().remove(*replacement);
     const auto available = media_port_pool::instance().acquire();
     require(available && *available == 54'000, "failed or stopped session leaked media port");
+    if (occupied_port.is_open())
+    {
+        occupied_port.close();
+    }
+    boost::asio::ip::udp::socket reused(worker.io(), {boost::asio::ip::address_v4::loopback(), *available});
     media_port_pool::instance().release(*available);
     std::cout << (publishing ? "WHIP " : "WHEP ") << scenario << ": PASS\n";
 }
@@ -273,7 +285,7 @@ int main(int argc, char** argv)
             return 0;
         }
         require(argc == 1, "unexpected test argument");
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "replacement_aac", "establishment_timeout"})
         {
             admission(false, scenario);
         }

@@ -5,7 +5,6 @@
 #include <span>
 #include <memory>
 #include <string>
-#include <expected>
 #include <vector>
 #include <cstdint>
 #include <optional>
@@ -28,22 +27,15 @@ namespace media_server
 class worker_context;
 class whep_audio_egress;
 
-enum class whep_session_startup_error
-{
-    invalid_offer,
-    internal_error,
-};
-
 class whep_session final : public media_sink, public std::enable_shared_from_this<whep_session>
 {
    public:
-    whep_session(worker_context& worker, std::shared_ptr<media_stream> stream);
+    whep_session(worker_context& worker, std::shared_ptr<media_stream> stream,
+                 std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
 
    public:
-    [[nodiscard]] std::expected<std::string, whep_session_startup_error> startup(webrtc_offer offer,
-                                                      boost::asio::ip::address advertised_address,
-                                                      std::shared_ptr<dtls_certificate> certificate);
-    void activate();
+    [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer,
+                               const webrtc_answer& answer, const dtls_certificate& certificate);
     void shutdown();
 
    public:

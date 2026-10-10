@@ -2,9 +2,7 @@
 #include <cstddef>
 #include <chrono>
 #include <utility>
-#include <algorithm>
 
-#include <openssl/rand.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
@@ -25,58 +23,26 @@ namespace
 constexpr auto establishment_timeout = std::chrono::seconds{15};
 constexpr auto ice_activity_timeout = std::chrono::seconds{30};
 
-std::string random_hex(std::size_t byte_count)
-{
-    std::vector<unsigned char> bytes(byte_count);
-    if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1)
-    {
-        return {};
-    }
-
-    constexpr char digits[] = "0123456789abcdef";
-    std::string result;
-    result.resize(bytes.size() * 2U);
-    for (std::size_t index = 0; index < bytes.size(); ++index)
-    {
-        result[index * 2U] = digits[bytes[index] >> 4U];
-        result[index * 2U + 1U] = digits[bytes[index] & 0x0FU];
-    }
-    return result;
-}
-
 }    // namespace
 
-whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream> stream)
+whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream> stream,
+                           std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
     : worker_(worker),
       stream_(std::move(stream)),
-      udp_transport_(std::make_shared<udp_transport>(worker_.io())),
+      udp_transport_(std::move(transport)),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
       ice_activity_timer_(worker_.io()),
-      id_(random_hex(16))
+      local_port_(config.port),
+      id_(std::move(config.stream_id)),
+      ice_ufrag_(std::move(config.ice_ufrag)),
+      ice_pwd_(std::move(config.ice_pwd))
 {
 }
 
-std::expected<std::string, whep_session_startup_error> whep_session::startup(webrtc_offer offer,
-                                                 boost::asio::ip::address advertised_address,
-                                                 std::shared_ptr<dtls_certificate> certificate)
+bool whep_session::startup(const webrtc_media_offer& transport_offer,
+                           const webrtc_answer& answer, const dtls_certificate& certificate)
 {
-    const auto source_tracks = stream_->tracks();
-    // 失败直接返回，由创建方调用 shutdown 统一清理已取得的端口和 socket。
-    const auto reserved = media_port_pool::instance().acquire();
-    if (!reserved)
-    {
-        spdlog::error("webrtc udp socket startup failed: no available media port");
-        return std::unexpected(whep_session_startup_error::internal_error);
-    }
-    local_port_ = *reserved;
-    boost::system::error_code udp_error;
-    udp_transport_->startup(advertised_address, local_port_, udp_error);
-    if (udp_error)
-    {
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
-        return std::unexpected(whep_session_startup_error::internal_error);
-    }
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -97,62 +63,30 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
             locked->shutdown();
         });
 
-    ice_ufrag_ = random_hex(8);
-    ice_pwd_ = random_hex(16);
-    if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
-    {
-        spdlog::error("webrtc session identifiers create failed");
-        return std::unexpected(whep_session_startup_error::internal_error);
-    }
-
-    auto answer = make_webrtc_answer(offer,
-                                     source_tracks,
-                                     webrtc_answer_config{
-                                         .address = advertised_address,
-                                         .port = local_port_,
-                                         .stream_id = id_,
-                                         .ice_ufrag = ice_ufrag_,
-                                         .ice_pwd = ice_pwd_,
-                                         .fingerprint = certificate->sha256_fingerprint(),
-                                     });
-    if (!answer)
-    {
-        spdlog::debug("webrtc answer create failed session {}", id_);
-        return std::unexpected(whep_session_startup_error::invalid_offer);
-    }
-    const auto media = std::find_if(
-        offer.media.begin(), offer.media.end(), [&answer](const webrtc_media_offer& value) { return value.mid == answer->transport_mid; });
-    if (media == offer.media.end() || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
-        !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
-    {
-        spdlog::debug("webrtc whep startup rejected invalid transport attributes");
-        return std::unexpected(whep_session_startup_error::invalid_offer);
-    }
-
-    remote_ice_ufrag_ = media->ice_ufrag;
-    dtls_ = std::make_unique<dtls_transport>(media->fingerprint,
+    remote_ice_ufrag_ = transport_offer.ice_ufrag;
+    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
-    if (!dtls_->startup(*certificate))
+    if (!dtls_->startup(certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
-        return std::unexpected(whep_session_startup_error::internal_error);
+        return false;
     }
 
-    spdlog::debug("webrtc session {} remote fingerprint {}", id_, media->fingerprint);
+    spdlog::debug("webrtc session {} remote fingerprint {}", id_, transport_offer.fingerprint);
 
-    if (answer->audio_payload_type && answer->audio_codec == codec_id::aac)
+    if (answer.audio_payload_type && answer.audio_codec == codec_id::aac)
     {
         audio_egress_ = acquire_whep_audio_egress(stream_,
                                                   worker_,
                                                   whep_audio_settings{
-                                                      .channels = answer->audio_channel_count.value_or(1),
-                                                      .bitrate = answer->audio_bitrate.value_or(64'000 * answer->audio_channel_count.value_or(1)),
-                                                      .max_playback_rate = answer->audio_max_playback_rate.value_or(48'000),
+                                                      .channels = answer.audio_channel_count.value_or(1),
+                                                      .bitrate = answer.audio_bitrate.value_or(64'000 * answer.audio_channel_count.value_or(1)),
+                                                      .max_playback_rate = answer.audio_max_playback_rate.value_or(48'000),
                                                   });
         if (!audio_egress_)
         {
-            return std::unexpected(whep_session_startup_error::internal_error);
+            return false;
         }
         stream_ = audio_egress_->output_stream();
     }
@@ -163,49 +97,43 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     if (!packetizer_->startup(
         stream_->tracks(),
         webrtc_packetizer_config{
-            .video_codec = answer->video_codec.value_or(codec_id::h264),
-            .audio_codec = audio_egress_ ? codec_id::opus : answer->audio_codec.value_or(codec_id::aac),
-            .video_payload_type = answer->video_payload_type.value_or(-1),
-            .audio_payload_type = answer->audio_payload_type.value_or(-1),
-            .video_mid = answer->video_mid.value_or(""),
-            .audio_mid = answer->audio_mid.value_or(""),
-            .video_mid_extension_id = answer->video_mid_extension_id.value_or(-1),
-            .audio_mid_extension_id = answer->audio_mid_extension_id.value_or(-1),
+            .video_codec = answer.video_codec.value_or(codec_id::h264),
+            .audio_codec = audio_egress_ ? codec_id::opus : answer.audio_codec.value_or(codec_id::aac),
+            .video_payload_type = answer.video_payload_type.value_or(-1),
+            .audio_payload_type = answer.audio_payload_type.value_or(-1),
+            .video_mid = answer.video_mid.value_or(""),
+            .audio_mid = answer.audio_mid.value_or(""),
+            .video_mid_extension_id = answer.video_mid_extension_id.value_or(-1),
+            .audio_mid_extension_id = answer.audio_mid_extension_id.value_or(-1),
             .rtcp_cname = id_,
         }))
     {
-        return std::unexpected(whep_session_startup_error::internal_error);
+        return false;
     }
 
     for (const auto& track : stream_->tracks())
     {
-        if (answer->video_codec && track.kind == media_kind::video && track.codec == *answer->video_codec)
+        if (answer.video_codec && track.kind == media_kind::video && track.codec == *answer.video_codec)
         {
             waiting_video_track_ = track.id;
             break;
         }
     }
-    spdlog::debug("webrtc whep session prepared {} stream {} candidate {} {}", id_, stream_->stream_id(), advertised_address.to_string(), local_port_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,
         ice_ufrag_,
         remote_ice_ufrag_,
-        answer->video_payload_type.value_or(-1),
-        answer->audio_payload_type.value_or(-1),
-        answer->audio_channel_count.value_or(0),
-        answer->audio_bitrate.value_or(0),
-        answer->audio_max_playback_rate.value_or(0));
-    return std::move(answer->sdp);
-}
-
-void whep_session::activate()
-{
-    const auto self = shared_from_this();
+        answer.video_payload_type.value_or(-1),
+        answer.audio_payload_type.value_or(-1),
+        answer.audio_channel_count.value_or(0),
+        answer.audio_bitrate.value_or(0),
+        answer.audio_max_playback_rate.value_or(0));
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     stream_->add_sink(self);
     startup_establishment_timeout();
     spdlog::info("webrtc whep session started {} stream {}", id_, stream_->stream_id());
+    return true;
 }
 
 void whep_session::shutdown()
