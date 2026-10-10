@@ -32,6 +32,12 @@ rtmp_session::~rtmp_session() = default;
 void rtmp_session::startup()
 {
     const auto self = shared_from_this();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
+}
+
+void rtmp_session::run(boost::asio::yield_context yield)
+{
+    const auto self = shared_from_this();
     transport_->set_write_callback(
         [self](boost::system::error_code error, std::size_t)
         {
@@ -47,11 +53,6 @@ void rtmp_session::startup()
                           spdlog::info("rtmp input idle timeout");
                           shutdown();
                       });
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
-}
-
-void rtmp_session::run(boost::asio::yield_context yield)
-{
     rtmp_server_handler_t handler{};
     handler.send = &rtmp_session::send_callback;
     handler.ondelete_stream = &rtmp_session::delete_stream_callback;
