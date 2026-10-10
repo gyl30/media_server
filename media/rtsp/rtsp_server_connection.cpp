@@ -393,6 +393,10 @@ bool rtsp_server_connection::admit_play(std::string_view uri)
     {
         return false;
     }
+    if (!verify_stream(config_, token, "play", stream_id, *input_yield_) || !transport_)
+    {
+        return false;
+    }
 
     const auto owner = shared_from_this();
     auto player = std::make_shared<rtsp_play_session>(worker_,
@@ -407,7 +411,7 @@ bool rtsp_server_connection::admit_play(std::string_view uri)
                                                             }
                                                         });
     player->set_shutdown_handler([owner]() { owner->shutdown(); });
-    if (player->prepare_presentation() != 0 || !verify_stream(config_, token, "play", stream_id, *input_yield_) || !transport_)
+    if (player->prepare_presentation() != 0)
     {
         player->shutdown();
         return false;

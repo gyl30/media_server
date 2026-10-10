@@ -383,6 +383,8 @@ if(BUILD_TESTING)
         -Wl,--wrap=rtmp_server_start -Wl,--wrap=rtmp_server_send_audio)
     add_test(NAME rtmp_play_auth COMMAND protocol_play_auth_tests rtmp)
     set_tests_properties(rtmp_play_auth PROPERTIES TIMEOUT 30)
+    add_test(NAME rtsp_play_auth COMMAND protocol_play_auth_tests rtsp)
+    set_tests_properties(rtsp_play_auth PROPERTIES TIMEOUT 30)
 
     add_executable(webrtc_auth_tests tests/webrtc_auth.cpp)
     target_link_libraries(webrtc_auth_tests PRIVATE media_core media_server_link_options)
