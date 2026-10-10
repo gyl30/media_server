@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <future>
@@ -10,6 +11,7 @@
 #include <vector>
 
 #include <boost/asio/post.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <boost/endian/conversion.hpp>
 #include <boost/scope/scope_exit.hpp>
 
@@ -20,6 +22,7 @@
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/net/worker_context.h"
+#include "media/net/tcp_transport.h"
 #include "media/ps/mpeg_ps_output.h"
 #include "media/rtmp/rtmp_timestamp.h"
 #include "media/rtsp/rtsp_play_session.h"
@@ -396,6 +399,131 @@ void session_registry_stop()
     require(receiver->shutdown_count == 1 && sender->shutdown_count == 1, "repeat registry stop closed sessions twice");
     std::cout << "session registry terminal stop with empty resources: PASS\n";
 }
+
+struct shutdown_record
+{
+    unsigned requests{};
+    unsigned cleanups{};
+    unsigned child_requests{};
+    bool read_started{};
+    bool read_cancelled{};
+    bool subscribed{};
+    bool child_open_after_request{};
+};
+
+struct shutdown_parent final : std::enable_shared_from_this<shutdown_parent>
+{
+    worker_context& owner;
+    std::shared_ptr<tcp_transport> transport;
+    shutdown_record& record;
+    worker_context::shutdown_subscription subscription;
+
+    shutdown_parent(worker_context& worker, std::shared_ptr<tcp_transport> child, shutdown_record& observations)
+        : owner(worker), transport(std::move(child)), record(observations)
+    {
+    }
+
+    void startup()
+    {
+        const auto self = shared_from_this();
+        transport->set_write_callback([self](boost::system::error_code error, std::size_t)
+                                      {
+                                          if (error)
+                                          {
+                                              self->shutdown();
+                                          }
+                                      });
+        subscription = owner.subscribe_shutdown([self]()
+                                                {
+                                                    self->record.subscribed = true;
+                                                    self->shutdown();
+                                                    self->shutdown();
+                                                });
+        require(static_cast<bool>(subscription), "worker stop subscription rejected");
+        owner.spawn([self, child = transport](boost::asio::yield_context yield)
+                    {
+                        std::array<std::uint8_t, 1> buffer{};
+                        boost::system::error_code error;
+                        self->record.read_started = true;
+                        child->read(buffer, yield, error);
+                        self->record.read_cancelled = error == boost::asio::error::operation_aborted;
+                        self->shutdown();
+                    });
+    }
+
+    void shutdown()
+    {
+        ++record.requests;
+        const auto self = shared_from_this();
+        boost::asio::post(owner.io(), [self]() { self->safe_shutdown(); });
+    }
+
+   private:
+    void safe_shutdown()
+    {
+        ++record.cleanups;
+        subscription.reset();
+        if (!transport)
+        {
+            return;
+        }
+        transport->shutdown();
+        transport->shutdown();
+        record.child_requests += 2;
+        boost::system::error_code error;
+        const auto endpoint = transport->local_endpoint(error);
+        record.child_open_after_request = !error && endpoint.port() != 0;
+        transport.reset();
+    }
+};
+
+void worker_stop_drains_parent_and_child()
+{
+    using tcp = boost::asio::ip::tcp;
+    worker_context worker;
+    boost::asio::io_context client_io;
+    tcp::acceptor listener(worker.io(), {boost::asio::ip::address_v4::loopback(), 0});
+    tcp::socket peer(client_io);
+    peer.connect(listener.local_endpoint());
+    tcp::socket socket(worker.io());
+    listener.accept(socket);
+    listener.close();
+
+    shutdown_record record;
+    auto child = std::make_shared<tcp_transport>(std::move(socket));
+    const std::weak_ptr<tcp_transport> child_lifetime = child;
+    auto parent = std::make_shared<shutdown_parent>(worker, std::move(child), record);
+    const std::weak_ptr<shutdown_parent> parent_lifetime = parent;
+    boost::scope::scope_exit cleanup([&]()
+    {
+        if (const auto remaining = parent_lifetime.lock())
+        {
+            remaining->shutdown();
+        }
+        worker.request_stop();
+        worker.io().restart();
+        worker.io().run_for(1s);
+    });
+    boost::asio::post(worker.io(), [parent, &worker]()
+                      {
+                          parent->startup();
+                          worker.request_stop();
+                          worker.request_stop();
+                      });
+    parent.reset();
+    worker.io().run_for(5s);
+    require(worker.io().stopped(), "worker stop left unfinished operations");
+    require(record.read_started && record.read_cancelled && record.subscribed, "worker stop missed active read or subscription");
+    require(record.requests == 3 && record.cleanups == record.requests, "worker stop did not drain every posted parent cleanup");
+    require(record.child_requests == 2 && record.child_open_after_request, "parent bypassed posted child cleanup");
+    require(parent_lifetime.expired() && child_lifetime.expired(), "worker stop retained parent/child callback ownership cycle");
+    std::array<std::uint8_t, 1> buffer{};
+    boost::system::error_code error;
+    peer.non_blocking(true);
+    peer.read_some(boost::asio::buffer(buffer), error);
+    require(error == boost::asio::error::eof, "worker stop did not close child TCP socket");
+    std::cout << "worker stop drains parent/child posts, cancels read and releases strong callback cycle: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -409,6 +537,7 @@ int main()
         derived_generation_lifetimes(context);
         session_registry_identity();
         session_registry_stop();
+        worker_stop_drains_parent_and_child();
         return 0;
     }
     catch (const std::exception& error)
