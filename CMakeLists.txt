@@ -395,7 +395,7 @@ if(BUILD_TESTING)
     target_link_options(protocol_play_auth_tests PRIVATE
         -Wl,--wrap=flv_muxer_create -Wl,--wrap=flv_muxer_destroy
         -Wl,--wrap=rtsp_muxer_create -Wl,--wrap=rtsp_muxer_destroy
-        -Wl,--wrap=rtmp_server_start -Wl,--wrap=rtmp_server_send_audio)
+        -Wl,--wrap=rtmp_server_start -Wl,--wrap=rtmp_server_send_audio -Wl,--wrap=rtmp_server_destroy)
     add_test(NAME rtmp_play_auth COMMAND protocol_play_auth_tests rtmp)
     set_tests_properties(rtmp_play_auth PROPERTIES TIMEOUT 30)
     add_test(NAME rtsp_play_auth COMMAND protocol_play_auth_tests rtsp)

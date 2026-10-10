@@ -75,6 +75,8 @@ void rtmp_play_session::safe_shutdown()
     waiting_video_track_.reset();
     initial_packets_.reset();
     muxer_.shutdown();
+    packet_handler_ = {};
+    end_handler_ = {};
 }
 
 void rtmp_play_session::on_frame(const media_frame& frame)

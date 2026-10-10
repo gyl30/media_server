@@ -33,14 +33,11 @@ void rtmp_session::startup()
 {
     const auto self = shared_from_this();
     transport_->set_write_callback(
-        [weak = std::weak_ptr<rtmp_session>(self)](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
             if (error)
             {
-                if (const auto owner = weak.lock())
-                {
-                    owner->shutdown();
-                }
+                self->shutdown();
             }
         });
     // 收到数据即刷新；播放连接停止计时。
@@ -70,7 +67,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
     auto* context = rtmp_server_create(this, &handler);
     if (context == nullptr)
     {
-        safe_shutdown();
+        shutdown();
         return;
     }
     rtmp_context_ = context;
@@ -78,7 +75,7 @@ void rtmp_session::run(boost::asio::yield_context yield)
 
     rtmp_server_destroy(context);
     rtmp_context_ = nullptr;
-    safe_shutdown();
+    shutdown();
     spdlog::debug("rtmp shutdown");
 }
 
@@ -215,6 +212,10 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
         std::move(media),
         [self](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
         {
+            if (self->rtmp_context_ == nullptr || !self->transport_)
+            {
+                return -1;
+            }
             if (type == FLV_TYPE_VIDEO)
             {
                 return rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp);

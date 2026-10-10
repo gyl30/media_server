@@ -26,6 +26,7 @@
 #include "media/core/stream_registry.h"
 #include "media/net/worker_context.h"
 #include "media/rtmp/rtmp_session.h"
+#include "media/rtmp/rtmp_play_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 extern "C"
@@ -57,6 +58,9 @@ mux_observations rtsp_mux;
 unsigned successful_play_starts{};
 unsigned sent_audio_packets{};
 bool config_before_play_start{};
+unsigned invalid_context_sends{};
+std::shared_ptr<media_stream> late_frame_source;
+std::shared_ptr<boost::asio::steady_timer> late_frame_completion;
 
 void require(bool condition, const char* message)
 {
@@ -72,6 +76,27 @@ struct rtmp_peer
     unsigned audio_packets{};
 };
 
+void player_callback_release()
+{
+    worker_context worker;
+    auto source = std::make_shared<media_stream>("closed-player", worker);
+    auto owner = std::make_shared<int>(42);
+    const std::weak_ptr<int> released_owner = owner;
+    auto player = std::make_shared<rtmp_play_session>(
+        worker, source, [owner](int, std::span<const std::uint8_t>, std::uint32_t) { return *owner - 42; }, [owner]() { ++*owner; });
+    owner.reset();
+    player->shutdown();
+    player->shutdown();
+    worker.io().poll();
+    require(released_owner.expired(), "closed RTMP player retained parent callbacks");
+    player->on_end();
+    player->on_frame({.track = 1, .payload = std::make_shared<const std::vector<std::uint8_t>>(1, 0)});
+    player.reset();
+    worker.request_stop();
+    worker.run();
+    std::cout << "RTMP retained closed player releases parent callbacks: PASS\n";
+}
+
 void admission(bool rtmp, const std::string& scenario)
 {
     flv_mux = {};
@@ -79,6 +104,8 @@ void admission(bool rtmp, const std::string& scenario)
     successful_play_starts = 0;
     sent_audio_packets = 0;
     config_before_play_start = false;
+    invalid_context_sends = 0;
+    const bool accepted = scenario == "accepted" || scenario == "late_frame";
     auto& observed = rtmp ? flv_mux : rtsp_mux;
     worker_context worker;
     const auto address = boost::asio::ip::address_v4::loopback();
@@ -117,6 +144,10 @@ void admission(bool rtmp, const std::string& scenario)
         }
         finished = true;
         deadline.cancel();
+        if (late_frame_completion)
+        {
+            late_frame_completion->cancel();
+        }
         signaling_listener.close();
         media_listener.close();
         boost::system::error_code ignored;
@@ -293,7 +324,7 @@ void admission(bool rtmp, const std::string& scenario)
                             break;
                         }
                         const auto result = rtmp_client_input(client.get(), input.data(), bytes);
-                        if (scenario == "accepted" && peer.audio_packets != 0)
+                        if (accepted && peer.audio_packets != 0)
                         {
                             require(result == 0, "accepted RTMP response failed");
                             require(rtmp_client_getstate(client.get()) == 4, "RTMP config arrived before client Play.Start");
@@ -301,11 +332,11 @@ void admission(bool rtmp, const std::string& scenario)
                         }
                         if (result != 0)
                         {
-                            require(scenario != "accepted", "accepted RTMP client failed");
+                            require(!accepted, "accepted RTMP client failed");
                             break;
                         }
                     }
-                    require((peer.audio_packets != 0) == (scenario == "accepted"), "RTMP media admission differs from authorization");
+                    require((peer.audio_packets != 0) == accepted, "RTMP media admission differs from authorization");
                 }
                 else
                 {
@@ -331,6 +362,12 @@ void admission(bool rtmp, const std::string& scenario)
                                 "failed RTSP admission emitted a successful SDP");
                     }
                 }
+                if (scenario == "late_frame")
+                {
+                    late_frame_source = source;
+                    late_frame_completion = std::make_shared<boost::asio::steady_timer>(worker.io());
+                    late_frame_completion->expires_at(std::chrono::steady_clock::time_point::max());
+                }
                 client_socket.close();
             }
             require(verify_requests == attempts, "verification count changed");
@@ -344,8 +381,15 @@ void admission(bool rtmp, const std::string& scenario)
             if (rtmp)
             {
                 require(!config_before_play_start, "RTMP codec config preceded Play.Start");
-                require(successful_play_starts == (scenario == "accepted" ? 1U : 0U), "failed RTMP preparation sent Play.Start");
-                require(sent_audio_packets == (scenario == "accepted" ? 1U : 0U), "failed RTMP admission sent codec config");
+                require(successful_play_starts == (accepted ? 1U : 0U), "failed RTMP preparation sent Play.Start");
+                require(sent_audio_packets == (accepted ? 1U : 0U), "failed RTMP admission sent codec config");
+            }
+            if (scenario == "late_frame")
+            {
+                boost::system::error_code error;
+                late_frame_completion->async_wait(yield[error]);
+                require(error == boost::asio::error::operation_aborted && !late_frame_source, "late RTMP frame was not exercised");
+                late_frame_completion.reset();
             }
             finish();
         },
@@ -362,7 +406,8 @@ void admission(bool rtmp, const std::string& scenario)
         std::rethrow_exception(failure);
     }
     require(observed.live == 0, "play mux remained after shutdown");
-    require(observed.destroyed == (scenario == "accepted" || scenario == "replacement" || scenario == "no_tracks" ? 1U : 0U),
+    require(invalid_context_sends == 0, "late media used a destroyed RTMP context");
+    require(observed.destroyed == (accepted || scenario == "replacement" || scenario == "no_tracks" ? 1U : 0U),
             "play mux cleanup count changed");
     for (const auto& owner : released_owners)
     {
@@ -378,6 +423,22 @@ extern "C" rtsp_muxer_t* __real_rtsp_muxer_create(rtsp_muxer_onpacket handler, v
 extern "C" int __real_rtsp_muxer_destroy(rtsp_muxer_t* muxer);
 extern "C" int __real_rtmp_server_start(rtmp_server_t* server, int code, const char* message);
 extern "C" int __real_rtmp_server_send_audio(rtmp_server_t* server, const void* data, std::size_t bytes, std::uint32_t timestamp);
+extern "C" void __real_rtmp_server_destroy(rtmp_server_t* server);
+
+extern "C" void __wrap_rtmp_server_destroy(rtmp_server_t* server)
+{
+    __real_rtmp_server_destroy(server);
+    if (auto source = std::exchange(late_frame_source, {}))
+    {
+        boost::asio::post(source->worker().io(), [source, completion = late_frame_completion]()
+                          {
+                              source->publish({.track = 1, .pts_ns = 20'000'000,
+                                               .payload = std::make_shared<const std::vector<std::uint8_t>>(
+                                                   std::initializer_list<std::uint8_t>{0xf8, 0xff, 0xfe})});
+                              completion->cancel();
+                          });
+    }
+}
 
 extern "C" flv_muxer_t* __wrap_flv_muxer_create(flv_muxer_handler handler, void* param)
 {
@@ -436,6 +497,11 @@ extern "C" int __wrap_rtmp_server_start(rtmp_server_t* server, int code, const c
 
 extern "C" int __wrap_rtmp_server_send_audio(rtmp_server_t* server, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
+    if (server == nullptr)
+    {
+        ++invalid_context_sends;
+        return -1;
+    }
     ++sent_audio_packets;
     config_before_play_start = config_before_play_start || successful_play_starts == 0;
     return __real_rtmp_server_send_audio(server, data, bytes, timestamp);
@@ -455,6 +521,11 @@ int main(int argc, char** argv)
         {
             admission(false, "replacement");
             admission(false, "no_tracks");
+        }
+        else
+        {
+            admission(true, "late_frame");
+            player_callback_release();
         }
         return 0;
     }
