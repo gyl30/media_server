@@ -46,7 +46,6 @@ def main():
     channel = "34020000001320000002"
     device_path = f"/api/devices/{device}"
     play_path = f"{device_path}/channels/{channel}/play"
-    stream = f"gb/{device}/{channel}"
     fixture = args.media_file or args.output / "fixture.h264"
     processes, commands = [], []
     result = {"head": benchmark_head(), "status": "FAIL", "checks": [], "viewer_stats": []}
@@ -112,8 +111,7 @@ def main():
         for resource in resources:
             endpoint = urlsplit(resource)
             eventually(lambda: request(endpoint.port, "GET", endpoint.path)[0] == 404)
-        assert request(media_port, "POST", "/gb28181/receiver/delete",
-            {"stream_id": live_id, "stream_name": stream})[0] == 404
+        assert request(media_port, "POST", "/receivers/delete", {"stream_id": live_id})[0] == 404
 
     started = time.monotonic()
     try:
@@ -135,12 +133,12 @@ def main():
         live_id = tickets[0]["live_id"]
         assert len({ticket["live_id"] for ticket in tickets}) == 1
         assert len({ticket["play_id"] for ticket in tickets}) == 8
-        wait_for_stream("127.0.0.1", media_port, stream)
+        wait_for_stream("127.0.0.1", media_port, live_id)
         mark("eight concurrent play requests share one live")
 
         if args.audio_file:
             command = [args.ffmpeg, "-hide_banner", "-loglevel", "info", "-rtsp_transport", "tcp",
-                "-i", f"rtsp://127.0.0.1:{base+1}/{stream}", "-map", "0:v:0", "-map", "0:a:0",
+                "-i", f"rtsp://127.0.0.1:{base+1}/{live_id}", "-map", "0:v:0", "-map", "0:a:0",
                 "-t", "4", "-c:v", "rawvideo", "-threads:v", "1", "-c:a", "pcm_s16le", "-f", "framecrc", "-"]
             decoded = subprocess.run(command, capture_output=True, text=True, timeout=30)
             commands.append({"label": "rtsp-decode", "command": command})
@@ -303,7 +301,7 @@ def main():
                 page.evaluate("peers.forEach(peer => peer.close()); videos.forEach(video => video.remove()); peers=[]; videos=[]; resources=[]")
 
                 live = api("POST", play_path, expected=201)
-                wait_for_stream("127.0.0.1", media_port, stream)
+                wait_for_stream("127.0.0.1", media_port, live["live_id"])
                 resource = viewer(live)
                 pending = api("POST", play_path, expected=201)
                 stop_process(simulator)
@@ -317,7 +315,7 @@ def main():
                 eventually(online)
                 new_live = api("POST", play_path, expected=201)
                 assert new_live["live_id"] != live["live_id"]
-                wait_for_stream("127.0.0.1", media_port, stream)
+                wait_for_stream("127.0.0.1", media_port, new_live["live_id"])
                 resource = viewer(new_live)
                 pending = api("POST", play_path, expected=201)
                 mark("re-registration synchronizes Catalog and starts a new generation")
@@ -339,7 +337,7 @@ def main():
                 assert "live" not in channels()[0]
                 media = start_media("media-2")
                 live = api("POST", play_path, expected=201)
-                wait_for_stream("127.0.0.1", media_port, stream)
+                wait_for_stream("127.0.0.1", media_port, live["live_id"])
                 mark("unavailable receiver creation leaves no live and permits a later play")
                 stop_process(media)
                 consume(live, 502)
@@ -350,7 +348,7 @@ def main():
 
                 page.evaluate("peers.forEach(peer => peer.close()); videos.forEach(video => video.remove()); peers=[]; videos=[]; resources=[]")
                 live = api("POST", play_path, expected=201)
-                wait_for_stream("127.0.0.1", media_port, stream)
+                wait_for_stream("127.0.0.1", media_port, live["live_id"])
                 resource = viewer(live)
                 pending = api("POST", play_path, expected=201)
                 api("DELETE", device_path, expected=204)

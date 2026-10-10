@@ -19,15 +19,15 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
 {
    public:
     [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker,
-                                                                  std::string stream_name,
+                                                                  std::string stream_id,
                                                                   std::shared_ptr<hls_segmenter> segmenter);
-    [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_name);
+    [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret, std::string_view stream_id);
     [[nodiscard]] const std::string& secret() const noexcept { return secret_; }
     [[nodiscard]] const std::shared_ptr<hls_segmenter>& segmenter() const noexcept { return segmenter_; }
 
    private:
     hls_play_session(
-        worker_context& worker, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter);
+        worker_context& worker, std::string stream_id, std::string secret, std::shared_ptr<hls_segmenter> segmenter);
 
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);
@@ -38,7 +38,7 @@ class hls_play_session final : public std::enable_shared_from_this<hls_play_sess
     static constexpr auto inactivity_timeout = std::chrono::seconds{30};
 
    private:
-    std::string stream_name_;
+    std::string stream_id_;
     std::string secret_;
     std::shared_ptr<hls_segmenter> segmenter_;
     std::chrono::steady_clock::time_point last_activity_;

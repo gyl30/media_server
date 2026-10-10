@@ -36,7 +36,7 @@ bool gb28181_tcp_sender_session::startup(boost::asio::ip::address bind_address,
     listener_->startup(error);
     if (error)
     {
-        spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
+        spdlog::error("gb28181 tcp sender listener startup failed stream {} sender {} error {}", stream_->stream_id(), sender_id_, error.message());
         return false;
     }
 
@@ -70,7 +70,7 @@ void gb28181_tcp_sender_session::run(std::optional<boost::asio::ip::tcp::endpoin
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->name(), sender_id_, error.message());
+            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->stream_id(), sender_id_, error.message());
         }
         shutdown();
         return;
@@ -97,7 +97,7 @@ void gb28181_tcp_sender_session::run(std::optional<boost::asio::ip::tcp::endpoin
         return;
     }
 
-    spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_->name(), sender_id_);
+    spdlog::info("gb28181 tcp sender started stream {} sender {}", stream_->stream_id(), sender_id_);
     run_read(yield);
     shutdown();
 }
@@ -139,7 +139,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
         return;
     }
     auto stream = std::move(stream_);
-    session_registry::instance().remove_sender_session(stream->name(), sender_id_, *this);
+    session_registry::instance().remove_sender_session(stream->stream_id(), sender_id_, *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -158,7 +158,7 @@ void gb28181_tcp_sender_session::safe_shutdown()
         sender_->shutdown();
         sender_.reset();
     }
-    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream->name(), sender_id_);
+    spdlog::debug("gb28181 tcp sender shutdown {} sender {}", stream->stream_id(), sender_id_);
 }
 
 }    // namespace media_server

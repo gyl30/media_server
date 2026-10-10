@@ -27,9 +27,9 @@ constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
 rtsp_publish_media::rtsp_publish_media(worker_context& worker,
-                                       std::string media_stream_name,
+                                       std::string media_stream_id,
                                        std::vector<rtsp_publish_track_description> descriptions)
-    : worker_(worker), media_stream_name_(std::move(media_stream_name)), descriptions_(std::move(descriptions))
+    : worker_(worker), media_stream_id_(std::move(media_stream_id)), descriptions_(std::move(descriptions))
 {
 }
 
@@ -40,7 +40,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
         return false;
     }
 
-    media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
+    media_stream_ = std::make_shared<media_stream>(media_stream_id_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxers_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
@@ -164,7 +164,7 @@ void rtsp_publish_media::shutdown()
 
 const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descriptions() const noexcept { return descriptions_; }
 
-const std::string& rtsp_publish_media::media_stream_name() const noexcept { return media_stream_name_; }
+const std::string& rtsp_publish_media::media_stream_id() const noexcept { return media_stream_id_; }
 
 
 int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)

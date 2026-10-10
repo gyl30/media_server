@@ -34,7 +34,7 @@ struct whip_media_receiver_config
 class whip_media_receiver final
 {
    public:
-    whip_media_receiver(worker_context& worker, std::string stream_name);
+    whip_media_receiver(worker_context& worker, std::string stream_id);
     ~whip_media_receiver();
 
    public:

@@ -218,11 +218,11 @@ std::vector<std::vector<std::uint8_t>> make_rtp(int audio_codec, std::size_t aud
 }
 
 // 送入全部 RTP 并检查登记的轨道数；遇到致命结果返回 false。
-bool feed(const std::string& stream_name, const std::vector<std::vector<std::uint8_t>>& packets, std::size_t expected_tracks)
+bool feed(const std::string& stream_id, const std::vector<std::vector<std::uint8_t>>& packets, std::size_t expected_tracks)
 {
     worker_context worker;
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc);
-    require(receiver.startup(), stream_name + ": receiver startup failed");
+    gb28181_rtp_receiver receiver(worker, stream_id, payload_type, ssrc);
+    require(receiver.startup(), stream_id + ": receiver startup failed");
     for (const auto& packet : packets)
     {
         if (receiver.receive_rtp(packet) == gb28181_rtp_receive_result::fatal)
@@ -231,8 +231,8 @@ bool feed(const std::string& stream_name, const std::vector<std::vector<std::uin
             return false;
         }
     }
-    const auto stream = stream_registry::instance().find(stream_name);
-    require(stream && stream->tracks().size() == expected_tracks, stream_name + ": unexpected tracks");
+    const auto stream = stream_registry::instance().find(stream_id);
+    require(stream && stream->tracks().size() == expected_tracks, stream_id + ": unexpected tracks");
     receiver.shutdown();
     return true;
 }
@@ -240,14 +240,14 @@ bool feed(const std::string& stream_name, const std::vector<std::vector<std::uin
 void check(const char* name, int audio_codec, std::size_t audio_bytes, std::size_t expected_tracks)
 {
     worker_context worker;
-    const std::string stream_name = std::string("gb/test/") + name;
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc);
+    const std::string stream_id = std::string("gb/test/") + name;
+    gb28181_rtp_receiver receiver(worker, stream_id, payload_type, ssrc);
     require(receiver.startup(), std::string(name) + ": receiver startup failed");
     for (const auto& packet : make_rtp(audio_codec, audio_bytes))
     {
         require(receiver.receive_rtp(packet) != gb28181_rtp_receive_result::fatal, std::string(name) + ": stream rejected");
     }
-    const auto stream = stream_registry::instance().find(stream_name);
+    const auto stream = stream_registry::instance().find(stream_id);
     require(stream && stream->tracks().size() == expected_tracks && stream->tracks().front().codec == codec_id::h264,
             std::string(name) + ": unexpected tracks");
     receiver.shutdown();
@@ -256,8 +256,8 @@ void check(const char* name, int audio_codec, std::size_t audio_bytes, std::size
 void device_selected_ssrc()
 {
     worker_context worker;
-    const std::string stream_name = "gb/test/device_ssrc";
-    gb28181_rtp_receiver receiver(worker, stream_name, payload_type, ssrc + 1U);
+    const std::string stream_id = "gb/test/device_ssrc";
+    gb28181_rtp_receiver receiver(worker, stream_id, payload_type, ssrc + 1U);
     require(receiver.startup(), "device ssrc: receiver startup failed");
     const auto packets = make_rtp(PSI_STREAM_AUDIO_G711A, 320);
     for (const auto& packet : packets)
@@ -270,7 +270,7 @@ void device_selected_ssrc()
     {
         require(receiver.receive_rtp(packet) == gb28181_rtp_receive_result::accepted, "device ssrc: updated ssrc rejected");
     }
-    require(stream_registry::instance().find(stream_name) != nullptr, "device ssrc: stream not registered");
+    require(stream_registry::instance().find(stream_id) != nullptr, "device ssrc: stream not registered");
     receiver.shutdown();
     std::cout << "device_selected_ssrc: PASS\n";
 }

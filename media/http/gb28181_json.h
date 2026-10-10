@@ -22,7 +22,6 @@ enum class gb28181_transport
 struct gb28181_receiver_config
 {
     std::string stream_id;
-    std::string stream_name;
     gb28181_transport transport{gb28181_transport::udp};
     boost::asio::ip::address remote_address{};
     std::uint16_t remote_port{};
@@ -34,7 +33,6 @@ struct gb28181_receiver_config
 struct gb28181_sender_config
 {
     std::string stream_id;
-    std::string stream_name;
     std::string sender_id;
     gb28181_transport transport{gb28181_transport::udp};
     boost::asio::ip::address remote_address{};
@@ -46,23 +44,15 @@ struct gb28181_sender_config
     std::uint32_t ssrc{};
 };
 
-struct gb28181_receiver_identity
-{
-    std::string stream_id;
-    std::string stream_name;
-};
-
 struct gb28181_sender_identity
 {
     std::string stream_id;
-    std::string stream_name;
     std::string sender_id;
 };
 
 [[nodiscard]] std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body);
 [[nodiscard]] std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body);
-[[nodiscard]] std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body);
-[[nodiscard]] std::optional<std::pair<gb28181_receiver_identity, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body);
+[[nodiscard]] std::optional<std::pair<std::string, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body);
 [[nodiscard]] std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body);
 
 }    // namespace media_server

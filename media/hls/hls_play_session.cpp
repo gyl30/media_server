@@ -31,7 +31,7 @@ hls_play_sessions& sessions()
 }    // namespace
 
 std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker,
-                                                           std::string stream_name,
+                                                           std::string stream_id,
                                                            std::shared_ptr<hls_segmenter> segmenter)
 {
     boost::uuids::random_generator generator;
@@ -39,7 +39,7 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
     for (;;)
     {
         auto secret = boost::uuids::to_string(generator());
-        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_name, std::move(secret), segmenter));
+        auto session = std::shared_ptr<hls_play_session>(new hls_play_session(worker, stream_id, std::move(secret), segmenter));
         {
             std::scoped_lock lock(current.mutex);
             if (!current.by_secret.emplace(session->secret(), session).second)
@@ -60,12 +60,12 @@ std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worke
     }
 }
 
-std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret, std::string_view stream_name)
+std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret, std::string_view stream_id)
 {
     auto& current = sessions();
     std::scoped_lock lock(current.mutex);
     const auto iterator = current.by_secret.find(secret);
-    if (iterator == current.by_secret.end() || iterator->second->stream_name_ != stream_name)
+    if (iterator == current.by_secret.end() || iterator->second->stream_id_ != stream_id)
     {
         return {};
     }
@@ -74,8 +74,8 @@ std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret
 }
 
 hls_play_session::hls_play_session(
-    worker_context& worker, std::string stream_name, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
-    : stream_name_(std::move(stream_name)),
+    worker_context& worker, std::string stream_id, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
+    : stream_id_(std::move(stream_id)),
       secret_(std::move(secret)),
       segmenter_(std::move(segmenter)),
       last_activity_(std::chrono::steady_clock::now()),

@@ -38,7 +38,7 @@ struct rtsp_publish_track_description
 class rtsp_publish_media final
 {
    public:
-    rtsp_publish_media(worker_context& worker, std::string media_stream_name, std::vector<rtsp_publish_track_description> descriptions);
+    rtsp_publish_media(worker_context& worker, std::string media_stream_id, std::vector<rtsp_publish_track_description> descriptions);
 
    public:
     [[nodiscard]] bool startup(const std::string& rtcp_cname);
@@ -49,7 +49,7 @@ class rtsp_publish_media final
 
    public:
     [[nodiscard]] const std::vector<rtsp_publish_track_description>& descriptions() const noexcept;
-    [[nodiscard]] const std::string& media_stream_name() const noexcept;
+    [[nodiscard]] const std::string& media_stream_id() const noexcept;
 
    private:
     static int packet_callback(void* param, avpacket_t* packet);
@@ -60,7 +60,7 @@ class rtsp_publish_media final
 
    private:
     worker_context& worker_;
-    std::string media_stream_name_;
+    std::string media_stream_id_;
     std::vector<rtsp_publish_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;

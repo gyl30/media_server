@@ -27,8 +27,8 @@ constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
 }    // namespace
 
-rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_name)
-    : stream_(std::make_shared<media_stream>(std::move(stream_name), worker))
+rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_id)
+    : stream_(std::make_shared<media_stream>(std::move(stream_id), worker))
 {
 }
 
@@ -335,7 +335,7 @@ int rtmp_publish_session::register_stream_if_ready()
     }
     if (!stream_registry::instance().add(stream_))
     {
-        spdlog::warn("rtmp publish duplicate stream {}", stream_->name());
+        spdlog::warn("rtmp publish duplicate stream {}", stream_->stream_id());
         return -1;
     }
     initial_video_track_.reset();

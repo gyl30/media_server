@@ -21,16 +21,9 @@ namespace
 struct rtsp_pull_create_config
 {
     std::string stream_id;
-    std::string stream_name;
     std::string url;
     std::string username;
     std::string password;
-};
-
-struct rtsp_pull_identity
-{
-    std::string stream_id;
-    std::string stream_name;
 };
 
 rtsp_pull_http_response make_json_response(const rtsp_pull_http_request& request,
@@ -115,17 +108,16 @@ bool optional_string(const boost::json::object& object, std::string_view key, st
 std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "url", "username", "password"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "url", "username", "password"}))
     {
         return std::nullopt;
     }
 
     auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !stream_name || !url ||
+    if (!stream_id || !url ||
         !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
@@ -133,27 +125,10 @@ std::optional<rtsp_pull_create_config> parse_create_config(std::string_view body
     }
     return rtsp_pull_create_config{
         .stream_id = std::move(*stream_id),
-        .stream_name = std::move(*stream_name),
         .url = std::move(*url),
         .username = std::move(username),
         .password = std::move(password),
     };
-}
-
-std::optional<rtsp_pull_identity> parse_delete_identity(std::string_view body)
-{
-    const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name"}))
-    {
-        return std::nullopt;
-    }
-    auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
-    if (!stream_id || !stream_name)
-    {
-        return std::nullopt;
-    }
-    return rtsp_pull_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)};
 }
 
 std::optional<rtsp_pull_http_response> validate_request(const rtsp_pull_http_request& request, const boost::urls::url_view& target)
@@ -180,18 +155,18 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
 
-    if (stream_registry::instance().find(config.stream_name))
+    if (stream_registry::instance().find(config.stream_id))
     {
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
     }
 
-    const auto stream_name = config.stream_name;
+    const auto stream_id = config.stream_id;
     auto session = std::make_shared<rtsp_pull_session>(worker,
-                                                       stream_name,
+                                                       stream_id,
                                                        std::move(config.url),
                                                        std::move(config.username),
                                                        std::move(config.password));
-    if (!session_registry::instance().add_receiver_session(stream_name, std::move(config.stream_id), session))
+    if (!session_registry::instance().add_receiver_session(stream_id, session))
     {
         session->shutdown();
         return make_error_response(request, boost::beast::http::status::conflict, "conflict");
@@ -209,7 +184,7 @@ rtsp_pull_http_response handle_create(const rtsp_pull_http_request& request, wor
 rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& request, worker_context& worker, const boost::urls::url_view& target)
 {
     const auto path = target.encoded_path();
-    if (path != "/rtsp/pull/create" && path != "/rtsp/pull/delete")
+    if (path != "/rtsp/pull/create")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
@@ -218,28 +193,12 @@ rtsp_pull_http_response handle_rtsp_pull_request(const rtsp_pull_http_request& r
         return *error;
     }
 
-    if (path == "/rtsp/pull/create")
-    {
-        auto config = parse_create_config(request.body());
-        if (!config)
-        {
-            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
-        }
-        return handle_create(request, worker, std::move(*config));
-    }
-
-    const auto identity = parse_delete_identity(request.body());
-    if (!identity)
+    auto config = parse_create_config(request.body());
+    if (!config)
     {
         return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
     }
-    auto session = session_registry::instance().take_receiver_session(identity->stream_name, identity->stream_id);
-    if (!session)
-    {
-        return make_error_response(request, boost::beast::http::status::not_found, "not_found");
-    }
-    session->shutdown();
-    return make_empty_response(request, boost::beast::http::status::no_content);
+    return handle_create(request, worker, std::move(*config));
 }
 
 }    // namespace media_server

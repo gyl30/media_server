@@ -21,7 +21,7 @@ namespace
 
 struct session_entry
 {
-    std::string stream_name;
+    std::string stream_id;
     std::weak_ptr<whip_session> session;
 };
 
@@ -47,36 +47,36 @@ void cleanup_expired(state& current)
             ++iterator;
             continue;
         }
-        current.streams.erase(iterator->second.stream_name);
+        current.streams.erase(iterator->second.stream_id);
         iterator = current.sessions.erase(iterator);
     }
 }
 
 create_result failed(create_error error) { return {.error = error, .session_id = {}, .answer_sdp = {}}; }
 
-void release_stream(std::string_view stream_name)
+void release_stream(std::string_view stream_id)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
-    current.streams.erase(std::string(stream_name));
+    current.streams.erase(std::string(stream_id));
 }
 
 }    // namespace
 
-create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
+create_result create(worker_context& worker, std::string_view stream_id, std::string_view offer_sdp, const config& application_config)
 {
-    spdlog::debug("whip create stream {} offer_bytes {}", stream_name, offer_sdp.size());
+    spdlog::debug("whip create stream {} offer_bytes {}", stream_id, offer_sdp.size());
 
-    if (stream_name.empty() || stream_registry::instance().find(stream_name))
+    if (stream_id.empty() || stream_registry::instance().find(stream_id))
     {
-        spdlog::debug("whip create stream conflict {}", stream_name);
+        spdlog::debug("whip create stream conflict {}", stream_id);
         return failed(create_error::stream_conflict);
     }
 
     auto offer = parse_webrtc_offer(offer_sdp);
     if (!offer)
     {
-        spdlog::debug("whip create invalid offer stream {}", stream_name);
+        spdlog::debug("whip create invalid offer stream {}", stream_id);
         return failed(create_error::invalid_offer);
     }
 
@@ -99,26 +99,26 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        if (!current.streams.emplace(stream_name).second)
+        if (!current.streams.emplace(stream_id).second)
         {
-            spdlog::debug("whip create stream reserved {}", stream_name);
+            spdlog::debug("whip create stream reserved {}", stream_id);
             return failed(create_error::stream_conflict);
         }
     }
 
-    if (stream_registry::instance().find(stream_name))
+    if (stream_registry::instance().find(stream_id))
     {
-        release_stream(stream_name);
-        spdlog::debug("whip create stream became unavailable {}", stream_name);
+        release_stream(stream_id);
+        spdlog::debug("whip create stream became unavailable {}", stream_id);
         return failed(create_error::stream_conflict);
     }
 
-    auto session = std::make_shared<whip_session>(worker, std::string(stream_name));
+    auto session = std::make_shared<whip_session>(worker, std::string(stream_id));
     auto answer_sdp = session->startup(std::move(*offer), advertised_address, std::move(certificate));
     if (!answer_sdp)
     {
         session->shutdown();
-        release_stream(stream_name);
+        release_stream(stream_id);
         return failed(answer_sdp.error() == whip_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
     }
 
@@ -128,10 +128,10 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        inserted = current.sessions.emplace(session_id, session_entry{.stream_name = std::string(stream_name), .session = session}).second;
+        inserted = current.sessions.emplace(session_id, session_entry{.stream_id = std::string(stream_id), .session = session}).second;
         if (!inserted)
         {
-            current.streams.erase(std::string(stream_name));
+            current.streams.erase(std::string(stream_id));
         }
     }
     if (!inserted)
@@ -141,14 +141,14 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::internal_error);
     }
 
-    spdlog::info("whip session created {} stream {}", session_id, stream_name);
+    spdlog::info("whip session created {} stream {}", session_id, stream_id);
     return {.error = create_error::none, .session_id = session_id, .answer_sdp = std::move(*answer_sdp)};
 }
 
 bool remove(std::string_view session_id)
 {
     std::shared_ptr<whip_session> session;
-    std::string stream_name;
+    std::string stream_id;
     {
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
@@ -160,16 +160,16 @@ bool remove(std::string_view session_id)
             return false;
         }
         session = iterator->second.session.lock();
-        stream_name = iterator->second.stream_name;
+        stream_id = iterator->second.stream_id;
         current.sessions.erase(iterator);
-        current.streams.erase(std::string(stream_name));
+        current.streams.erase(std::string(stream_id));
     }
     if (!session)
     {
         return false;
     }
     session->shutdown();
-    spdlog::info("whip session removed {} stream {}", session_id, stream_name);
+    spdlog::info("whip session removed {} stream {}", session_id, stream_id);
     return true;
 }
 

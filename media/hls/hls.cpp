@@ -69,15 +69,15 @@ void startup(worker_context& worker)
                  });
 }
 
-std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
+std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_id)
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
     const auto now = std::chrono::steady_clock::now();
     remove_expired_segmenters(now);
 
-    auto existing = current.segmenters.find(stream_name);
-    auto stream = stream_registry::instance().find(stream_name);
+    auto existing = current.segmenters.find(stream_id);
+    auto stream = stream_registry::instance().find(stream_id);
     if (!stream)
     {
         return existing != current.segmenters.end() ? existing->second.segmenter : std::shared_ptr<hls_segmenter>{};
@@ -99,7 +99,7 @@ std::shared_ptr<hls_segmenter> get_or_create(std::string_view stream_name)
         segmenter->shutdown();
         return {};
     }
-    current.segmenters.emplace(std::string(stream_name), entry{.stream = stream, .segmenter = segmenter});
+    current.segmenters.emplace(std::string(stream_id), entry{.stream = stream, .segmenter = segmenter});
     return segmenter;
 }
 
@@ -107,7 +107,7 @@ void shutdown()
 {
     auto& current = runtime();
     std::scoped_lock lock(current.mutex);
-    for (auto& [stream_name, value] : current.segmenters)
+    for (auto& [stream_id, value] : current.segmenters)
     {
         value.segmenter->shutdown();
     }

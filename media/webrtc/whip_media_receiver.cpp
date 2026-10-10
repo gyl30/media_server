@@ -33,8 +33,8 @@ std::uint32_t read_u32(std::span<const std::uint8_t> packet, std::size_t offset)
 
 }    // namespace
 
-whip_media_receiver::whip_media_receiver(worker_context& worker, std::string stream_name)
-    : media_stream_(std::make_shared<media_stream>(std::move(stream_name), worker))
+whip_media_receiver::whip_media_receiver(worker_context& worker, std::string stream_id)
+    : media_stream_(std::make_shared<media_stream>(std::move(stream_id), worker))
 {
 }
 

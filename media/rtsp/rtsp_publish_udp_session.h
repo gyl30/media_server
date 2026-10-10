@@ -32,7 +32,7 @@ class rtsp_publish_udp_session final : public std::enable_shared_from_this<rtsp_
    public:
     rtsp_publish_udp_session(worker_context& worker,
                              boost::asio::ip::address bind_address,
-                             std::string stream_name,
+                             std::string stream_id,
                              std::vector<rtsp_publish_track_description> descriptions,
                              std::function<void()> input_handler);
 

@@ -181,18 +181,16 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
     }
 
     auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
     auto transport = required_transport(*object);
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    if (!stream_id || !stream_name || !transport || !payload_type || !ssrc)
+    if (!stream_id || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
 
     gb28181_receiver_config config{
         .stream_id = std::move(*stream_id),
-        .stream_name = std::move(*stream_name),
         .transport = *transport,
         .payload_type = *payload_type,
         .ssrc = *ssrc,
@@ -200,7 +198,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
     switch (*transport)
     {
         case gb28181_transport::udp:
-            if (!has_only_fields(*object, {"stream_id", "stream_name", "transport", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "transport", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -208,7 +206,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
 
         case gb28181_transport::tcp_active:
         {
-            if (!has_only_fields(*object, {"stream_id", "stream_name", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -225,7 +223,7 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
 
         case gb28181_transport::tcp_passive:
         {
-            if (!has_only_fields(*object, {"stream_id", "stream_name", "transport", "listen_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "transport", "listen_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -251,19 +249,17 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     }
 
     auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
     auto sender_id = required_string(*object, "sender_id");
     auto transport = required_transport(*object);
     auto payload_type = required_payload_type(*object);
     auto ssrc = required_ssrc(*object);
-    if (!stream_id || !stream_name || !sender_id || !transport || !payload_type || !ssrc)
+    if (!stream_id || !sender_id || !transport || !payload_type || !ssrc)
     {
         return std::nullopt;
     }
 
     gb28181_sender_config config{
         .stream_id = std::move(*stream_id),
-        .stream_name = std::move(*stream_name),
         .sender_id = std::move(*sender_id),
         .transport = *transport,
         .payload_type = *payload_type,
@@ -274,8 +270,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
         case gb28181_transport::udp:
         {
             if (!has_only_fields(*object,
-                                 {"stream_name",
-                                  "stream_id",
+                                 {"stream_id",
                                   "sender_id",
                                   "transport",
                                   "remote_address",
@@ -303,7 +298,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
         case gb28181_transport::tcp_active:
         {
             if (!has_only_fields(*object,
-                                 {"stream_id", "stream_name", "sender_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+                                 {"stream_id", "sender_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -320,7 +315,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
 
         case gb28181_transport::tcp_passive:
         {
-            if (!has_only_fields(*object, {"stream_id", "stream_name", "sender_id", "transport", "listen_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "sender_id", "transport", "listen_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -337,54 +332,36 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     return config;
 }
 
-std::optional<gb28181_receiver_identity> parse_gb28181_receiver_delete(std::string_view body)
+std::optional<std::pair<std::string, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "ssrc"}))
     {
         return std::nullopt;
     }
     auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
-    if (!stream_id || !stream_name)
-    {
-        return std::nullopt;
-    }
-    return gb28181_receiver_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)};
-}
-
-std::optional<std::pair<gb28181_receiver_identity, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body)
-{
-    const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "ssrc"}))
-    {
-        return std::nullopt;
-    }
-    auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
     const auto ssrc = required_ssrc(*object);
-    if (!stream_id || !stream_name || !ssrc)
+    if (!stream_id || !ssrc)
     {
         return std::nullopt;
     }
-    return std::pair{gb28181_receiver_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name)}, *ssrc};
+    return std::pair{std::move(*stream_id), *ssrc};
 }
 
 std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body)
 {
     const auto object = parse_object(body);
-    if (!object || !has_only_fields(*object, {"stream_id", "stream_name", "sender_id"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "sender_id"}))
     {
         return std::nullopt;
     }
     auto stream_id = required_string(*object, "stream_id");
-    auto stream_name = required_string(*object, "stream_name");
     auto sender_id = required_string(*object, "sender_id");
-    if (!stream_id || !stream_name || !sender_id)
+    if (!stream_id || !sender_id)
     {
         return std::nullopt;
     }
-    return gb28181_sender_identity{.stream_id = std::move(*stream_id), .stream_name = std::move(*stream_name), .sender_id = std::move(*sender_id)};
+    return gb28181_sender_identity{.stream_id = std::move(*stream_id), .sender_id = std::move(*sender_id)};
 }
 
 }    // namespace media_server

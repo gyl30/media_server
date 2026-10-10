@@ -31,7 +31,7 @@ std::map<egress_key, std::weak_ptr<whep_audio_egress>> egresses;
 }    // namespace
 
 whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker)
-    : worker_(worker), source_(std::move(source)), output_stream_(std::make_shared<media_stream>(source_->name(), worker))
+    : worker_(worker), source_(std::move(source)), output_stream_(std::make_shared<media_stream>(source_->stream_id(), worker))
 {
 }
 

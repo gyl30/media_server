@@ -30,8 +30,6 @@ type liveState string
 
 const livePayloadType uint8 = 96
 
-const liveStreamPrefix = "gb/"
-
 const (
 	livePreparing      liveState = "preparing"
 	liveInviting       liveState = "inviting"
@@ -47,7 +45,6 @@ type liveKey struct {
 
 type liveSession struct {
 	key         liveKey
-	streamName  string
 	streamID    string
 	rtpPort     uint16
 	ssrc        uint32
@@ -62,11 +59,10 @@ type liveSession struct {
 }
 
 type liveView struct {
-	streamID   string
-	streamName string
-	state      liveState
-	ssrc       uint32
-	rtpPort    uint16
+	streamID string
+	state    liveState
+	ssrc     uint32
+	rtpPort  uint16
 }
 
 type liveService struct {
@@ -157,7 +153,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	operationContext, cancel := context.WithCancel(ctx)
 	session := &liveSession{
-		key: key, streamID: uuid.NewString(), streamName: liveStreamPrefix + deviceID + "/" + channelID, ssrc: ssrc,
+		key: key, streamID: uuid.NewString(), ssrc: ssrc,
 		state: livePreparing, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
 	}
 	s.sessions[key] = session
@@ -174,7 +170,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		return liveView{}, errChannelOffline
 	}
 	rtpPort, err := s.media.createUDPReceiver(operationContext, gb28181ReceiverRequest{
-		streamID: session.streamID, streamName: session.streamName, payloadType: livePayloadType, ssrc: ssrc,
+		streamID: session.streamID, payloadType: livePayloadType, ssrc: ssrc,
 	})
 	if err != nil {
 		_, rejected := errors.AsType[*mediaServerHTTPRejection](err)
@@ -183,12 +179,11 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		cleanupConfirmed := !ambiguousCreate
 		if ambiguousCreate {
 			cleanupContext, cleanupCancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
+			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
 			cleanupCancel()
 			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
 			if !cleanupConfirmed {
-				s.logger.Warn("live create compensation failed", "stream_name", session.streamName,
-					"stream_id", session.streamID, "error", cleanupErr)
+				s.logger.Warn("live create compensation failed", "stream_id", session.streamID, "error", cleanupErr)
 			}
 		}
 		s.mu.Lock()
@@ -271,8 +266,8 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	if answerErr == nil && deviceSSRC != ssrc {
 		// 设备在 y= 中改用了自己的 SSRC，接收端必须按设备实际发送的值过滤。
-		s.logger.Info("device selected SSRC", "stream_name", session.streamName, "requested", ssrc, "device", deviceSSRC)
-		answerErr = s.media.updateReceiverSSRC(operationContext, session.streamID, session.streamName, deviceSSRC)
+		s.logger.Info("device selected SSRC", "stream_id", session.streamID, "requested", ssrc, "device", deviceSSRC)
+		answerErr = s.media.updateReceiverSSRC(operationContext, session.streamID, deviceSSRC)
 	}
 	if answerErr != nil {
 		ackContext, ackCancel := context.WithTimeout(context.Background(), s.byeTimeout)
@@ -401,7 +396,7 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 			defer wait.Done()
 			s.mu.Lock()
 			if err := s.stopSessionLocked(ctx, session); err != nil {
-				s.logger.Warn("live cleanup failed", "stream_name", session.streamName, "error", err)
+				s.logger.Warn("live cleanup failed", "stream_id", session.streamID, "error", err)
 			}
 		}()
 	}
@@ -421,7 +416,7 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 		_ = session.dialog.Close()
 	}
 	cleanupContext, cancel := s.media.timeoutContext()
-	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID, session.streamName)
+	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID)
 	cancel()
 	mediaStopped := deleteErr == nil || isMediaServerNotFound(deleteErr)
 	s.mu.Lock()
@@ -491,7 +486,7 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 	}
 	go func() {
 		if err := s.cleanup(session, false); err != nil {
-			s.logger.Warn("remote BYE cleanup failed", "stream_name", session.streamName, "error", err)
+			s.logger.Warn("remote BYE cleanup failed", "stream_id", session.streamID, "error", err)
 		}
 	}()
 }
@@ -502,7 +497,7 @@ func makeLiveView(session *liveSession) liveView {
 		state = liveStopping
 	}
 	return liveView{
-		streamID: session.streamID, streamName: session.streamName, state: state,
+		streamID: session.streamID, state: state,
 		ssrc: session.ssrc, rtpPort: session.rtpPort,
 	}
 }

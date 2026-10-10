@@ -11,19 +11,19 @@ stream_registry& stream_registry::instance()
 
 bool stream_registry::add(const std::shared_ptr<media_stream>& stream)
 {
-    if (!stream || stream->name().empty() || stream->tracks().empty())
+    if (!stream || stream->stream_id().empty() || stream->tracks().empty())
     {
         return false;
     }
 
     std::scoped_lock lock(mutex_);
-    return streams_.emplace(stream->name(), stream).second;
+    return streams_.emplace(stream->stream_id(), stream).second;
 }
 
 void stream_registry::remove(const media_stream& expected)
 {
     std::scoped_lock lock(mutex_);
-    const auto iterator = streams_.find(expected.name());
+    const auto iterator = streams_.find(expected.stream_id());
     if (iterator == streams_.end() || iterator->second.get() != &expected)
     {
         return;
@@ -31,10 +31,10 @@ void stream_registry::remove(const media_stream& expected)
     streams_.erase(iterator);
 }
 
-std::shared_ptr<media_stream> stream_registry::find(std::string_view name) const
+std::shared_ptr<media_stream> stream_registry::find(std::string_view stream_id) const
 {
     std::scoped_lock lock(mutex_);
-    const auto iterator = streams_.find(name);
+    const auto iterator = streams_.find(stream_id);
     return iterator == streams_.end() ? nullptr : iterator->second;
 }
 

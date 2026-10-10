@@ -13,9 +13,9 @@ func testStreamingLive(s *infrastructureServer, channelID, streamID string) *liv
 	established := make(chan struct{})
 	close(established)
 	session := &liveSession{
-		key:        liveKey{deviceID: "34020000001320000001", channelID: channelID},
-		streamName: liveStreamPrefix + "34020000001320000001/" + channelID, streamID: streamID,
-		state: liveStreaming, cancel: func() {}, established: established, done: make(chan struct{}),
+		key:      liveKey{deviceID: "34020000001320000001", channelID: channelID},
+		streamID: streamID,
+		state:    liveStreaming, cancel: func() {}, established: established, done: make(chan struct{}),
 	}
 	s.live.mu.Lock()
 	s.live.sessions[session.key] = session
@@ -32,15 +32,21 @@ func TestMediaReconcileFollowsMediaServer(t *testing.T) {
 		case "/receivers":
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(writer, `{"receivers":[
-				{"stream_name":"gb/34020000001320000001/34020000001320000002","stream_id":"live-running"},
-				{"stream_name":"rtsp/running","stream_id":"pull-running"},
-				{"stream_name":"gb/34020000001320000009/34020000001320000009","stream_id":"live-orphan"},
-				{"stream_name":"rtsp/orphan","stream_id":"pull-orphan"}]}`)
-		case "/gb28181/receiver/delete", "/rtsp/pull/delete":
+				{"stream_id":"live-running"},
+				{"stream_id":"pull-running"},
+				{"stream_id":"live-orphan"},
+				{"stream_id":"pull-orphan"}]}`)
+		case "/receivers/delete":
 			var body struct {
 				StreamID string `json:"stream_id"`
 			}
-			_ = json.NewDecoder(request.Body).Decode(&body)
+			decoder := json.NewDecoder(request.Body)
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(&body); err != nil {
+				t.Errorf("invalid receiver delete body: %v", err)
+				writer.WriteHeader(http.StatusBadRequest)
+				return
+			}
 			mu.Lock()
 			deleted[body.StreamID] = request.URL.Path
 			mu.Unlock()
@@ -79,7 +85,7 @@ func TestMediaReconcileFollowsMediaServer(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if deleted["live-orphan"] != "/gb28181/receiver/delete" || deleted["pull-orphan"] != "/rtsp/pull/delete" {
+	if deleted["live-orphan"] != "/receivers/delete" || deleted["pull-orphan"] != "/receivers/delete" {
 		t.Fatalf("orphan receivers not deleted: %v", deleted)
 	}
 	if _, ok := deleted["live-running"]; ok {

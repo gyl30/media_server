@@ -86,7 +86,7 @@ func (s *infrastructureServer) handlePlayWHEP(writer http.ResponseWriter, reques
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_offer")
 		return
 	}
-	endpoint := s.media.server.controlURL + "/play/whep/" + ticket.streamName
+	endpoint := s.media.server.controlURL + "/play/whep/" + ticket.liveID
 	offer, err := http.NewRequestWithContext(request.Context(), http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		writeHTTPError(writer, http.StatusBadGateway, "whep_failed")

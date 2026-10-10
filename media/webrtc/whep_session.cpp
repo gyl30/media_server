@@ -173,7 +173,7 @@ std::expected<std::string, whep_session_startup_error> whep_session::startup(web
     }
     stream_->add_sink(shared_from_this());
 
-    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->name(), advertised_address.to_string(), local_port_);
+    spdlog::info("webrtc whep session started {} stream {} candidate {} {}", id_, stream_->stream_id(), advertised_address.to_string(), local_port_);
     spdlog::debug(
         "webrtc session {} local_ufrag {} remote_ufrag {} video_pt {} audio_pt {} audio_channels {} audio_bitrate {} audio_max_playback_rate {}",
         id_,

@@ -22,7 +22,7 @@ class worker_context;
 class gb28181_udp_receiver_session final : public session, public std::enable_shared_from_this<gb28181_udp_receiver_session>
 {
    public:
-    gb28181_udp_receiver_session(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t ssrc);
+    gb28181_udp_receiver_session(worker_context& worker, std::string stream_id, std::uint8_t payload_type, std::uint32_t ssrc);
 
    public:
     [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);

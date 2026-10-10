@@ -71,7 +71,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
     boost::asio::steady_timer tcp_rtcp_timer_;
     std::shared_ptr<rtsp_publish_udp_session> udp_session_;
     std::vector<rtsp_publish_track_description> descriptions_;
-    std::string stream_name_;
+    std::string stream_id_;
     std::string session_id_;
 };
 

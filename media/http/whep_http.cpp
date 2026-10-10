@@ -71,9 +71,9 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
 }
 
 whep_http_string_response handle_whep_post(
-    const whep_http_request& request, worker_context& worker, std::string stream_name, const config& application_config)
+    const whep_http_request& request, worker_context& worker, std::string stream_id, const config& application_config)
 {
-    auto result = whep::create(worker, stream_name, request.body(), application_config);
+    auto result = whep::create(worker, stream_id, request.body(), application_config);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -146,17 +146,17 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         {
             return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
-        std::string stream_name;
+        std::string stream_id;
         for (auto iterator = first; iterator != segments.end(); ++iterator)
         {
             const auto segment = *iterator;
-            if (!stream_name.empty())
+            if (!stream_id.empty())
             {
-                stream_name.push_back('/');
+                stream_id.push_back('/');
             }
-            stream_name.append(segment);
+            stream_id.append(segment);
         }
-        return handle_whep_post(request, worker, std::move(stream_name), application_config);
+        return handle_whep_post(request, worker, std::move(stream_id), application_config);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

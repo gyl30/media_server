@@ -15,6 +15,7 @@
 
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
+#include "media/core/session_registry.h"
 #include "media/core/stream_registry.h"
 #include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
@@ -147,7 +148,7 @@ void rtsp_sender_clock(workers& context)
     auto source = std::make_shared<media_stream>("verify/sender-clock", context.source);
     std::vector<std::pair<std::uint64_t, std::uint32_t>> reports;
     auto player = std::make_shared<rtsp_play_session>(context.source,
-        source->name(), boost::asio::ip::make_address("127.0.0.1"),
+        source->stream_id(), boost::asio::ip::make_address("127.0.0.1"),
         [&](std::vector<std::uint8_t> packet)
         {
             if (packet[1] == 1)
@@ -222,7 +223,7 @@ void ordered_generations_and_churn(workers& context)
                              if (previous)
                              {
                                  registry.remove(*previous);
-                                 require(registry.find(stream->name()) == stream, "old cleanup removed new generation");
+                                 require(registry.find(stream->stream_id()) == stream, "old cleanup removed new generation");
                              }
                              return stream;
                          });
@@ -309,7 +310,7 @@ void derived_generation_lifetimes(workers& context)
                auto second = acquire_whep_audio_egress(source, context.source, {.channels = 2, .bitrate = 64000, .max_playback_rate = 48000});
                require(audio && audio == second && audio != previous_audio, "AAC egress shared across wrong generation");
                require(audio->output_stream()->tracks().at(1).codec == codec_id::opus, "derived audio is not Opus");
-               auto segmenter = hls::get_or_create(source->name());
+               auto segmenter = hls::get_or_create(source->stream_id());
                require(segmenter && segmenter != previous_hls && !segmenter->ended_at(), "HLS shared across wrong generation");
                if (previous_hls)
                {
@@ -337,6 +338,63 @@ void derived_generation_lifetimes(workers& context)
     }
     std::cout << "HLS/PS/shared AAC->Opus source generations=20 and source release: PASS\n";
 }
+struct registered_session final : session
+{
+    unsigned shutdown_count{};
+    void shutdown() override { ++shutdown_count; }
+};
+
+void session_registry_identity()
+{
+    auto& registry = session_registry::instance();
+    const std::string stream_id = "verify/session-identity";
+    auto previous = std::make_shared<registered_session>();
+    auto current = std::make_shared<registered_session>();
+    auto sender = std::make_shared<registered_session>();
+    auto other_sender = std::make_shared<registered_session>();
+    require(registry.add_receiver_session(stream_id, previous), "receiver registration failed");
+    require(!registry.add_receiver_session(stream_id, current), "duplicate receiver accepted");
+    require(!registry.take_receiver_session("missing"), "missing receiver returned a session");
+    require(registry.find_receiver_session(stream_id) == previous, "wrong ID removed receiver");
+    require(registry.receivers() == std::vector<std::string>{stream_id}, "receiver list did not contain only stream ID");
+    require(registry.take_receiver_session(stream_id) == previous, "receiver take failed");
+    require(!registry.take_receiver_session(stream_id), "receiver take was not destructive");
+    require(registry.add_receiver_session(stream_id, current), "replacement receiver registration failed");
+    registry.remove_receiver_session(stream_id, *previous);
+    require(registry.find_receiver_session(stream_id) == current, "old receiver cleanup removed replacement");
+    require(registry.add_sender_session(stream_id, "sender", previous), "sender registration failed");
+    require(!registry.add_sender_session(stream_id, "sender", sender), "duplicate sender accepted");
+    require(registry.add_sender_session(stream_id, "other", other_sender), "distinct sender rejected");
+    require(registry.take_sender_session(stream_id, "sender") == previous, "sender take failed");
+    require(registry.add_sender_session(stream_id, "sender", sender), "replacement sender registration failed");
+    registry.remove_sender_session(stream_id, "sender", *previous);
+    require(!registry.take_sender_session("missing", "sender"), "wrong stream ID removed sender");
+    require(!registry.take_sender_session(stream_id, "missing"), "wrong sender ID removed sender");
+    registry.remove_receiver_session(stream_id, *current);
+    require(registry.receivers().empty(), "sender was listed as receiver");
+    require(registry.take_sender_session(stream_id, "sender") == sender, "old sender cleanup removed replacement");
+    require(registry.take_sender_session(stream_id, "other") == other_sender, "receiver removal removed sender");
+    require(!registry.take_sender_session(stream_id, "sender"), "sender take was not destructive");
+    std::cout << "session registry stream ID, sender IDs and object-identity cleanup: PASS\n";
+}
+
+void session_registry_stop()
+{
+    auto& registry = session_registry::instance();
+    auto receiver = std::make_shared<registered_session>();
+    auto sender = std::make_shared<registered_session>();
+    require(registry.add_receiver_session("verify/session-stop", receiver), "stop receiver registration failed");
+    require(registry.add_sender_session("verify/session-stop", "sender", sender), "stop sender registration failed");
+    registry.shutdown_all();
+    require(receiver->shutdown_count == 1 && sender->shutdown_count == 1, "registry stop did not close all sessions once");
+    require(registry.receivers().empty(), "registry stop retained receiver");
+    require(!registry.take_sender_session("verify/session-stop", "sender"), "registry stop retained sender");
+    require(!registry.add_receiver_session("verify/late", receiver), "stopped registry accepted receiver");
+    require(!registry.add_sender_session("verify/late", "sender", sender), "stopped registry accepted sender");
+    registry.shutdown_all();
+    require(receiver->shutdown_count == 1 && sender->shutdown_count == 1, "repeat registry stop closed sessions twice");
+    std::cout << "session registry terminal stop with empty resources: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -348,6 +406,8 @@ int main()
         rtsp_sender_clock(context);
         ordered_generations_and_churn(context);
         derived_generation_lifetimes(context);
+        session_registry_identity();
+        session_registry_stop();
         return 0;
     }
     catch (const std::exception& error)

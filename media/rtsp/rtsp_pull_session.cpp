@@ -83,12 +83,12 @@ bool should_setup_media(rtsp_client_t* client, int media)
 }    // namespace
 
 rtsp_pull_session::rtsp_pull_session(worker_context& worker,
-                                     std::string stream_name,
+                                     std::string stream_id,
                                      std::string url,
                                      std::string username,
                                      std::string password)
     : worker_(worker),
-      stream_name_(std::move(stream_name)),
+      stream_id_(std::move(stream_id)),
       url_(std::move(url)),
       username_(std::move(username)),
       password_(std::move(password)),
@@ -118,7 +118,7 @@ bool rtsp_pull_session::startup()
     idle_timer_.start(self,
                       [this]()
                       {
-                          spdlog::info("rtsp pull idle timeout {}", stream_name_);
+                          spdlog::info("rtsp pull idle timeout {}", stream_id_);
                           shutdown();
                       });
     worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
@@ -167,7 +167,7 @@ void rtsp_pull_session::schedule_rtcp()
 void rtsp_pull_session::safe_shutdown()
 {
     idle_timer_.stop();
-    session_registry::instance().remove_receiver_session(stream_name_, *this);
+    session_registry::instance().remove_receiver_session(stream_id_, *this);
     if (media_)
     {
         media_->shutdown();
@@ -181,7 +181,7 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("rtsp pull shutdown {}", stream_name_);
+    spdlog::debug("rtsp pull shutdown {}", stream_id_);
 }
 
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
@@ -330,7 +330,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
     client_ = client;
 
-    spdlog::info("rtsp pull connected stream {}", stream_name_);
+    spdlog::info("rtsp pull connected stream {}", stream_id_);
     run_read(client, yield);
 
     client_ = nullptr;
@@ -364,7 +364,7 @@ void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_conte
 
 int rtsp_pull_session::on_describe(const char* sdp, int length)
 {
-    spdlog::debug("rtsp pull describe {}", stream_name_);
+    spdlog::debug("rtsp pull describe {}", stream_id_);
     return rtsp_client_setup(client_, sdp, length);
 }
 
@@ -405,7 +405,7 @@ int rtsp_pull_session::on_setup()
     }
 
     // 失败返回 -1 结束读循环，media_ 由 safe_shutdown 清理。
-    media_ = std::make_unique<rtsp_pull_media>(worker_, stream_name_);
+    media_ = std::make_unique<rtsp_pull_media>(worker_, stream_id_);
     if (!media_->startup(std::move(descriptions)))
     {
         return -1;

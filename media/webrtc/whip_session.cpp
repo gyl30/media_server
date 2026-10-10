@@ -46,9 +46,9 @@ bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U 
 
 }    // namespace
 
-whip_session::whip_session(worker_context& worker, std::string stream_name)
+whip_session::whip_session(worker_context& worker, std::string stream_id)
     : worker_(worker),
-      stream_name_(std::move(stream_name)),
+      stream_id_(std::move(stream_id)),
       udp_transport_(std::make_shared<udp_transport>(worker_.io())),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
@@ -143,7 +143,7 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
     answer_ = std::move(*answer);
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
 
-    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_name_, advertised_address.to_string(), local_port_);
+    spdlog::info("webrtc whip session started {} stream {} candidate {} {}", id_, stream_id_, advertised_address.to_string(), local_port_);
     startup_establishment_timeout();
     return answer_sdp;
 }
@@ -345,7 +345,7 @@ bool whip_session::startup_media()
         return false;
     }
 
-    auto receiver = std::make_unique<whip_media_receiver>(worker_, stream_name_);
+    auto receiver = std::make_unique<whip_media_receiver>(worker_, stream_id_);
     if (!receiver->startup(whip_media_receiver_config{
             .video_codec = *answer_.video_codec,
             .video_payload_type = *answer_.video_payload_type,

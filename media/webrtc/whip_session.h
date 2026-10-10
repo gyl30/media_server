@@ -33,7 +33,7 @@ enum class whip_session_startup_error
 class whip_session final : public std::enable_shared_from_this<whip_session>
 {
    public:
-    whip_session(worker_context& worker, std::string stream_name);
+    whip_session(worker_context& worker, std::string stream_id);
 
    public:
     [[nodiscard]] std::expected<std::string, whip_session_startup_error> startup(webrtc_offer offer,
@@ -63,7 +63,7 @@ class whip_session final : public std::enable_shared_from_this<whip_session>
 
    private:
     worker_context& worker_;
-    std::string stream_name_;
+    std::string stream_id_;
     std::unique_ptr<dtls_transport> dtls_;
     std::unique_ptr<srtp_transport> srtp_;
     std::unique_ptr<whip_media_receiver> media_receiver_;

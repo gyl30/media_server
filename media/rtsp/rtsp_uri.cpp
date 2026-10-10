@@ -36,21 +36,21 @@ std::optional<rtsp_target> parse_rtsp_target(std::string_view uri)
         return std::nullopt;
     }
 
-    std::string stream_name;
+    std::string stream_id;
     for (const auto segment : parsed->segments())
     {
-        if (!stream_name.empty())
+        if (!stream_id.empty())
         {
-            stream_name.push_back('/');
+            stream_id.push_back('/');
         }
-        stream_name.append(segment);
+        stream_id.append(segment);
     }
-    if (stream_name.empty())
+    if (stream_id.empty())
     {
         return std::nullopt;
     }
 
-    return rtsp_target{.stream_name = std::move(stream_name)};
+    return rtsp_target{.stream_id = std::move(stream_id)};
 }
 
 }    // namespace media_server

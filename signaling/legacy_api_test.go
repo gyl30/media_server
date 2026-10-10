@@ -28,7 +28,7 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/rtsp/pull/create" {
 			writer.WriteHeader(http.StatusCreated)
-		} else if request.URL.Path == "/rtsp/pull/delete" {
+		} else if request.URL.Path == "/receivers/delete" {
 			writer.WriteHeader(http.StatusNoContent)
 		} else {
 			writer.WriteHeader(http.StatusNotFound)
@@ -45,9 +45,15 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	}
 	body := `{"source_id":"` + source.SourceID + `"}`
 	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
-	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/start", "", http.StatusCreated)
+	start := apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/start", "", http.StatusCreated)
+	var session struct {
+		StreamID string `json:"stream_id"`
+	}
+	if err := json.Unmarshal(start.Body.Bytes(), &session); err != nil || !validUUIDv4(session.StreamID) {
+		t.Fatalf("invalid start response: %s", start.Body.String())
+	}
 	response = apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
-	if !strings.Contains(response.Body.String(), "http://127.0.0.1:8080/play/whep/rtsp%2Fpreview") {
+	if !strings.Contains(response.Body.String(), "http://127.0.0.1:8080/play/whep/"+session.StreamID) {
 		t.Fatal(response.Body.String())
 	}
 	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/stop", "", http.StatusNoContent)

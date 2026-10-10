@@ -161,7 +161,7 @@ bool rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view u
         return false;
     }
 
-    stream_name_ = target->stream_name;
+    stream_id_ = target->stream_id;
     descriptions_ = std::move(descriptions);
     session_id_ = std::to_string(random_u32());
     return true;
@@ -220,7 +220,7 @@ int rtsp_publish_session::on_setup(
     if (selected->transport == RTSP_TRANSPORT_RTP_TCP)
     {
         // 失败返回 -1 使连接关闭，tcp_media_ 由 safe_shutdown 清理。
-        tcp_media_ = std::make_unique<rtsp_publish_media>(worker_, stream_name_, descriptions_);
+        tcp_media_ = std::make_unique<rtsp_publish_media>(worker_, stream_id_, descriptions_);
         if (!tcp_media_->startup(session_id_))
         {
             return -1;
@@ -229,7 +229,7 @@ int rtsp_publish_session::on_setup(
         return on_tcp_setup(server, track_index, *selected);
     }
 
-    udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_name_, descriptions_, input_handler_);
+    udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_id_, descriptions_, input_handler_);
     udp_session_->set_shutdown_handler(
         [this]()
         {
@@ -370,7 +370,7 @@ void rtsp_publish_session::safe_shutdown()
     tcp_rtcp_timer_.cancel();
     if (tcp_media_)
     {
-        spdlog::debug("rtsp publish tcp shutdown {}", tcp_media_->media_stream_name());
+        spdlog::debug("rtsp publish tcp shutdown {}", tcp_media_->media_stream_id());
         tcp_media_->shutdown();
         tcp_media_.reset();
     }
@@ -383,7 +383,7 @@ void rtsp_publish_session::safe_shutdown()
         udp_session_.reset();
     }
     descriptions_.clear();
-    stream_name_.clear();
+    stream_id_.clear();
     write_handler_ = {};
     shutdown_handler_ = {};
 }

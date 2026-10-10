@@ -42,14 +42,14 @@ std::optional<std::string> parse_rtmp_target(std::string_view app, std::string_v
         return std::nullopt;
     }
 
-    std::string stream_name;
+    std::string stream_id;
     if (!app.empty())
     {
-        stream_name.append(app);
-        stream_name.push_back('/');
+        stream_id.append(app);
+        stream_id.push_back('/');
     }
-    stream_name.append(path);
-    return stream_name;
+    stream_id.append(path);
+    return stream_id;
 }
 
 rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket)

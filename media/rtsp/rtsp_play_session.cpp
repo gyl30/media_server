@@ -52,11 +52,11 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                     std::string stream_name,
+                                     std::string stream_id,
                                      boost::asio::ip::address local_address,
                                      write_handler write)
     : worker_(worker),
-      stream_name_(std::move(stream_name)),
+      stream_id_(std::move(stream_id)),
       local_address_(std::move(local_address)),
       write_handler_(std::move(write))
 {
@@ -216,7 +216,7 @@ void rtsp_play_session::safe_shutdown()
     waiting_video_track_.reset();
     if (stream_)
     {
-        spdlog::debug("rtsp play shutdown {}", stream_->name());
+        spdlog::debug("rtsp play shutdown {}", stream_->stream_id());
         stream_.reset();
     }
     if (muxer_ != nullptr)
@@ -235,7 +235,7 @@ int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
         spdlog::debug("rtsp play describe after setup");
         return -1;
     }
-    if (rtsp_path_from_uri(uri) != stream_name_)
+    if (rtsp_path_from_uri(uri) != stream_id_)
     {
         return rtsp_server_reply_describe(server, 404, "");
     }
@@ -275,7 +275,7 @@ int rtsp_play_session::on_describe(rtsp_server_t* server, std::string_view uri)
         << "a=control:*\r\n"
         << media_sdp.str();
 
-    spdlog::info("rtsp play describe {}", stream_->name());
+    spdlog::info("rtsp play describe {}", stream_->stream_id());
     return rtsp_server_reply_describe(server, 200, sdp.str().c_str());
 }
 
@@ -291,7 +291,7 @@ int rtsp_play_session::on_setup(
     if (!stream_)
     {
         const auto separator = path.rfind('/');
-        if (separator == std::string::npos || path.substr(0, separator) != stream_name_)
+        if (separator == std::string::npos || path.substr(0, separator) != stream_id_)
         {
             return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
         }
@@ -303,7 +303,7 @@ int rtsp_play_session::on_setup(
     }
 
     auto iterator = std::ranges::find_if(
-        track_states_, [&path, this](const auto& item) { return path == stream_->name() + "/trackID=" + std::to_string(item.first); });
+        track_states_, [&path, this](const auto& item) { return path == stream_->stream_id() + "/trackID=" + std::to_string(item.first); });
     if (iterator == track_states_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -311,7 +311,7 @@ int rtsp_play_session::on_setup(
     const auto id = iterator->first;
     if (!stream_current())
     {
-        spdlog::debug("rtsp play setup source generation changed {}", stream_->name());
+        spdlog::debug("rtsp play setup source generation changed {}", stream_->stream_id());
         return -1;
     }
     if (!session_id_.empty() && session != session_id_)
@@ -371,7 +371,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
         return -1;
     }
     const auto path = rtsp_path_from_uri(uri);
-    if (path != stream_->name())
+    if (path != stream_->stream_id())
     {
         std::size_t setup_track_count{};
         bool setup_track_path{};
@@ -382,7 +382,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
                 continue;
             }
             ++setup_track_count;
-            setup_track_path = setup_track_path || path == stream_->name() + "/trackID=" + std::to_string(id);
+            setup_track_path = setup_track_path || path == stream_->stream_id() + "/trackID=" + std::to_string(id);
         }
         if (setup_track_count != 1 || !setup_track_path)
         {
@@ -396,7 +396,7 @@ int rtsp_play_session::on_play(rtsp_server_t* server, std::string_view uri, std:
     }
     if (!stream_current())
     {
-        spdlog::debug("rtsp play source generation changed {}", stream_->name());
+        spdlog::debug("rtsp play source generation changed {}", stream_->stream_id());
         return -1;
     }
 
@@ -469,7 +469,7 @@ void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data
 
 bool rtsp_play_session::stream_current() const
 {
-    const auto current_stream = stream_registry::instance().find(stream_->name());
+    const auto current_stream = stream_registry::instance().find(stream_->stream_id());
     return current_stream && current_stream.get() == stream_.get();
 }
 
@@ -505,7 +505,7 @@ int rtsp_play_session::prepare_presentation()
         muxer_ = nullptr;
     }
 
-    auto stream = stream_registry::instance().find(stream_name_);
+    auto stream = stream_registry::instance().find(stream_id_);
     if (!stream)
     {
         return 404;

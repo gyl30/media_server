@@ -27,13 +27,11 @@ def post(host, port, path, body):
 
 
 def create_pair(args, index):
-    target = f"relay/perf{index}"
     receiver_id = str(uuid.uuid4())
-    sender_id = str(uuid.uuid4())
     sender_name = f"bench{index}"
     ssrc = 100_000_000 + index
-    receiver = {"stream_id": receiver_id, "stream_name": target, "payload_type": 96, "ssrc": ssrc}
-    sender = {"stream_id": sender_id, "stream_name": "live/perf0", "sender_id": sender_name, "payload_type": 96, "ssrc": ssrc}
+    receiver = {"stream_id": receiver_id, "payload_type": 96, "ssrc": ssrc}
+    sender = {"stream_id": "live/perf0", "sender_id": sender_name, "payload_type": 96, "ssrc": ssrc}
     if args.transport == "udp":
         receiver["transport"] = "udp"
         ports = post(args.host, args.http_port, "/gb28181/receiver/create", receiver)
@@ -51,7 +49,7 @@ def create_pair(args, index):
         receiver.update(transport="tcp_active", remote_address=args.host, remote_port=port)
         post(args.host, args.http_port, "/gb28181/sender/create", sender)
         post(args.host, args.http_port, "/gb28181/receiver/create", receiver)
-    return target, receiver_id, sender_id, sender_name
+    return receiver_id, sender["stream_id"], sender_name
 
 
 def open_viewer(host, port, name):
@@ -177,8 +175,8 @@ def main():
             wait_for_stream(args.host, args.http_port)
             for index in range(args.pairs):
                 pairs.append(create_pair(args, index))
-            for name, _, _, _ in pairs:
-                wait_for_stream(args.host, args.http_port, name)
+            for receiver_id, _, _ in pairs:
+                wait_for_stream(args.host, args.http_port, receiver_id)
             receivers = [open_viewer(args.host, args.http_port, pair[0]) for pair in pairs]
             result = measure(args, server, publisher, receivers)
             result["config"] = {
@@ -193,10 +191,10 @@ def main():
             if result["progressing"] != args.pairs or result["errors"] or not result["publisher_alive"]:
                 raise SystemExit(1)
         finally:
-            for name, receiver_id, sender_id, sender_name in pairs:
+            for receiver_id, stream_id, sender_id in pairs:
                 try:
-                    post(args.host, args.http_port, "/gb28181/sender/delete", {"stream_id": sender_id, "stream_name": "live/perf0", "sender_id": sender_name})
-                    post(args.host, args.http_port, "/gb28181/receiver/delete", {"stream_id": receiver_id, "stream_name": name})
+                    post(args.host, args.http_port, "/gb28181/sender/delete", {"stream_id": stream_id, "sender_id": sender_id})
+                    post(args.host, args.http_port, "/receivers/delete", {"stream_id": receiver_id})
                 except Exception:
                     pass
             stop_process(publisher)

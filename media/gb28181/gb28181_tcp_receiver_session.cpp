@@ -13,11 +13,11 @@
 namespace media_server
 {
 gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worker,
-                                                           std::string stream_name,
+                                                           std::string stream_id,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
     : worker_(worker),
-      receiver_(worker_, std::move(stream_name), payload_type, ssrc),
+      receiver_(worker_, std::move(stream_id), payload_type, ssrc),
       socket_(worker_.io()),
       idle_timer_(worker_.io())
 {
@@ -27,7 +27,7 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::tcp::endpoint remote
 {
     if (!receiver_.startup())
     {
-        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
+        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_id());
         return false;
     }
 
@@ -41,7 +41,7 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
 {
     if (!receiver_.startup())
     {
-        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_name());
+        spdlog::error("gb28181 tcp receiver startup failed stream {}", receiver_.stream_id());
         return false;
     }
 
@@ -50,7 +50,7 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
     listener_->startup(error);
     if (error)
     {
-        spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_name(), error.message());
+        spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_id(), error.message());
         return false;
     }
 
@@ -76,7 +76,7 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
     idle_timer_.start(weak_from_this(),
                       [this]()
                       {
-                          spdlog::info("gb28181 tcp receiver idle timeout {}", receiver_.stream_name());
+                          spdlog::info("gb28181 tcp receiver idle timeout {}", receiver_.stream_id());
                           shutdown();
                       });
     boost::system::error_code error;
@@ -99,14 +99,14 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
     {
         if (error != boost::asio::error::operation_aborted)
         {
-            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_name(), error.message());
+            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_id(), error.message());
         }
         shutdown();
         return;
     }
 
     transport_ = std::make_shared<tcp_transport>(std::move(socket_));
-    spdlog::info("gb28181 tcp session started stream {}", receiver_.stream_name());
+    spdlog::info("gb28181 tcp session started stream {}", receiver_.stream_id());
     run_read(yield);
 }
 
@@ -163,7 +163,7 @@ void gb28181_tcp_receiver_session::run_read(boost::asio::yield_context yield)
 void gb28181_tcp_receiver_session::safe_shutdown()
 {
     idle_timer_.stop();
-    session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
+    session_registry::instance().remove_receiver_session(receiver_.stream_id(), *this);
     if (listener_)
     {
         listener_->shutdown();
@@ -178,7 +178,7 @@ void gb28181_tcp_receiver_session::safe_shutdown()
         socket_.close(error);
     }
     receiver_.shutdown();
-    spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_name());
+    spdlog::debug("gb28181 tcp session shutdown {}", receiver_.stream_id());
 }
 
 }    // namespace media_server

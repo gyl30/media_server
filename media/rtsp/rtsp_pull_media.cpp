@@ -25,8 +25,8 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_name)
-    : worker_(worker), media_stream_name_(std::move(media_stream_name))
+rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_id)
+    : worker_(worker), media_stream_id_(std::move(media_stream_id))
 {
 }
 
@@ -37,7 +37,7 @@ bool rtsp_pull_media::startup(std::vector<rtsp_pull_track_description> descripti
         return false;
     }
 
-    media_stream_ = std::make_shared<media_stream>(media_stream_name_, worker_);
+    media_stream_ = std::make_shared<media_stream>(media_stream_id_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxers_.resize(descriptions.size());
     for (std::size_t index = 0; index < descriptions.size(); ++index)
@@ -57,7 +57,7 @@ bool rtsp_pull_media::startup(std::vector<rtsp_pull_track_description> descripti
                                      description.payload_type,
                                      description.encoding.c_str(),
                                      description.fmtp.empty() ? nullptr : description.fmtp.c_str()) != 0 ||
-            rtsp_demuxer_set_info(demuxer, media_stream_name_.c_str(), rtcp_name) != 0)
+            rtsp_demuxer_set_info(demuxer, media_stream_id_.c_str(), rtcp_name) != 0)
         {
             return false;
         }
@@ -239,7 +239,7 @@ int rtsp_pull_media::register_stream_if_ready()
     }
     if (!stream_registry::instance().add(media_stream_))
     {
-        spdlog::warn("rtsp pull duplicate stream {}", media_stream_name_);
+        spdlog::warn("rtsp pull duplicate stream {}", media_stream_id_);
         return -1;
     }
     initial_video_track_.reset();

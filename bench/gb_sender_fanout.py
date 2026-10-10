@@ -17,7 +17,6 @@ from fanout_support import benchmark_head
 
 @dataclass
 class Sender:
-    stream_id: str
     sender_id: str
     ssrc: int
     created_at: float
@@ -186,8 +185,7 @@ class TcpSink:
 
 async def create_sender(control, state, sender, port):
     body = {
-        "stream_id": sender.stream_id,
-        "stream_name": state.args.stream_name,
+        "stream_id": state.args.stream_name,
         "sender_id": sender.sender_id,
         "transport": state.args.transport,
         "payload_type": state.args.payload_type,
@@ -205,8 +203,7 @@ async def create_sender(control, state, sender, port):
 
 async def delete_sender(control, stream_name, sender):
     body = {
-        "stream_id": sender.stream_id,
-        "stream_name": stream_name,
+        "stream_id": stream_name,
         "sender_id": sender.sender_id,
     }
     status, response = await control.post("/gb28181/sender/delete", body)
@@ -350,7 +347,7 @@ async def run(args):
         next_create = time.monotonic()
         for index in range(args.viewers):
             ssrc = (initial_ssrc + index) & 0xFFFFFFFF or index + 1
-            sender = Sender(str(uuid.uuid4()), str(uuid.uuid4()), ssrc, time.monotonic())
+            sender = Sender(str(uuid.uuid4()), ssrc, time.monotonic())
             attempted_senders.append(sender)
             state.expected[ssrc] = sender
             transport = None

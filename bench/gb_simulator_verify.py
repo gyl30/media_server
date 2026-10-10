@@ -35,8 +35,8 @@ def play_path(index):
     return f"{device_path(index)}/channels/{identity(index)[1]}/play"
 
 
-def stream_name(index):
-    return "gb/" + "/".join(identity(index))
+def stream_id(run, index):
+    return channels(run, index)[0]["live"]["live_id"]
 
 
 def api(run, method, path, body=None, expected=200):
@@ -184,8 +184,7 @@ def offline(run, count):
 
 
 def receiver_gone(run, ticket, index=0):
-    assert request(run["base"]+2, "POST", "/gb28181/receiver/delete",
-        {"stream_id": ticket["live_id"], "stream_name": stream_name(index)})[0] == 404
+    assert request(run["base"]+2, "POST", "/receivers/delete", {"stream_id": ticket["live_id"]})[0] == 404
 
 
 def udp_released(run):
@@ -195,7 +194,7 @@ def udp_released(run):
 def read_media(run, index=0):
     connection = http.client.HTTPConnection("127.0.0.1", run["base"]+2, timeout=10)
     try:
-        connection.request("GET", f"/{stream_name(index)}.flv")
+        connection.request("GET", f"/{stream_id(run, index)}.flv")
         response = connection.getresponse()
         assert response.status == 200
         data = response.read(4096)
@@ -275,7 +274,7 @@ def correctness(run):
             first = start_simulator(run, workers=(2, 1))
             online(run, 1)
             live = play(run)
-            wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+            wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
             if cycle % 10 == 0:
                 index = viewer(page, live)
                 close_viewer(run, page, index)
@@ -348,7 +347,7 @@ def ticket_races(run):
     simulator = start_simulator(run, workers=(2, 1))
     online(run, 1)
     live = play(run)
-    wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+    wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
     with browser_page(run) as page:
         offer = page.evaluate("""async () => {
             const peer = new RTCPeerConnection(); peer.addTransceiver('video', {direction:'recvonly'});
@@ -409,7 +408,8 @@ def lifecycle_races(run):
                 consume(run, ticket)
                 receiver_gone(run, ticket, index)
             udp_released(run)
-            assert request(run["base"]+2, "GET", f"/{stream_name(index)}.flv")[0] == 404
+            if play_status == 201:
+                assert request(run["base"]+2, "GET", f"/{ticket['live_id']}.flv")[0] == 404
     eventually(lambda: summary(simulator)["live_active"] == 0)
     stop_simulator(simulator)
     udp_released(run)
@@ -578,7 +578,7 @@ def media(run):
     simulator = start_simulator(run)
     online(run, 1)
     live = play(run)
-    wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+    wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
     with browser_page(run) as page:
         for count in (1, 3, 8, 16):
             indices = [viewer(page, play(run)) for _ in range(count)]
@@ -605,7 +605,7 @@ def media(run):
         assert len({ticket["live_id"] for ticket in tickets}) == count
         eventually(lambda: summary(simulator)["invite"] == summary(simulator)["ack"] == summary(simulator)["live_active"] == count)
         for index in range(count):
-            wait_for_stream("127.0.0.1", run["base"]+2, stream_name(index))
+            wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, index))
             read_media(run, index)
         window = steady(run, 10, f"active-live-{count}", count, count)
         for index in range(count):
@@ -628,7 +628,7 @@ def media(run):
         with browser_page(run) as page:
             index = None
             if loss < 100:
-                wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+                wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
                 index = viewer(page, ticket, require_decode=False)
             before = viewer_stats(page, index) if index is not None else None
             window = steady(run, 20, f"packet-loss-{loss}", 1, 1, packet_loss=loss)
@@ -654,7 +654,7 @@ def media(run):
         simulator = start_simulator(run, profile=profile)
         online(run, 1)
         ticket = play(run)
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
         with browser_page(run) as page:
             index = viewer(page, ticket)
             window = steady(run, 10, f"media-profile-{profile}", 1, 1, page, index)
@@ -671,7 +671,7 @@ def media(run):
         tickets = [play(run, index) for index in range(10)]
         eventually(lambda: summary(simulator)["live_active"] == 10)
         for index in range(10):
-            wait_for_stream("127.0.0.1", run["base"]+2, stream_name(index))
+            wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, index))
             read_media(run, index)
         window = steady(run, 10, f"workers-{workers}", 10, 10)
         for index in range(10):
@@ -686,7 +686,7 @@ def media(run):
     online(run, 10)
     tickets = [play(run, offset) for offset in range(10)]
     for offset in range(10):
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(offset))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, offset))
         read_media(run, offset)
     stop_simulator(simulator)
     offline(run, 10)
@@ -699,7 +699,7 @@ def media(run):
     new = [play(run, offset) for offset in range(10)]
     assert all(a["live_id"] != b["live_id"] for a,b in zip(tickets,new))
     for offset, ticket in enumerate(new):
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(offset))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, offset))
         read_media(run, offset)
         api(run, "DELETE", f"/api/lives/{ticket['live_id']}", expected=204)
     stop_simulator(simulator)
@@ -715,7 +715,7 @@ def recovery(run):
     online(run, count)
     tickets = [play(run, index) for index in range(3)]
     for index in range(3):
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(index))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, index))
         read_media(run, index)
     with browser_page(run) as page:
         index = viewer(page, tickets[0])
@@ -734,7 +734,7 @@ def recovery(run):
         simulator = start_simulator(run, count, endpoints=4)
         online(run, count)
         old = [play(run, offset) for offset in range(3)]
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
         index = viewer(page, old[0])
         process = run["media"]
         process.kill()
@@ -750,7 +750,7 @@ def recovery(run):
         new = [play(run, offset) for offset in range(3)]
         assert all(a["live_id"] != b["live_id"] for a,b in zip(old,new))
         for offset in range(3):
-            wait_for_stream("127.0.0.1", run["base"]+2, stream_name(offset))
+            wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, offset))
             read_media(run, offset)
         index = viewer(page, new[0])
         close_viewer(run, page, index)
@@ -787,7 +787,7 @@ def recovery(run):
         eventually(lambda: summary(simulator)["catalog"] == 3*count)
         ticket = play(run)
         assert ticket["live_id"] not in {item["live_id"] for item in current}
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
         index = viewer(page, ticket)
         close_viewer(run, page, index)
         api(run, "DELETE", f"/api/lives/{ticket['live_id']}", expected=204)
@@ -810,7 +810,7 @@ def recovery(run):
         start_media(run)
         tickets = [play(run, offset) for offset in range(count)]
         for offset in range(count):
-            wait_for_stream("127.0.0.1", run["base"]+2, stream_name(offset))
+            wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, offset))
             read_media(run, offset)
         for ticket in tickets:
             api(run, "DELETE", f"/api/lives/{ticket['live_id']}", expected=204)
@@ -826,7 +826,7 @@ def soak(run):
     simulator = start_simulator(run, expires=30, heartbeat=5)
     online(run, 1)
     ticket = play(run)
-    wait_for_stream("127.0.0.1", run["base"]+2, stream_name(0))
+    wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, 0))
     with browser_page(run) as page:
         index = viewer(page, ticket)
         eventually(lambda: summary(simulator)["live_active"] == 1)
@@ -843,7 +843,7 @@ def soak(run):
     online(run, count)
     tickets = [play(run, offset) for offset in range(count)]
     for offset in range(count):
-        wait_for_stream("127.0.0.1", run["base"]+2, stream_name(offset))
+        wait_for_stream("127.0.0.1", run["base"]+2, stream_id(run, offset))
         read_media(run, offset)
     eventually(lambda: summary(simulator)["live_active"] == count)
     window = steady(run, run["args"].multi_soak_seconds, "multi-live-soak", count, count)

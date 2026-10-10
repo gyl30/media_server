@@ -32,7 +32,7 @@ enum class gb28181_rtp_receive_result
 class gb28181_rtp_receiver final
 {
    public:
-    gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc);
+    gb28181_rtp_receiver(worker_context& worker, std::string stream_id, std::uint8_t payload_type, std::uint32_t expected_ssrc);
 
    public:
     [[nodiscard]] bool startup();
@@ -44,7 +44,7 @@ class gb28181_rtp_receiver final
     void set_expected_ssrc(std::uint32_t ssrc) noexcept { expected_ssrc_ = ssrc; }
 
    public:
-    [[nodiscard]] const std::string& stream_name() const noexcept;
+    [[nodiscard]] const std::string& stream_id() const noexcept;
 
    private:
     struct ps_topology
@@ -66,7 +66,7 @@ class gb28181_rtp_receiver final
 
    private:
     worker_context& worker_;
-    std::string stream_name_;
+    std::string stream_id_;
     std::uint8_t payload_type_{};
     std::uint32_t expected_ssrc_{};
     rtsp_demuxer_t* demuxer_{};

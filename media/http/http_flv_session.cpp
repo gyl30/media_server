@@ -59,23 +59,23 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     }
 
     path.back().resize(path.back().size() - 4);
-    std::string stream_name;
+    std::string stream_id;
     for (const auto& segment : path)
     {
-        if (!stream_name.empty())
+        if (!stream_id.empty())
         {
-            stream_name.push_back('/');
+            stream_id.push_back('/');
         }
-        stream_name.append(segment);
+        stream_id.append(segment);
     }
 
-    if (target.has_query() || stream_name.empty())
+    if (target.has_query() || stream_id.empty())
     {
         send_text_response(boost::beast::http::status::bad_request, "text/plain", "invalid stream name\n", yield);
         return;
     }
 
-    auto media_stream = stream_registry::instance().find(stream_name);
+    auto media_stream = stream_registry::instance().find(stream_id);
     if (!media_stream)
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", yield);

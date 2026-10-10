@@ -23,14 +23,14 @@ namespace media_server
 namespace
 {
 
-// 控制面对账使用：列出仍在运行的 GB28181 接收和 RTSP 拉流会话。
+// 控制面对账使用：列出仍在运行的输入会话。
 boost::beast::http::response<boost::beast::http::string_body> make_receiver_list_response(
     const boost::beast::http::request<boost::beast::http::string_body>& request)
 {
     boost::json::array receivers;
     for (const auto& receiver : session_registry::instance().receivers())
     {
-        receivers.push_back(boost::json::object{{"stream_name", receiver.stream_name}, {"stream_id", receiver.stream_id}});
+        receivers.push_back(boost::json::object{{"stream_id", receiver}});
     }
     boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::ok, request.version());
     response.set(boost::beast::http::field::server, "media_server");
@@ -43,7 +43,7 @@ boost::beast::http::response<boost::beast::http::string_body> make_receiver_list
 
 bool is_control_path(std::string_view path)
 {
-    return path == "/receivers" || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") || path == "/gb28181/sender" ||
+    return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") || path == "/gb28181/sender" ||
            path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
 }
 
@@ -144,6 +144,56 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
             return;
         }
         write_string_response(request, make_receiver_list_response(request), yield);
+        return;
+    }
+    if (path == "/receivers/delete")
+    {
+        auto status = boost::beast::http::status::no_content;
+        std::string failure;
+        if (request.method() != boost::beast::http::verb::post)
+        {
+            status = boost::beast::http::status::method_not_allowed;
+            failure = "method_not_allowed";
+        }
+        else if (!boost::beast::iequals(request[boost::beast::http::field::content_type], "application/json"))
+        {
+            status = boost::beast::http::status::unsupported_media_type;
+            failure = "unsupported_media_type";
+        }
+        else
+        {
+            boost::system::error_code error;
+            const auto value = boost::json::parse(request.body(), error);
+            const auto* stream_id = !error && value.is_object() ? value.as_object().if_contains("stream_id") : nullptr;
+            if (parsed->has_query() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() || stream_id->as_string().empty())
+            {
+                status = boost::beast::http::status::bad_request;
+                failure = "invalid_request";
+            }
+            else if (const auto session = session_registry::instance().take_receiver_session(std::string_view{stream_id->as_string()}))
+            {
+                session->shutdown();
+            }
+            else
+            {
+                status = boost::beast::http::status::not_found;
+                failure = "not_found";
+            }
+        }
+        boost::beast::http::response<boost::beast::http::string_body> response(status, request.version());
+        response.set(boost::beast::http::field::server, "media_server");
+        if (!failure.empty())
+        {
+            response.set(boost::beast::http::field::content_type, "application/json");
+            response.body() = boost::json::serialize(boost::json::object{{"error", failure}});
+        }
+        if (status == boost::beast::http::status::method_not_allowed)
+        {
+            response.set(boost::beast::http::field::allow, "POST");
+        }
+        response.keep_alive(false);
+        response.prepare_payload();
+        write_string_response(request, std::move(response), yield);
         return;
     }
     if (path == "/rtsp/pull" || path.starts_with("/rtsp/pull/"))

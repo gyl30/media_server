@@ -33,17 +33,17 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 		return
 	}
 	writeJSON(writer, http.StatusCreated, map[string]string{
-		"whep_url": makeWHEPURL(session.streamName, s.media.server),
+		"whep_url": makeWHEPURL(session.streamID, s.media.server),
 	})
 }
 
-func makeWHEPURL(streamName string, server mediaServer) string {
-	path := "/play/whep/" + streamName
+func makeWHEPURL(streamID string, server mediaServer) string {
+	path := "/play/whep/" + streamID
 	endpoint := url.URL{
 		Scheme:  "http",
 		Host:    net.JoinHostPort(server.mediaIP, strconv.FormatUint(uint64(server.httpPort), 10)),
 		Path:    path,
-		RawPath: "/play/whep/" + url.PathEscape(streamName),
+		RawPath: "/play/whep/" + url.PathEscape(streamID),
 	}
 	return endpoint.String()
 }

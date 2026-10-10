@@ -10,11 +10,10 @@ import (
 const playTicketLifetime = 30 * time.Second
 
 type playTicket struct {
-	playID     string
-	key        liveKey
-	liveID     string
-	streamName string
-	expiresAt  time.Time
+	playID    string
+	key       liveKey
+	liveID    string
+	expiresAt time.Time
 }
 
 func (s *liveService) newPlayTicket(deviceID, channelID, liveID string) (playTicket, error) {
@@ -29,7 +28,7 @@ func (s *liveService) newPlayTicket(deviceID, channelID, liveID string) (playTic
 		return playTicket{}, errLiveChanged
 	}
 	ticket := playTicket{playID: uuid.NewString(), key: key, liveID: liveID,
-		streamName: session.streamName, expiresAt: s.sip.now().Add(playTicketLifetime)}
+		expiresAt: s.sip.now().Add(playTicketLifetime)}
 	s.tickets[ticket.playID] = ticket
 	return ticket, nil
 }

@@ -21,7 +21,7 @@ class worker_context;
 class rtmp_publish_session final
 {
    public:
-    rtmp_publish_session(worker_context& worker, std::string stream_name);
+    rtmp_publish_session(worker_context& worker, std::string stream_id);
 
    public:
     bool startup();

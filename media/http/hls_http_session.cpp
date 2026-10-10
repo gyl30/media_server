@@ -64,17 +64,17 @@ void hls_http_session::handle_request()
     }
 
     const auto& file = path.back();
-    std::string stream_name;
+    std::string stream_id;
     for (std::size_t index = 2; index + 1 < path.size(); ++index)
     {
-        if (!stream_name.empty())
+        if (!stream_id.empty())
         {
-            stream_name.push_back('/');
+            stream_id.push_back('/');
         }
-        stream_name.append(path[index]);
+        stream_id.append(path[index]);
     }
 
-    if (stream_name.empty())
+    if (stream_id.empty())
     {
         send_text_response(boost::beast::http::status::not_found, "text/plain", "not found\n", false);
         return;
@@ -98,13 +98,13 @@ void hls_http_session::handle_request()
 
     if (!secret && file == "index.m3u8")
     {
-        const auto segmenter = hls::get_or_create(stream_name);
+        const auto segmenter = hls::get_or_create(stream_id);
         if (!segmenter)
         {
             send_text_response(boost::beast::http::status::not_found, "text/plain", "stream not found\n", false);
             return;
         }
-        const auto viewer = hls_play_session::create(worker_, std::move(stream_name), segmenter);
+        const auto viewer = hls_play_session::create(worker_, std::move(stream_id), segmenter);
         send_redirect(std::string(target.encoded_path()) + "?session=" + viewer->secret());
         return;
     }
@@ -133,7 +133,7 @@ void hls_http_session::handle_request()
         segment_sequence = sequence;
     }
 
-    const auto viewer = hls_play_session::find(*secret, stream_name);
+    const auto viewer = hls_play_session::find(*secret, stream_id);
     if (!viewer)
     {
         send_text_response(boost::beast::http::status::forbidden, "text/plain", "invalid hls session\n", false);

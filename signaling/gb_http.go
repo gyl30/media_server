@@ -23,9 +23,8 @@ type channelResponse struct {
 }
 
 type liveResponse struct {
-	LiveID     string    `json:"live_id"`
-	StreamName string    `json:"stream_name"`
-	State      liveState `json:"state"`
+	LiveID string    `json:"live_id"`
+	State  liveState `json:"state"`
 }
 
 func (s *infrastructureServer) handleDeviceList(writer http.ResponseWriter, request *http.Request) {
@@ -124,7 +123,7 @@ func (s *infrastructureServer) handleChannelList(writer http.ResponseWriter, req
 			ParentID: channel.parentID, Status: channel.status,
 		}
 		if live, ok := s.live.live(channel.deviceID, channel.id); ok {
-			item.Live = &liveResponse{LiveID: live.streamID, StreamName: live.streamName, State: live.state}
+			item.Live = &liveResponse{LiveID: live.streamID, State: live.state}
 		}
 		response = append(response, item)
 	}

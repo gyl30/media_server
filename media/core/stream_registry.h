@@ -20,7 +20,7 @@ class stream_registry final
    public:
     bool add(const std::shared_ptr<media_stream>& stream);
     void remove(const media_stream& expected);
-    [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view name) const;
+    [[nodiscard]] std::shared_ptr<media_stream> find(std::string_view stream_id) const;
 
    private:
     stream_registry() = default;

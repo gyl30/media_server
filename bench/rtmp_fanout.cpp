@@ -82,7 +82,11 @@ struct run_state
 std::pair<std::string, std::string> split_rtmp_stream_name(std::string_view stream_name)
 {
     const auto slash = stream_name.find('/');
-    if (slash == std::string_view::npos || slash == 0U || slash + 1U == stream_name.size())
+    if (slash == std::string_view::npos)
+    {
+        return {"", std::string(stream_name)};
+    }
+    if (slash == 0U || slash + 1U == stream_name.size())
     {
         throw std::runtime_error("stream-name must contain app and stream path");
     }

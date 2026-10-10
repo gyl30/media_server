@@ -165,7 +165,7 @@ func (s *infrastructureServer) shutdownRTSPPulls(ctx context.Context) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			if err := s.media.deleteRTSPPull(ctx, session.streamID, session.streamName); err != nil {
+			if err := s.media.deleteReceiver(ctx, session.streamID); err != nil {
 				s.logger.Warn("rtsp pull shutdown failed", "stream_name", session.streamName,
 					"source_id", session.sourceID, "error", err)
 			}

@@ -320,7 +320,7 @@ void gb_session_error_policies()
         boost::asio::post(worker.io(), [&]()
                           {
                               require(sender->startup(loopback, 96, 1234), "GB sender startup failed");
-                              require(session_registry::instance().add_sender_session(stream->name(), "sender", "generation", sender),
+                              require(session_registry::instance().add_sender_session(stream->stream_id(), "sender", sender),
                                       "GB sender registry failed");
                               publish.expires_after(10ms);
                               publish.async_wait([&](boost::system::error_code error)
@@ -333,7 +333,7 @@ void gb_session_error_policies()
                               check.async_wait([&](boost::system::error_code error)
                                                {
                                                    require(!error, "GB check timer cancelled");
-                                                   const auto registered = session_registry::instance().take_sender_session(stream->name(), "sender", "generation");
+                                                   const auto registered = session_registry::instance().take_sender_session(stream->stream_id(), "sender");
                                                    require(overflow ? registered == sender : !registered, "GB overflow/socket-error shutdown policy changed");
                                                    before_recovery = received;
                                                    if (overflow)

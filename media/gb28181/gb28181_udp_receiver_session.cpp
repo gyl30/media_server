@@ -22,10 +22,10 @@ constexpr auto rtcp_interval = std::chrono::seconds{1};
 }    // namespace
 
 gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worker,
-                                                           std::string stream_name,
+                                                           std::string stream_id,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
-    : worker_(worker), receiver_(worker_, std::move(stream_name), payload_type, ssrc),
+    : worker_(worker), receiver_(worker_, std::move(stream_id), payload_type, ssrc),
       rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_timer_(worker_.io()),
@@ -79,12 +79,12 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     idle_timer_.start(self,
                       [this]()
                       {
-                          spdlog::info("gb28181 udp receiver idle timeout {}", receiver_.stream_name());
+                          spdlog::info("gb28181 udp receiver idle timeout {}", receiver_.stream_id());
                           shutdown();
                       });
 
     spdlog::info(
-        "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_name(), *local_port_, *local_port_ + 1U);
+        "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_id(), *local_port_, *local_port_ + 1U);
     return local_port_;
 }
 
@@ -217,7 +217,7 @@ void gb28181_udp_receiver_session::schedule_rtcp()
 
 void gb28181_udp_receiver_session::safe_shutdown()
 {
-    session_registry::instance().remove_receiver_session(receiver_.stream_name(), *this);
+    session_registry::instance().remove_receiver_session(receiver_.stream_id(), *this);
     rtcp_timer_.cancel();
     idle_timer_.stop();
     rtp_transport_->shutdown();
@@ -229,7 +229,7 @@ void gb28181_udp_receiver_session::safe_shutdown()
         media_port_pool::instance().release(*local_port_);
         local_port_.reset();
     }
-    spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_name());
+    spdlog::debug("gb28181 udp session shutdown {}", receiver_.stream_id());
 }
 
 }    // namespace media_server

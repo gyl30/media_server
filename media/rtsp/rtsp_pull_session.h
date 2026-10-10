@@ -32,7 +32,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
 {
    public:
     rtsp_pull_session(worker_context& worker,
-                      std::string stream_name,
+                      std::string stream_id,
                       std::string url,
                       std::string username = {},
                       std::string password = {});
@@ -80,7 +80,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
 
    private:
     worker_context& worker_;
-    std::string stream_name_;
+    std::string stream_id_;
     std::string url_;
     std::string username_;
     std::string password_;

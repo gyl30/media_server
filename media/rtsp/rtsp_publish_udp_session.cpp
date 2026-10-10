@@ -23,13 +23,13 @@ namespace media_server
 
 rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
                                                    boost::asio::ip::address bind_address,
-                                                   std::string stream_name,
+                                                   std::string stream_id,
                                                    std::vector<rtsp_publish_track_description> descriptions,
                                                    std::function<void()> input_handler)
     : worker_(worker),
       bind_address_(std::move(bind_address)),
       input_handler_(std::move(input_handler)),
-      media_(worker_, std::move(stream_name), std::move(descriptions)),
+      media_(worker_, std::move(stream_id), std::move(descriptions)),
       track_states_(media_.descriptions().size()),
       rtcp_timer_(worker_.io())
 {
@@ -277,7 +277,7 @@ void rtsp_publish_udp_session::safe_shutdown()
             state.local_port.reset();
         }
     }
-    spdlog::debug("rtsp publish udp shutdown {}", media_.media_stream_name());
+    spdlog::debug("rtsp publish udp shutdown {}", media_.media_stream_id());
 }
 
 }    // namespace media_server

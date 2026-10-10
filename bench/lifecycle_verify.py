@@ -147,17 +147,18 @@ class Run:
             wait_for_stream(self.host, self.http_port, pair[0])
             yield pair[0]
         finally:
-            name, receiver, sender, sender_name = pair
-            for path, body in (("sender", {"stream_id": sender, "stream_name": "live/perf0", "sender_id": sender_name}),
-                               ("receiver", {"stream_id": receiver, "stream_name": name})):
-                status = request(self.http_port, "POST", f"/gb28181/{path}/delete", body)[0]
+            receiver, stream_id, sender_id = pair
+            for path, body in (("sender", {"stream_id": stream_id, "sender_id": sender_id}),
+                               ("receiver", {"stream_id": receiver})):
+                endpoint = "/receivers/delete" if path == "receiver" else "/gb28181/sender/delete"
+                status = request(self.http_port, "POST", endpoint, body)[0]
                 expected = (204, 404) if path == "receiver" and transport != "udp" else (204,)
                 assert status in expected, (path, transport, status)
-                assert request(self.http_port, "POST", f"/gb28181/{path}/delete", body)[0] == 404
+                assert request(self.http_port, "POST", endpoint, body)[0] == 404
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 with socket.create_connection((self.host, self.http_port), timeout=2) as probe:
-                    probe.sendall(f"GET /{name}.flv HTTP/1.1\r\nHost: localhost\r\n\r\n".encode())
+                    probe.sendall(f"GET /{receiver}.flv HTTP/1.1\r\nHost: localhost\r\n\r\n".encode())
                     status = probe.recv(64)
                 if status.startswith(b"HTTP/1.1 404"):
                     break
@@ -365,12 +366,12 @@ class Run:
                 viewer.wait(timeout=5)
                 result["cases"].append({"viewer_tcp_reset": protocol, "real_frames": True})
             pair = gb_network.create_pair(SimpleNamespace(host=self.host, http_port=self.http_port, transport="udp", tcp_port_base=self.args.port_base + 3), 0)
-            name, receiver, sender, sender_name = pair
-            wait_for_stream(self.host, self.http_port, name)
-            asyncio.run(http_wave(self.http_port, name, 1, 1))
-            connection = gb_network.open_viewer(self.host, self.http_port, name)
+            receiver, stream_id, sender_id = pair
+            wait_for_stream(self.host, self.http_port, receiver)
+            asyncio.run(http_wave(self.http_port, receiver, 1, 1))
+            connection = gb_network.open_viewer(self.host, self.http_port, receiver)
             try:
-                sender_body = {"stream_id": sender, "stream_name": "live/perf0", "sender_id": sender_name}
+                sender_body = {"stream_id": stream_id, "sender_id": sender_id}
                 assert request(self.http_port, "POST", "/gb28181/sender/delete", sender_body)[0] == 204
                 connection.settimeout(0.3)
                 try:
@@ -382,14 +383,14 @@ class Run:
                         assert connection.recv(65536) == b"", "UDP receiver kept producing media after peer disappeared"
                     except socket.timeout:
                         pass
-                receiver_body = {"stream_id": receiver, "stream_name": name}
-                status = request(self.http_port, "POST", "/gb28181/receiver/delete", receiver_body)[0]
+                receiver_body = {"stream_id": receiver}
+                status = request(self.http_port, "POST", "/receivers/delete", receiver_body)[0]
                 assert status in (204, 404), status
-                assert request(self.http_port, "POST", "/gb28181/receiver/delete", receiver_body)[0] == 404
+                assert request(self.http_port, "POST", "/receivers/delete", receiver_body)[0] == 404
                 connection.settimeout(5)
                 while connection.recv(65536):
                     pass
-                ports = re.findall(r"gb28181 udp session started stream relay/perf0 rtp_port (\d+) rtcp_port (\d+)", self.server.log_path.read_text())[-1]
+                ports = re.findall(r"gb28181 udp session started stream " + re.escape(receiver) + r" rtp_port (\d+) rtcp_port (\d+)", self.server.log_path.read_text())[-1]
                 for port in ports:
                     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as released:
                         released.bind((self.host, int(port)))

@@ -108,7 +108,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     const auto result = rtp_payload_encode_input(packetizer_, frame.payload->data(), static_cast<int>(frame.payload->size()), timestamp);
     if (result < 0)
     {
-        spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->name(), result);
+        spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->stream_id(), result);
         shutdown();
         end_handler_();
         return;

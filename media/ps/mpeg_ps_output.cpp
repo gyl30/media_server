@@ -59,7 +59,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
     muxer_.reset(ps_muxer_create(&callbacks, this));
     if (!muxer_)
     {
-        spdlog::error("mpeg ps muxer create failed stream {}", source->name());
+        spdlog::error("mpeg ps muxer create failed stream {}", source->stream_id());
         return false;
     }
     for (const auto& track : source->tracks())
@@ -88,7 +88,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
         const auto id = ps_muxer_add_stream(muxer_.get(), codec, nullptr, 0);
         if (id < 0)
         {
-            spdlog::error("mpeg ps muxer add track failed stream {} track {}", source->name(), track.id);
+            spdlog::error("mpeg ps muxer add track failed stream {} track {}", source->stream_id(), track.id);
             return false;
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});
@@ -117,7 +117,7 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_90khz(frame.dts_ns),
                        frame.payload->data(), frame.payload->size()) < 0)
     {
-        spdlog::error("mpeg ps muxer input failed stream {} track {}", source_->name(), frame.track);
+        spdlog::error("mpeg ps muxer input failed stream {} track {}", source_->stream_id(), frame.track);
         finish();
         return;
     }

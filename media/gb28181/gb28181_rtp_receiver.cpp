@@ -68,19 +68,19 @@ bool is_video(codec_id codec) { return codec == codec_id::h264 || codec == codec
 
 }    // namespace
 
-gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string stream_name, std::uint8_t payload_type, std::uint32_t expected_ssrc)
-    : worker_(worker), stream_name_(std::move(stream_name)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
+gb28181_rtp_receiver::gb28181_rtp_receiver(worker_context& worker, std::string stream_id, std::uint8_t payload_type, std::uint32_t expected_ssrc)
+    : worker_(worker), stream_id_(std::move(stream_id)), payload_type_(payload_type), expected_ssrc_(expected_ssrc)
 {
 }
 
 bool gb28181_rtp_receiver::startup()
 {
-    stream_ = std::make_shared<media_stream>(stream_name_, worker_);
+    stream_ = std::make_shared<media_stream>(stream_id_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxer_ = rtsp_demuxer_create(0, 500, &gb28181_rtp_receiver::packet_callback, this);
     if (demuxer_ == nullptr || rtsp_demuxer_add_payload(demuxer_, 90'000, payload_type_, "PS", nullptr) != 0 ||
         rtsp_demuxer_set_ps_notify(demuxer_, &gb28181_rtp_receiver::stream_callback, this) != 0 ||
-        rtsp_demuxer_set_info(demuxer_, stream_name_.c_str(), "media_server") != 0)
+        rtsp_demuxer_set_info(demuxer_, stream_id_.c_str(), "media_server") != 0)
     {
         return false;
     }
@@ -132,7 +132,7 @@ void gb28181_rtp_receiver::shutdown()
     avpkt2bs_destroy(&bitstream_);
 }
 
-const std::string& gb28181_rtp_receiver::stream_name() const noexcept { return stream_name_; }
+const std::string& gb28181_rtp_receiver::stream_id() const noexcept { return stream_id_; }
 
 int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 {
@@ -194,7 +194,7 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
 {
     if (topology.invalid || !topology.video)
     {
-        spdlog::warn("gb28181 unsupported ps topology stream {}", stream_name_);
+        spdlog::warn("gb28181 unsupported ps topology stream {}", stream_id_);
         return false;
     }
 
@@ -202,7 +202,7 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
     {
         if (video_codec_ != topology.video || audio_codec_ != topology.audio)
         {
-            spdlog::warn("gb28181 ps topology change stream {}", stream_name_);
+            spdlog::warn("gb28181 ps topology change stream {}", stream_id_);
             return false;
         }
         return true;
@@ -210,7 +210,7 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
 
     if (topology.unsupported_audio && !topology.audio)
     {
-        spdlog::warn("gb28181 unsupported audio ignored stream {}", stream_name_);
+        spdlog::warn("gb28181 unsupported audio ignored stream {}", stream_id_);
     }
     video_codec_ = topology.video;
     audio_codec_ = topology.audio;
@@ -260,7 +260,7 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     {
         if (video_codec_)
         {
-            spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_name_, packet->stream->codecid);
+            spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_id_, packet->stream->codecid);
             return -1;
         }
         return 0;
@@ -271,14 +271,14 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     }
     if (is_video(*codec) ? video_codec_ != codec : audio_codec_ != codec)
     {
-        spdlog::warn("gb28181 raw codec change stream {} codec {}", stream_name_, to_string(*codec));
+        spdlog::warn("gb28181 raw codec change stream {} codec {}", stream_id_, to_string(*codec));
         return -1;
     }
 
     auto& observed_stream = is_video(*codec) ? video_stream_ : audio_stream_;
     if (observed_stream && *observed_stream != packet->stream->stream)
     {
-        spdlog::warn("gb28181 multiple {} streams {}", to_string(is_video(*codec) ? media_kind::video : media_kind::audio), stream_name_);
+        spdlog::warn("gb28181 multiple {} streams {}", to_string(is_video(*codec) ? media_kind::video : media_kind::audio), stream_id_);
         return -1;
     }
     if (!observed_stream)
@@ -313,12 +313,12 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
         }
         if (!stream_->set_tracks(std::move(tracks)) || !stream_registry::instance().add(stream_))
         {
-            spdlog::warn("gb28181 stream register failed {}", stream_name_);
+            spdlog::warn("gb28181 stream register failed {}", stream_id_);
             return -1;
         }
         video_track_.reset();
         audio_track_.reset();
-        spdlog::info("gb28181 stream started {}", stream_name_);
+        spdlog::info("gb28181 stream started {}", stream_id_);
     }
 
     const auto bytes = avpkt2bs_input(&bitstream_, packet);
@@ -353,7 +353,7 @@ int gb28181_rtp_receiver::update_track_from_packet(const avpacket_t& packet)
         if (fixed == stream_->tracks().end() || fixed->codec != track->codec || fixed->clock_rate != track->clock_rate ||
             fixed->channel_count != track->channel_count || fixed->codec_config != track->codec_config)
         {
-            spdlog::warn("gb28181 track config changed stream {}", stream_name_);
+            spdlog::warn("gb28181 track config changed stream {}", stream_id_);
             return -1;
         }
         return 0;

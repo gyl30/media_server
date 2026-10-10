@@ -53,21 +53,21 @@ void release_session(state& current, const whep_session& expected)
 
 }    // namespace
 
-create_result create(worker_context& worker, std::string_view stream_name, std::string_view offer_sdp, const config& application_config)
+create_result create(worker_context& worker, std::string_view stream_id, std::string_view offer_sdp, const config& application_config)
 {
-    spdlog::debug("whep create stream {} offer_bytes {}", stream_name, offer_sdp.size());
+    spdlog::debug("whep create stream {} offer_bytes {}", stream_id, offer_sdp.size());
 
-    auto stream = stream_registry::instance().find(stream_name);
+    auto stream = stream_registry::instance().find(stream_id);
     if (!stream)
     {
-        spdlog::debug("whep create stream not found {}", stream_name);
+        spdlog::debug("whep create stream not found {}", stream_id);
         return failed(create_error::stream_not_found);
     }
 
     auto offer = parse_webrtc_offer(offer_sdp);
     if (!offer)
     {
-        spdlog::debug("whep create invalid offer stream {}", stream_name);
+        spdlog::debug("whep create invalid offer stream {}", stream_id);
         return failed(create_error::invalid_offer);
     }
 
@@ -86,7 +86,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(create_error::internal_error);
     }
 
-    spdlog::debug("whep offer parsed stream {} media_count {} bundle_mid_count {}", stream_name, offer->media.size(), offer->bundle_mids.size());
+    spdlog::debug("whep offer parsed stream {} media_count {} bundle_mid_count {}", stream_id, offer->media.size(), offer->bundle_mids.size());
     for (const auto& media : offer->media)
     {
         spdlog::trace("whep offer media type {} mid {} direction {} protocol {} rtcp_mux {} payload_count {} codec_count {}",
@@ -134,7 +134,7 @@ create_result create(worker_context& worker, std::string_view stream_name, std::
         return failed(answer_sdp.error() == whep_session_startup_error::invalid_offer ? create_error::invalid_offer : create_error::internal_error);
     }
 
-    spdlog::info("whep session created {} stream {}", session_id, stream_name);
+    spdlog::info("whep session created {} stream {}", session_id, stream_id);
     return {.error = create_error::none, .session_id = session_id, .answer_sdp = std::move(*answer_sdp)};
 }
 

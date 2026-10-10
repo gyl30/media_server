@@ -30,12 +30,21 @@ func requestPlay(t *testing.T, handler http.Handler) testPlayResponse {
 func TestChannelPlayTicketsAreIndependentAndSingleUse(t *testing.T) {
 	s := testInfrastructure(t)
 	var creates, offers atomic.Int32
+	var streamID atomic.Value
+	streamID.Store("")
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
+			var command struct {
+				StreamID string `json:"stream_id"`
+			}
+			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+				t.Errorf("invalid receiver create body: %v", err)
+			}
+			streamID.Store(command.StreamID)
 			creates.Add(1)
 			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
-		case "/play/whep/gb/34020000001320000001/34020000001320000002":
+		case "/play/whep/" + streamID.Load().(string):
 			offers.Add(1)
 			writer.Header().Set("Content-Type", "application/sdp")
 			writer.Header().Set("Location", "/play/whep/session/viewer")
@@ -138,7 +147,7 @@ func TestLiveStopWaitsForConsumedOffer(t *testing.T) {
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
 			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
-		case "/gb28181/receiver/delete":
+		case "/receivers/delete":
 			deletes.Add(1)
 			writer.WriteHeader(http.StatusNoContent)
 		default:
@@ -212,7 +221,7 @@ func TestPlayExpiryFailureAndStop(t *testing.T) {
 		switch request.URL.Path {
 		case "/gb28181/receiver/create":
 			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
-		case "/gb28181/receiver/delete":
+		case "/receivers/delete":
 			writer.WriteHeader(http.StatusNoContent)
 		default:
 			offers.Add(1)

@@ -11,10 +11,10 @@
 
 namespace media_server
 {
-media_stream::media_stream(std::string name, worker_context& worker) : name_(std::move(name)), worker_(worker), dispatcher_(worker) {}
+media_stream::media_stream(std::string stream_id, worker_context& worker) : stream_id_(std::move(stream_id)), worker_(worker), dispatcher_(worker) {}
 media_stream::~media_stream() = default;
 
-const std::string& media_stream::name() const noexcept { return name_; }
+const std::string& media_stream::stream_id() const noexcept { return stream_id_; }
 worker_context& media_stream::worker() const noexcept { return worker_; }
 const std::vector<media_track>& media_stream::tracks() const noexcept { return tracks_; }
 

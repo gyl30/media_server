@@ -113,7 +113,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     }
 
     spdlog::info("gb28181 udp sender started stream {} local_rtp_port {} local_rtcp_port {} remote_rtp {}:{} remote_rtcp {}:{} rtcp {}",
-                 stream_->name(),
+                 stream_->stream_id(),
                  *local_port_,
                  *local_port_ + 1U,
                  remote_rtp_endpoint_.address().to_string(),
@@ -167,7 +167,7 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
     if (!rtp_transport_->write(std::span<const std::uint8_t>{packet}, remote_rtp_endpoint_))
     {
-        spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->name(), sender_id_);
+        spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);
         return;
     }
     if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
@@ -192,7 +192,7 @@ void gb28181_udp_sender_session::safe_shutdown()
     }
     auto stream = std::move(stream_);
     shutdown_subscription_.reset();
-    session_registry::instance().remove_sender_session(stream->name(), sender_id_, *this);
+    session_registry::instance().remove_sender_session(stream->stream_id(), sender_id_, *this);
     rtcp_timer_.cancel();
     if (sender_)
     {
@@ -211,7 +211,7 @@ void gb28181_udp_sender_session::safe_shutdown()
         rtp_destroy(rtcp_sender_);
         rtcp_sender_ = nullptr;
     }
-    spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream->name(), sender_id_);
+    spdlog::debug("gb28181 udp sender shutdown {} sender {}", stream->stream_id(), sender_id_);
 }
 
 }    // namespace media_server

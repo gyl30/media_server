@@ -37,7 +37,7 @@ struct rtsp_pull_track_description
 class rtsp_pull_media final
 {
    public:
-    rtsp_pull_media(worker_context& worker, std::string media_stream_name);
+    rtsp_pull_media(worker_context& worker, std::string media_stream_id);
 
    public:
     [[nodiscard]] bool startup(std::vector<rtsp_pull_track_description> descriptions);
@@ -56,7 +56,7 @@ class rtsp_pull_media final
 
    private:
     worker_context& worker_;
-    std::string media_stream_name_;
+    std::string media_stream_id_;
     std::vector<rtsp_demuxer_t*> demuxers_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};

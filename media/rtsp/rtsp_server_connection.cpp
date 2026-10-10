@@ -334,17 +334,17 @@ bool rtsp_server_connection::admit_play(std::string_view uri, bool track_uri)
     }
     if (track_uri)
     {
-        const auto separator = target->stream_name.rfind('/');
+        const auto separator = target->stream_id.rfind('/');
         if (separator == std::string::npos || separator == 0)
         {
             return false;
         }
-        target->stream_name.resize(separator);
+        target->stream_id.resize(separator);
     }
 
     const auto owner = shared_from_this();
     play_session_ = std::make_shared<rtsp_play_session>(worker_,
-                                                        std::move(target->stream_name),
+                                                        std::move(target->stream_id),
                                                         local_address_,
                                                         [owner](std::vector<std::uint8_t> data) { owner->transport_->write(std::move(data)); });
     play_session_->set_shutdown_handler([owner]() { owner->shutdown(); });
