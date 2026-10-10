@@ -157,16 +157,20 @@ void gb28181_rtp_receiver::stream_callback(void* param, int stream, int codecid,
 void gb28181_rtp_receiver::on_stream(int codecid)
 {
     const auto codec = codec_from_ps(codecid);
-    if (!codec && mpeg_stream_type_audio(codecid) != 0)
+    if (!codec)
     {
-        // 不支持的音频按无音频处理，视频照常输出。
-        pending_topology_.unsupported_audio = true;
+        if (mpeg_stream_type_audio(codecid) != 0)
+        {
+            // 不支持的音频按无音频处理，视频照常输出。
+            pending_topology_.unsupported_audio = true;
+        }
+        else
+        {
+            pending_topology_.invalid = true;
+        }
+        return;
     }
-    else if (!codec)
-    {
-        pending_topology_.invalid = true;
-    }
-    else if (is_video(*codec))
+    if (is_video(*codec))
     {
         if (pending_topology_.video)
         {
@@ -176,18 +180,14 @@ void gb28181_rtp_receiver::on_stream(int codecid)
         {
             pending_topology_.video = *codec;
         }
+        return;
     }
-    else
+    if (pending_topology_.audio)
     {
-        if (pending_topology_.audio)
-        {
-            pending_topology_.invalid = true;
-        }
-        else
-        {
-            pending_topology_.audio = *codec;
-        }
+        pending_topology_.invalid = true;
+        return;
     }
+    pending_topology_.audio = *codec;
 }
 
 bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
