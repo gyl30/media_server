@@ -48,15 +48,11 @@ bool gb28181_rtp_sender::startup(std::uint8_t payload_type, std::uint32_t ssrc)
     boost::asio::post(source->worker().io(),
                       [self, source]()
                       {
-                          if (self->shutdown_requested_.load(std::memory_order_acquire))
-                          {
-                              return;
-                          }
                           auto output = source->ps_output();
                           boost::asio::post(self->worker_.io(),
-                                            [self, source, output = std::move(output)]()
+                                            [self, output = std::move(output)]()
                                             {
-                                                if (self->shutdown_requested_.load(std::memory_order_acquire))
+                                                if (!self->stream_)
                                                 {
                                                     return;
                                                 }
@@ -74,21 +70,13 @@ bool gb28181_rtp_sender::startup(std::uint8_t payload_type, std::uint32_t ssrc)
 
 void gb28181_rtp_sender::shutdown()
 {
-    if (shutdown_requested_.exchange(true, std::memory_order_acq_rel))
-    {
-        return;
-    }
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire))
-    {
-        return;
-    }
-    if (!frame.payload)
+    if (!stream_ || !frame.payload)
     {
         return;
     }
@@ -121,7 +109,7 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
 
 void gb28181_rtp_sender::on_end()
 {
-    if (!shutdown_requested_.load(std::memory_order_acquire))
+    if (stream_)
     {
         end_handler_();
     }

@@ -165,6 +165,10 @@ void gb28181_udp_sender_session::schedule_rtcp()
 
 void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
+    if (!stream_)
+    {
+        return;
+    }
     if (!rtp_transport_->write(std::span<const std::uint8_t>{packet}, remote_rtp_endpoint_))
     {
         spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);

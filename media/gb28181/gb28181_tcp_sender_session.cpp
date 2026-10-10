@@ -124,6 +124,10 @@ void gb28181_tcp_sender_session::shutdown()
 
 void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
 {
+    if (!stream_)
+    {
+        return;
+    }
     const auto length = static_cast<std::uint16_t>(packet.size());
     std::vector<std::uint8_t> frame(packet.size() + 2U);
     frame[0] = static_cast<std::uint8_t>(length >> 8U);
