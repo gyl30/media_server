@@ -98,37 +98,37 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
         return true;
     }
     auto* demuxer = demuxers_[track_index];
-    if (demuxer != nullptr)
+    if (demuxer == nullptr)
     {
-        const auto result = rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size()));
-        if (result == RTCP_SR)
-        {
-            std::uint32_t ntp_msw{};
-            std::uint32_t ntp_lsw{};
-            std::uint32_t rtp_timestamp{};
-            std::int64_t pts{};
-            if (rtsp_demuxer_sender_report(demuxer, &ntp_msw, &ntp_lsw, &rtp_timestamp, &pts) == 0)
-            {
-                const auto ntp = (static_cast<std::uint64_t>(ntp_msw) << 32U) | ntp_lsw;
-                if (!rtcp_sync_)
-                {
-                    rtcp_sync_ = rtcp_sync{.ntp = ntp, .pts = pts};
-                }
-                else
-                {
-                    constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
-                    // NTP is unsigned 32.32 fixed-point; interpret modular subtraction as the signed session-time delta.
-                    const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
-                    pts = rtcp_sync_->pts + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
-                }
-                rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts);
-            }
-        }
-        else if (result < 0)
-        {
-            return false;
-        }
+        return true;
     }
+    const auto result = rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size()));
+    if (result != RTCP_SR)
+    {
+        return result >= 0;
+    }
+
+    std::uint32_t ntp_msw{};
+    std::uint32_t ntp_lsw{};
+    std::uint32_t rtp_timestamp{};
+    std::int64_t pts{};
+    if (rtsp_demuxer_sender_report(demuxer, &ntp_msw, &ntp_lsw, &rtp_timestamp, &pts) != 0)
+    {
+        return true;
+    }
+    const auto ntp = (static_cast<std::uint64_t>(ntp_msw) << 32U) | ntp_lsw;
+    if (!rtcp_sync_)
+    {
+        rtcp_sync_ = rtcp_sync{.ntp = ntp, .pts = pts};
+    }
+    else
+    {
+        constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
+        // NTP is unsigned 32.32 fixed-point; interpret modular subtraction as the signed session-time delta.
+        const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
+        pts = rtcp_sync_->pts + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
+    }
+    rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts);
     return true;
 }
 

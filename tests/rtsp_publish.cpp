@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <exception>
@@ -17,6 +18,7 @@
 #include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_session.h"
+#include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
 
 extern "C"
@@ -313,6 +315,18 @@ int main()
 {
     try
     {
+        const auto aac = rtsp_sdp_track_from_format(
+            "audio", 97, 48'000, "MPEG4-GENERIC",
+            "97 streamtype=5;profile-level-id=1;mode=AAC-hbr;config=1190;SizeLength=13;IndexLength=3;IndexDeltaLength=3", 2);
+        require(aac && aac->codec == codec_id::aac && aac->clock_rate == 48'000 && aac->channel_count == 2 &&
+                    aac->codec_config == std::vector<std::uint8_t>{0x11, 0x90},
+                "valid AAC configuration was not normalized");
+        for (const char* fmtp : std::array<const char*, 5>{nullptr, "97 mode=AAC-hbr", "97 config=119", "97 config=11zz", "97 config=0000"})
+        {
+            require(!rtsp_sdp_track_from_format("audio", 97, 48'000, "MPEG4-GENERIC", fmtp, 2),
+                    "invalid AAC configuration was accepted");
+        }
+        std::cout << "RTSP AAC configuration guards: PASS\n";
         media_port_pool::init(24'400, 24'407);
         for (const auto* scenario :
              {"relative", "content_base", "content_location", "absolute", "invalid_sdp", "udp_one", "udp_two", "udp_duplicate", "udp_incomplete"})
