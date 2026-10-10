@@ -52,7 +52,7 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer,
                 return;
             }
             const auto locked = weak.lock();
-            if (!locked || locked->shutdown_requested_.load(std::memory_order_acquire))
+            if (!locked || locked->local_port_ == 0)
             {
                 return;
             }
@@ -138,17 +138,17 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer,
 
 void whep_session::shutdown()
 {
-    if (shutdown_requested_.exchange(true, std::memory_order_acq_rel))
-    {
-        return;
-    }
-    stream_->remove_sink(this);
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void whep_session::safe_shutdown()
 {
+    if (!stream_)
+    {
+        return;
+    }
+    stream_->remove_sink(this);
     dtls_.reset();
     remote_endpoint_.reset();
     remote_ice_ufrag_.clear();
@@ -161,8 +161,11 @@ void whep_session::safe_shutdown()
     establishment_timer_.cancel();
     ice_activity_timer_.cancel();
     udp_transport_->shutdown();
-    media_port_pool::instance().release(local_port_);
-    local_port_ = 0;
+    if (local_port_ != 0)
+    {
+        media_port_pool::instance().release(local_port_);
+        local_port_ = 0;
+    }
 
     spdlog::info("webrtc whep session shutdown {}", id_);
 }
@@ -171,7 +174,7 @@ const std::string& whep_session::id() const noexcept { return id_; }
 
 void whep_session::on_frame(const media_frame& frame)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || !srtp_)
+    if (!srtp_)
     {
         return;
     }
@@ -191,6 +194,10 @@ void whep_session::on_frame(const media_frame& frame)
 
 void whep_session::on_end()
 {
+    if (!stream_)
+    {
+        return;
+    }
     spdlog::info("webrtc source stream ended session {}", id_);
     shutdown();
 }
@@ -218,7 +225,7 @@ void whep_session::run_udp(boost::asio::yield_context yield)
 
 void whep_session::handle_packet(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || packet.empty())
+    if (local_port_ == 0 || packet.empty())
     {
         return;
     }
@@ -417,7 +424,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet)
 
 void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || packet.empty())
+    if (local_port_ == 0 || packet.empty())
     {
         return;
     }
@@ -429,7 +436,7 @@ void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::u
 
 void whep_session::schedule_dtls_timeout()
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || dtls_->connected())
+    if (!dtls_ || dtls_->connected())
     {
         return;
     }
@@ -455,7 +462,7 @@ void whep_session::schedule_dtls_timeout()
 
 void whep_session::handle_dtls_timeout()
 {
-    if (shutdown_requested_.load(std::memory_order_acquire) || dtls_->connected())
+    if (!dtls_ || dtls_->connected())
     {
         return;
     }
@@ -477,7 +484,7 @@ void whep_session::startup_establishment_timeout()
     establishment_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || self->srtp_)
+            if (error || self->local_port_ == 0 || self->srtp_)
             {
                 return;
             }
@@ -494,7 +501,7 @@ void whep_session::refresh_ice_activity_timeout()
     ice_activity_timer_.async_wait(
         [self](boost::system::error_code error)
         {
-            if (error || self->shutdown_requested_.load(std::memory_order_acquire) || !self->remote_endpoint_.has_value())
+            if (error || !self->remote_endpoint_.has_value())
             {
                 return;
             }

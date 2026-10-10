@@ -1,7 +1,6 @@
 #ifndef MEDIA_WEBRTC_WHEP_SESSION_H
 #define MEDIA_WEBRTC_WHEP_SESSION_H
 
-#include <atomic>
 #include <span>
 #include <memory>
 #include <string>
@@ -82,7 +81,6 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     std::string ice_ufrag_;
     std::string ice_pwd_;
     std::string remote_ice_ufrag_;
-    std::atomic_bool shutdown_requested_{};
 };
 
 }    // namespace media_server
