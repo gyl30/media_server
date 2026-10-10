@@ -57,13 +57,28 @@ void admission(bool publishing, const std::string& scenario)
     const auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "test certificate failed");
     const auto mid = std::string("0");
-    const auto offer = std::string("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE ") + mid + "\r\n" +
+    auto offer = std::string("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE ") + mid + "\r\n" +
         (publishing ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n" : "m=audio 9 UDP/TLS/RTP/SAVPF 8\r\n") +
         "c=IN IP4 0.0.0.0\r\na=mid:" + mid + "\r\na=rtcp-mux\r\na=setup:actpass\r\n"
         "a=ice-ufrag:test-remote\r\na=ice-pwd:test-remote-password\r\na=fingerprint:sha-256 " + certificate->sha256_fingerprint() + "\r\n"
         "a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n" +
         (publishing ? "a=sendonly\r\na=rtpmap:102 H264/90000\r\na=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n" :
                       "a=recvonly\r\na=rtpmap:8 PCMA/8000\r\n");
+    if (scenario == "unsupported_offer")
+    {
+        const auto direction = publishing ? "a=sendonly" : "a=recvonly";
+        offer.replace(offer.find(direction), std::string_view(direction).size(), "a=inactive");
+    }
+    if (scenario == "missing_ice")
+    {
+        const std::string ice = "a=ice-pwd:test-remote-password\r\n";
+        offer.erase(offer.find(ice), ice.size());
+    }
+    if (scenario == "invalid_fingerprint")
+    {
+        const auto fingerprint = certificate->sha256_fingerprint();
+        offer.replace(offer.find(fingerprint), fingerprint.size(), "invalid");
+    }
     auto source = std::make_shared<media_stream>(stream_id, worker);
     auto track = media_track{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
                              .clock_rate = 8'000U, .channel_count = 1, .codec_config = {}};
@@ -100,6 +115,8 @@ void admission(bool publishing, const std::string& scenario)
         http::async_read(socket, buffer, request, yield[error]);
         require(!error && request.target() == "/internal/verify", "invalid verification request");
         ++verify_requests;
+        require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
+                "WHIP registered before authorization completed");
         const auto body = boost::json::parse(request.body()).as_object();
         require(body.at("token").as_string() == token && body.at("stream_id").as_string() == stream_id &&
                 body.at("operation").as_string() == (publishing ? "publish" : "play"), "verification identity changed");
@@ -152,6 +169,10 @@ void admission(bool publishing, const std::string& scenario)
         http::status expected = http::status::created;
         if (scenario == "invalid_path" || scenario == "reserved_path") expected = http::status::not_found;
         if (scenario == "query" || scenario == "invalid_offer" || scenario == "normalized_path" || scenario == "encoded_path") expected = http::status::bad_request;
+        if (scenario == "unsupported_offer" || scenario == "missing_ice" || scenario == "invalid_fingerprint")
+        {
+            expected = http::status::bad_request;
+        }
         if (scenario == "missing_source") expected = http::status::conflict;
         if (scenario == "transport_failure") expected = http::status::internal_server_error;
         if (scenario == "rejected" || scenario == "closed_http") expected = http::status::forbidden;
@@ -162,7 +183,8 @@ void admission(bool publishing, const std::string& scenario)
         }
         const bool precheck_failed = scenario == "invalid_path" || scenario == "query" || scenario == "invalid_offer" ||
             scenario == "normalized_path" || scenario == "encoded_path" || scenario == "reserved_path" ||
-            scenario == "missing_source" || scenario == "transport_failure";
+            scenario == "missing_source" || scenario == "transport_failure" || scenario == "unsupported_offer" ||
+            scenario == "missing_ice" || scenario == "invalid_fingerprint";
         require(verify_requests == (precheck_failed ? 0U : 1U), "precheck consumed authorization or verification missing");
         if (expected == http::status::created)
         {
@@ -251,11 +273,11 @@ int main(int argc, char** argv)
             return 0;
         }
         require(argc == 1, "unexpected test argument");
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "replacement", "establishment_timeout"})
         {
             admission(false, scenario);
         }
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "rejected", "closed_http", "accepted", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "transport_failure", "rejected", "closed_http", "accepted", "establishment_timeout"})
         {
             admission(true, scenario);
         }

@@ -4,7 +4,6 @@
 #include <utility>
 #include <algorithm>
 
-#include <openssl/rand.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
@@ -24,92 +23,29 @@ namespace
 constexpr auto establishment_timeout = std::chrono::seconds{15};
 constexpr auto ice_activity_timeout = std::chrono::seconds{30};
 
-std::string random_hex(std::size_t byte_count)
-{
-    std::vector<unsigned char> bytes(byte_count);
-    if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1)
-    {
-        return {};
-    }
-
-    constexpr char digits[] = "0123456789abcdef";
-    std::string result(bytes.size() * 2U, '\0');
-    for (std::size_t index = 0; index < bytes.size(); ++index)
-    {
-        result[index * 2U] = digits[bytes[index] >> 4U];
-        result[index * 2U + 1U] = digits[bytes[index] & 0x0FU];
-    }
-    return result;
-}
-
 bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U && packet[1] >= 192U && packet[1] <= 223U; }
 
 }    // namespace
 
-whip_session::whip_session(worker_context& worker, std::string stream_id)
+whip_session::whip_session(worker_context& worker, std::string stream_id,
+                           std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
     : worker_(worker),
       stream_id_(std::move(stream_id)),
-      udp_transport_(std::make_shared<udp_transport>(worker_.io())),
+      udp_transport_(std::move(transport)),
       dtls_timer_(worker_.io()),
       establishment_timer_(worker_.io()),
-      ice_activity_timer_(worker_.io())
+      ice_activity_timer_(worker_.io()),
+      local_port_(config.port),
+      id_(std::move(config.stream_id)),
+      ice_ufrag_(std::move(config.ice_ufrag)),
+      ice_pwd_(std::move(config.ice_pwd))
 {
 }
 
-std::expected<std::string, whip_session_startup_error> whip_session::startup(webrtc_offer offer,
-                                                 boost::asio::ip::address advertised_address,
-                                                 std::shared_ptr<dtls_certificate> certificate)
+bool whip_session::startup(const webrtc_media_offer& transport_offer,
+                           const webrtc_answer& answer, const dtls_certificate& certificate)
 {
-    // 失败直接返回，由创建方调用 shutdown 统一清理已取得的端口和 socket。
-    const auto reserved = media_port_pool::instance().acquire();
-    if (!reserved)
-    {
-        spdlog::error("webrtc udp socket startup failed: no available media port");
-        return std::unexpected(whip_session_startup_error::internal_error);
-    }
-    local_port_ = *reserved;
-    boost::system::error_code udp_error;
-    udp_transport_->startup(advertised_address, local_port_, udp_error);
-    if (udp_error)
-    {
-        spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());
-        return std::unexpected(whip_session_startup_error::internal_error);
-    }
-
-    id_ = random_hex(16);
-    ice_ufrag_ = random_hex(8);
-    ice_pwd_ = random_hex(16);
-    if (id_.empty() || ice_ufrag_.empty() || ice_pwd_.empty())
-    {
-        spdlog::error("webrtc session identifiers create failed");
-        return std::unexpected(whip_session_startup_error::internal_error);
-    }
-
-    auto answer = make_whip_answer(offer,
-                                   webrtc_answer_config{
-                                       .address = advertised_address,
-                                       .port = local_port_,
-                                       .stream_id = {},
-                                       .ice_ufrag = ice_ufrag_,
-                                       .ice_pwd = ice_pwd_,
-                                       .fingerprint = certificate->sha256_fingerprint(),
-                                   });
-    if (!answer)
-    {
-        spdlog::debug("webrtc whip answer create failed session {}", id_);
-        return std::unexpected(whip_session_startup_error::invalid_offer);
-    }
-
-    const auto media = std::find_if(
-        offer.media.begin(), offer.media.end(), [&answer](const webrtc_media_offer& value) { return value.mid == answer->transport_mid; });
-    if (media == offer.media.end() || media->ice_ufrag.empty() || media->ice_pwd.empty() ||
-        !dtls_transport::valid_sha256_fingerprint(media->fingerprint))
-    {
-        spdlog::debug("webrtc whip startup rejected invalid transport attributes");
-        return std::unexpected(whip_session_startup_error::invalid_offer);
-    }
-
-    remote_ice_ufrag_ = media->ice_ufrag;
+    remote_ice_ufrag_ = transport_offer.ice_ufrag;
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
         [weak = weak_from_this()](boost::system::error_code error, std::size_t)
@@ -129,35 +65,29 @@ std::expected<std::string, whip_session_startup_error> whip_session::startup(web
             }
             locked->shutdown();
         });
-    dtls_ = std::make_unique<dtls_transport>(media->fingerprint,
+    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
-    if (!dtls_->startup(*certificate))
+    if (!dtls_->startup(certificate))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
-        return std::unexpected(whip_session_startup_error::internal_error);
+        return false;
     }
 
     media_receiver_ = std::make_unique<whip_media_receiver>(worker_, stream_id_);
     if (!media_receiver_->startup(whip_media_receiver_config{
-            .video_codec = *answer->video_codec,
-            .video_payload_type = *answer->video_payload_type,
-            .audio_payload_type = answer->audio_payload_type.value_or(-1),
-            .audio_channel_count = static_cast<std::uint16_t>(answer->audio_channel_count.value_or(2)),
+            .video_codec = *answer.video_codec,
+            .video_payload_type = *answer.video_payload_type,
+            .audio_payload_type = answer.audio_payload_type.value_or(-1),
+            .audio_channel_count = static_cast<std::uint16_t>(answer.audio_channel_count.value_or(2)),
         }))
     {
-        return std::unexpected(whip_session_startup_error::internal_error);
+        return false;
     }
-    spdlog::debug("webrtc whip session prepared {} stream {} candidate {} {}", id_, stream_id_, advertised_address.to_string(), local_port_);
-    return std::move(answer->sdp);
-}
-
-void whip_session::activate()
-{
-    const auto self = shared_from_this();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     startup_establishment_timeout();
     spdlog::info("webrtc whip session started {} stream {}", id_, stream_id_);
+    return true;
 }
 
 void whip_session::shutdown()

@@ -16,7 +16,6 @@
 #include "media/gb28181/gb28181_udp_receiver_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 #include "media/webrtc/whep_session.h"
-#include "media/webrtc/whip_session.h"
 #include "media/rtsp/rtsp_publish_session.h"
 
 extern "C"
@@ -188,12 +187,6 @@ void bind_failure()
                 "WHEP continued to negotiation after bind failure");
         // shutdown 投递到 io，执行清理后端口才归还。
         whep->shutdown();
-        worker.io().poll();
-        auto whip = std::make_shared<whip_session>(worker, "verify/webrtc-port-conflict");
-        const auto whip_result = whip->startup({}, address, certificate);
-        require(!whip_result && whip_result.error() == whip_session_startup_error::internal_error,
-                "WHIP continued to negotiation after bind failure");
-        whip->shutdown();
         worker.io().poll();
         const auto first = pool.acquire();
         const auto second = pool.acquire();
