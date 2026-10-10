@@ -64,14 +64,28 @@ void stopped_start(std::string_view protocol, std::string_view phase)
         auto connection = std::make_shared<rtmp_session>(worker, std::move(socket), application_config);
         lifetime = connection;
         connection->startup();
+        if (phase == "queued_shutdown")
+        {
+            connection->shutdown();
+            connection->shutdown();
+        }
     }
     else
     {
         auto connection = std::make_shared<rtsp_server_connection>(worker, std::move(socket), application_config);
         lifetime = connection;
         connection->startup();
+        if (phase == "queued_shutdown")
+        {
+            connection->shutdown();
+            connection->shutdown();
+        }
     }
-    if (phase == "active_read")
+    if (phase == "queued_shutdown")
+    {
+        worker.io().poll();
+    }
+    else if (phase == "active_read")
     {
         require(worker.io().poll() != 0 && !lifetime.expired(), "protocol read did not retain its running session");
     }
@@ -95,9 +109,10 @@ int main(int argc, char** argv)
     {
         if (argc != 3 || (std::string_view(argv[1]) != "rtmp" && std::string_view(argv[1]) != "rtsp") ||
             (std::string_view(argv[2]) != "before_start" && std::string_view(argv[2]) != "queued_start" &&
+             std::string_view(argv[2]) != "queued_shutdown" &&
              std::string_view(argv[2]) != "active_read"))
         {
-            throw std::runtime_error("usage: session_start_stop_tests rtmp|rtsp before_start|queued_start|active_read");
+            throw std::runtime_error("usage: session_start_stop_tests rtmp|rtsp before_start|queued_start|queued_shutdown|active_read");
         }
         stopped_start(argv[1], argv[2]);
         return 0;
