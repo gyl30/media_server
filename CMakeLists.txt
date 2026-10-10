@@ -375,6 +375,15 @@ if(BUILD_TESTING)
     add_test(NAME http_flv_auth COMMAND http_flv_auth_tests)
     set_tests_properties(http_flv_auth PROPERTIES TIMEOUT 40)
 
+    add_executable(protocol_play_auth_tests tests/protocol_play_auth.cpp)
+    target_link_libraries(protocol_play_auth_tests PRIVATE media_core media_server_link_options)
+    target_link_options(protocol_play_auth_tests PRIVATE
+        -Wl,--wrap=flv_muxer_create -Wl,--wrap=flv_muxer_destroy
+        -Wl,--wrap=rtsp_muxer_create -Wl,--wrap=rtsp_muxer_destroy
+        -Wl,--wrap=rtmp_server_start -Wl,--wrap=rtmp_server_send_audio)
+    add_test(NAME rtmp_play_auth COMMAND protocol_play_auth_tests rtmp)
+    set_tests_properties(rtmp_play_auth PROPERTIES TIMEOUT 30)
+
     add_executable(webrtc_auth_tests tests/webrtc_auth.cpp)
     target_link_libraries(webrtc_auth_tests PRIVATE media_core media_server_link_options)
     target_link_options(webrtc_auth_tests PRIVATE -Wl,--wrap=SSL_CTX_new)

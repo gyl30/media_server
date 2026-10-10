@@ -204,6 +204,10 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
     {
         return -1;
     }
+    if (!verify_stream(config_, stream, "play", app, *input_yield_) || !transport_)
+    {
+        return -1;
+    }
 
     const auto self = shared_from_this();
     auto player = std::make_shared<rtmp_play_session>(
@@ -222,7 +226,7 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
             return 0;
         },
         [self]() { self->shutdown(); });
-    if (!player->prepare() || !verify_stream(config_, stream, "play", app, *input_yield_) || !transport_)
+    if (!player->prepare())
     {
         player->shutdown();
         return -1;
