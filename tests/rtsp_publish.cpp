@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <boost/scope/scope_exit.hpp>
+#include <boost/asio/post.hpp>
 #include <boost/asio/ip/udp.hpp>
 
 #include "media/core/stream_registry.h"
@@ -46,6 +47,7 @@ struct publish_context
     std::shared_ptr<rtsp_publish_session> publisher;
     std::vector<std::string> replies;
     std::exception_ptr error;
+    std::weak_ptr<int> input_lifetime;
     unsigned announce_calls{};
 };
 
@@ -53,7 +55,8 @@ void content_urls(const std::string& scenario)
 {
     const bool udp = scenario.starts_with("udp_");
     worker_context worker;
-    publish_context context{.worker = worker, .stream_id = std::string(64, 'a'), .request_uri = {}, .publisher = {}, .replies = {}, .error = {}};
+    publish_context context{
+        .worker = worker, .stream_id = std::string(64, 'a'), .request_uri = {}, .publisher = {}, .replies = {}, .error = {}, .input_lifetime = {}};
     context.request_uri = "rtsp://127.0.0.1:8554/" + context.stream_id;
     std::vector<std::unique_ptr<boost::asio::ip::udp::socket>> rtp_clients;
     std::vector<std::unique_ptr<boost::asio::ip::udp::socket>> rtcp_clients;
@@ -73,8 +76,14 @@ void content_urls(const std::string& scenario)
             require(uri != nullptr && uri == current.request_uri, "ANNOUNCE request URI changed");
             const auto target = parse_rtsp_target(uri);
             require(target && target->stream_id == current.stream_id, "ANNOUNCE target identity changed");
+            const auto input_owner = std::make_shared<int>(0);
+            current.input_lifetime = input_owner;
             current.publisher = std::make_shared<rtsp_publish_session>(
-                current.worker, target->stream_id, boost::asio::ip::address_v4::loopback(), [](std::span<const std::uint8_t>) {}, []() {});
+                current.worker,
+                target->stream_id,
+                boost::asio::ip::address_v4::loopback(),
+                [](std::span<const std::uint8_t>) {},
+                [input_owner]() { ++*input_owner; });
             if (!current.publisher->on_announce(server, uri, sdp, bytes))
             {
                 return -1;
@@ -274,7 +283,20 @@ void content_urls(const std::string& scenario)
                 }
             }
             const std::weak_ptr<rtsp_publish_session> lifetime = context.publisher;
+            bool parent_cleanup_observed{};
             context.publisher->shutdown();
+            boost::asio::post(
+                worker.io(),
+                [&]()
+                {
+                    const auto parent = lifetime.lock();
+                    require(parent != nullptr, "UDP child did not retain publisher until child cleanup");
+                    require(parent->stream_id().empty(), "publisher cleanup did not precede child cleanup");
+                    require(!context.input_lifetime.expired(), "UDP child released input callback before child cleanup");
+                    parent->shutdown();
+                    parent->shutdown();
+                    parent_cleanup_observed = true;
+                });
             context.publisher.reset();
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while ((!lifetime.expired() || stream_registry::instance().find(context.stream_id)) && std::chrono::steady_clock::now() < deadline)
@@ -282,6 +304,8 @@ void content_urls(const std::string& scenario)
                 worker.io().run_one_for(std::chrono::milliseconds(20));
             }
             require(lifetime.expired(), "UDP publisher remained after shutdown");
+            require(parent_cleanup_observed, "publisher cleanup ordering was not observed");
+            require(context.input_lifetime.expired(), "UDP shutdown retained input callback owner");
             require(!stream_registry::instance().find(context.stream_id), "shutdown retained registered source");
             worker.request_stop();
             while (!worker.io().stopped() && std::chrono::steady_clock::now() < deadline)

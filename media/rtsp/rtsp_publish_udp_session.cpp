@@ -57,6 +57,10 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
             }
             return;
         }
+        if (!track_states_[track_index].local_port)
+        {
+            return;
+        }
         input_handler_();
         if (bytes < 12)
         {
@@ -157,22 +161,21 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
 
     const auto self = shared_from_this();
     state.rtcp_transport->set_write_callback(
-        [weak = weak_from_this(), track_index](boost::system::error_code error, std::size_t)
+        [self, track_index](boost::system::error_code error, std::size_t)
         {
-            const auto locked = weak.lock();
-            if (!locked || !locked->track_states_[track_index].local_port)
+            if (!self->track_states_[track_index].local_port)
             {
                 return;
             }
             if (error)
             {
-                if (error != boost::asio::error::operation_aborted && locked->shutdown_handler_)
+                if (error != boost::asio::error::operation_aborted && self->shutdown_handler_)
                 {
-                    locked->shutdown_handler_();
+                    self->shutdown_handler_();
                 }
                 return;
             }
-            locked->send_rtcp(track_index + 1U);
+            self->send_rtcp(track_index + 1U);
         });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); });
@@ -253,6 +256,7 @@ void rtsp_publish_udp_session::safe_shutdown()
     rtcp_timer_.cancel();
     media_.shutdown();
     shutdown_handler_ = {};
+    input_handler_ = {};
     for (auto& state : track_states_)
     {
         if (state.rtp_transport)

@@ -36,16 +36,19 @@ rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::as
 void rtsp_server_connection::startup()
 {
     const auto self = shared_from_this();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
+}
+
+void rtsp_server_connection::run(boost::asio::yield_context yield)
+{
+    const auto self = shared_from_this();
     transport_->set_write_callback(
-        [weak = std::weak_ptr<rtsp_server_connection>(self)](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
             if (error)
             {
-                if (const auto owner = weak.lock())
-                {
-                    spdlog::debug("rtsp write failed: {}", error.message());
-                    owner->shutdown();
-                }
+                spdlog::debug("rtsp write failed: {}", error.message());
+                self->shutdown();
             }
         });
     // 收到数据即刷新（UDP 推流由 UDP 会话收到 RTP 时刷新）；播放连接停止计时。
@@ -55,11 +58,6 @@ void rtsp_server_connection::startup()
                           spdlog::info("rtsp input idle timeout");
                           shutdown();
                       });
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
-}
-
-void rtsp_server_connection::run(boost::asio::yield_context yield)
-{
     boost::system::error_code endpoint_error;
     const auto peer = transport_->remote_endpoint(endpoint_error);
     if (endpoint_error)
@@ -310,12 +308,9 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
                     owner->transport_->write(data);
                 }
             },
-            [weak = std::weak_ptr<rtsp_server_connection>(owner)]()
+            [owner]()
             {
-                if (const auto locked = weak.lock())
-                {
-                    locked->idle_timer_.touch();
-                }
+                owner->idle_timer_.touch();
             });
         publish->set_shutdown_handler([owner]() { owner->shutdown(); });
         if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))

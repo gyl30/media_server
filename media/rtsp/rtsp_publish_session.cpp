@@ -225,9 +225,9 @@ int rtsp_publish_session::on_setup(
 
     udp_session_ = std::make_shared<rtsp_publish_udp_session>(worker_, bind_address_, stream_id_, descriptions_, input_handler_);
     udp_session_->set_shutdown_handler(
-        [this]()
+        [self = shared_from_this()]()
         {
-            auto handler = std::move(shutdown_handler_);
+            auto handler = std::move(self->shutdown_handler_);
             if (!handler)
             {
                 return;
@@ -371,8 +371,6 @@ void rtsp_publish_session::safe_shutdown()
     tcp_track_states_.clear();
     if (udp_session_)
     {
-        // 子会话的回调捕获本对象裸指针，投递关闭前先解除，避免本对象释放后仍被回调。
-        udp_session_->set_shutdown_handler({});
         udp_session_->shutdown();
         udp_session_.reset();
     }
@@ -380,6 +378,7 @@ void rtsp_publish_session::safe_shutdown()
     stream_id_.clear();
     write_handler_ = {};
     shutdown_handler_ = {};
+    input_handler_ = {};
 }
 
 }    // namespace media_server

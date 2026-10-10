@@ -205,13 +205,13 @@ bool rtsp_play_session::on_interleaved(std::uint8_t channel, std::span<const std
 
 void rtsp_play_session::shutdown()
 {
-    playing_ = false;
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
 void rtsp_play_session::safe_shutdown()
 {
+    playing_ = false;
     if (stream_)
     {
         stream_->remove_sink(this);

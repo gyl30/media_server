@@ -254,14 +254,11 @@ void rtsp_pull_session::run(boost::asio::yield_context yield)
     transport_ = std::make_shared<tcp_transport>(std::move(connect_socket_));
     const auto self = shared_from_this();
     transport_->set_write_callback(
-        [weak = std::weak_ptr<rtsp_pull_session>(self)](boost::system::error_code write_error, std::size_t)
+        [self](boost::system::error_code write_error, std::size_t)
         {
             if (write_error)
             {
-                if (const auto owner = weak.lock())
-                {
-                    owner->shutdown();
-                }
+                self->shutdown();
             }
         });
 
