@@ -7,8 +7,6 @@
 #include <string_view>
 
 #include <spdlog/spdlog.h>
-#include <ada.h>
-#include <charconv>
 #include <boost/asio/post.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -82,16 +80,9 @@ bool should_setup_media(rtsp_client_t* client, int media)
 
 }    // namespace
 
-rtsp_pull_session::rtsp_pull_session(worker_context& worker,
-                                     std::string stream_id,
-                                     std::string url,
-                                     std::string username,
-                                     std::string password)
+rtsp_pull_session::rtsp_pull_session(worker_context& worker, rtsp_pull_config config)
     : worker_(worker),
-      stream_id_(std::move(stream_id)),
-      url_(std::move(url)),
-      username_(std::move(username)),
-      password_(std::move(password)),
+      config_(std::move(config)),
       resolver_(worker_.io()),
       connect_socket_(worker_.io()),
       rtcp_timer_(worker_.io()),
@@ -101,28 +92,17 @@ rtsp_pull_session::rtsp_pull_session(worker_context& worker,
 
 rtsp_pull_session::~rtsp_pull_session() = default;
 
-bool rtsp_pull_session::valid_url(std::string_view url) { return parse_url(url).has_value(); }
-
-bool rtsp_pull_session::startup()
+void rtsp_pull_session::startup()
 {
-    const auto parsed = parse_url(url_);
-    if (!parsed)
-    {
-        return false;
-    }
-
-    url_ = parsed->request_url;
-
     const auto self = shared_from_this();
     // 连接、协商和收流都受同一空闲时间约束，上游不再发送 RTP 时结束会话。
     idle_timer_.start(self,
                       [this]()
                       {
-                          spdlog::info("rtsp pull idle timeout {}", stream_id_);
+                          spdlog::info("rtsp pull idle timeout {}", config_.stream_id);
                           shutdown();
                       });
-    worker_.spawn([self, host = parsed->host, port = parsed->port](boost::asio::yield_context yield) { self->run(host, port, yield); });
-    return true;
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
 void rtsp_pull_session::shutdown()
@@ -167,7 +147,7 @@ void rtsp_pull_session::schedule_rtcp()
 void rtsp_pull_session::safe_shutdown()
 {
     idle_timer_.stop();
-    session_registry::instance().remove_receiver_session(stream_id_, *this);
+    session_registry::instance().remove_receiver_session(config_.stream_id, *this);
     if (media_)
     {
         media_->shutdown();
@@ -181,7 +161,7 @@ void rtsp_pull_session::safe_shutdown()
     {
         transport_->shutdown();
     }
-    spdlog::debug("rtsp pull shutdown {}", stream_id_);
+    spdlog::debug("rtsp pull shutdown {}", config_.stream_id);
 }
 
 int rtsp_pull_session::send_callback(void* param, const char*, const void* request, std::size_t bytes)
@@ -244,47 +224,10 @@ void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const vo
     static_cast<rtsp_pull_session*>(param)->on_rtp(channel, data, bytes);
 }
 
-std::optional<rtsp_pull_session::parsed_url> rtsp_pull_session::parse_url(std::string_view url)
-{
-    const auto parsed = ada::parse<ada::url_aggregator>(url);
-    if (!parsed || parsed->get_protocol() != "rtsp:" || parsed->has_credentials())
-    {
-        return std::nullopt;
-    }
-
-    auto host = parsed->get_hostname();
-    if (host.empty())
-    {
-        return std::nullopt;
-    }
-
-    std::uint16_t port = 554;
-    const auto port_text = parsed->get_port();
-    if (!port_text.empty())
-    {
-        const auto [end, error] = std::from_chars(port_text.data(), port_text.data() + port_text.size(), port);
-        if (error != std::errc{} || end != port_text.data() + port_text.size() || port == 0)
-        {
-            return std::nullopt;
-        }
-    }
-    if (host.starts_with('[') && host.ends_with(']'))
-    {
-        host.remove_prefix(1);
-        host.remove_suffix(1);
-    }
-
-    parsed_url result;
-    result.request_url = std::string(parsed->get_href());
-    result.host = std::string(host);
-    result.port = port;
-    return result;
-}
-
-void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::yield_context yield)
+void rtsp_pull_session::run(boost::asio::yield_context yield)
 {
     boost::system::error_code error;
-    const auto endpoints = resolver_.async_resolve(host, std::to_string(port), yield[error]);
+    const auto endpoints = resolver_.async_resolve(config_.host, std::to_string(config_.port), yield[error]);
     if (yield.cancelled() != boost::asio::cancellation_type::none)
     {
         shutdown();
@@ -333,7 +276,8 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
     auto* client = rtsp_client_create(
-        url_.c_str(), username_.empty() ? nullptr : username_.c_str(), username_.empty() ? nullptr : password_.c_str(), &handler, this);
+        config_.url.c_str(), config_.username.empty() ? nullptr : config_.username.c_str(),
+        config_.username.empty() ? nullptr : config_.password.c_str(), &handler, this);
     if (client == nullptr)
     {
         shutdown();
@@ -341,7 +285,7 @@ void rtsp_pull_session::run(std::string host, std::uint16_t port, boost::asio::y
     }
     client_ = client;
 
-    spdlog::info("rtsp pull connected stream {}", stream_id_);
+    spdlog::info("rtsp pull connected stream {}", config_.stream_id);
     run_read(client, yield);
 
     client_ = nullptr;
@@ -375,7 +319,7 @@ void rtsp_pull_session::run_read(rtsp_client_t* client, boost::asio::yield_conte
 
 int rtsp_pull_session::on_describe(const char* sdp, int length)
 {
-    spdlog::debug("rtsp pull describe {}", stream_id_);
+    spdlog::debug("rtsp pull describe {}", config_.stream_id);
     return rtsp_client_setup(client_, sdp, length);
 }
 
@@ -416,7 +360,7 @@ int rtsp_pull_session::on_setup()
     }
 
     // 失败返回 -1 结束读循环，media_ 由 safe_shutdown 清理。
-    media_ = std::make_unique<rtsp_pull_media>(worker_, stream_id_);
+    media_ = std::make_unique<rtsp_pull_media>(worker_, config_.stream_id);
     if (!media_->startup(std::move(descriptions)))
     {
         return -1;

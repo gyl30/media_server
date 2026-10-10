@@ -367,6 +367,12 @@ if(BUILD_TESTING)
     add_test(NAME signaling_verify COMMAND signaling_verify_tests)
     set_tests_properties(signaling_verify PROPERTIES TIMEOUT 20)
 
+    add_executable(rtsp_pull_config_tests tests/rtsp_pull_config.cpp)
+    target_link_libraries(rtsp_pull_config_tests PRIVATE media_core media_server_link_options)
+    target_link_options(rtsp_pull_config_tests PRIVATE -Wl,--wrap=getaddrinfo)
+    add_test(NAME rtsp_pull_config COMMAND rtsp_pull_config_tests)
+    set_tests_properties(rtsp_pull_config PROPERTIES TIMEOUT 45)
+
     add_executable(http_flv_auth_tests tests/http_flv_auth.cpp)
     target_link_libraries(http_flv_auth_tests PRIVATE media_core media_server_link_options)
     target_link_options(http_flv_auth_tests PRIVATE

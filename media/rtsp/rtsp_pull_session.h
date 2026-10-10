@@ -7,7 +7,6 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 
 #include <boost/asio.hpp>
 
@@ -28,30 +27,25 @@ namespace media_server
 class worker_context;
 class rtsp_pull_media;
 
+struct rtsp_pull_config
+{
+    std::string stream_id;
+    std::string url;
+    std::string host;
+    std::uint16_t port{554};
+    std::string username;
+    std::string password;
+};
+
 class rtsp_pull_session final : public session, public std::enable_shared_from_this<rtsp_pull_session>
 {
    public:
-    rtsp_pull_session(worker_context& worker,
-                      std::string stream_id,
-                      std::string url,
-                      std::string username = {},
-                      std::string password = {});
+    rtsp_pull_session(worker_context& worker, rtsp_pull_config config);
     ~rtsp_pull_session();
 
    public:
-    [[nodiscard]] static bool valid_url(std::string_view url);
-
-   public:
-    [[nodiscard]] bool startup();
+    void startup();
     void shutdown();
-
-   private:
-    struct parsed_url
-    {
-        std::string request_url;
-        std::string host;
-        std::uint16_t port{554};
-    };
 
    private:
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);
@@ -65,8 +59,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
 
    private:
-    [[nodiscard]] static std::optional<parsed_url> parse_url(std::string_view url);
-    void run(std::string host, std::uint16_t port, boost::asio::yield_context yield);
+    void run(boost::asio::yield_context yield);
     void run_read(rtsp_client_t* client, boost::asio::yield_context yield);
     void schedule_rtcp();
 
@@ -80,10 +73,7 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
 
    private:
     worker_context& worker_;
-    std::string stream_id_;
-    std::string url_;
-    std::string username_;
-    std::string password_;
+    rtsp_pull_config config_;
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket connect_socket_;
     boost::asio::steady_timer rtcp_timer_;
