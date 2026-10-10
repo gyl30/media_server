@@ -21,10 +21,7 @@ http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_str
     : worker_(worker),
       stream_(std::move(stream)),
       request_(std::move(request)),
-      config_(application_config),
-      muxer_(
-          [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-          { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); })
+      config_(application_config)
 {
 }
 
@@ -94,6 +91,12 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         return;
     }
 
+    if (!verify_stream(config_, token, "play", stream_id, yield))
+    {
+        send_text_response(boost::beast::http::status::forbidden, "text/plain", "playback denied\n", yield);
+        return;
+    }
+
     bool has_audio = false;
     bool has_video = false;
     for (const auto& track : media_stream->tracks())
@@ -107,24 +110,21 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "flv writer unavailable\n", yield);
         return;
     }
+    muxer_.emplace(
+        [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+        { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); });
     for (const auto& track : media_stream->tracks())
     {
         if (track.kind == media_kind::video)
         {
             waiting_video_track_ = track.id;
         }
-        if (!muxer_.on_track(track))
+        if (!muxer_->on_track(track))
         {
             send_text_response(boost::beast::http::status::bad_request, "text/plain", "unsupported flv track\n", yield);
             return;
         }
     }
-    if (!verify_stream(config_, token, "play", stream_id, yield))
-    {
-        send_text_response(boost::beast::http::status::forbidden, "text/plain", "playback denied\n", yield);
-        return;
-    }
-
     stream_.expires_never();
     {
         boost::beast::http::response<boost::beast::http::empty_body> response(boost::beast::http::status::ok, request_.version());
@@ -250,7 +250,7 @@ void http_flv_session::on_frame(const media_frame& entry)
         waiting_video_track_.reset();
     }
     output_buffer_.clear();
-    if (!muxer_.on_frame(entry))
+    if (!muxer_->on_frame(entry))
     {
         shutdown();
         return;
@@ -304,7 +304,11 @@ void http_flv_session::safe_shutdown()
         source_->remove_sink(this);
         source_.reset();
     }
-    muxer_.shutdown();
+    if (muxer_)
+    {
+        muxer_->shutdown();
+        muxer_.reset();
+    }
     if (writer_ != nullptr)
     {
         flv_writer_destroy(writer_);

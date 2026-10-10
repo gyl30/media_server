@@ -62,7 +62,7 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     std::optional<track_id> waiting_video_track_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
-    flv_muxer muxer_;
+    std::optional<flv_muxer> muxer_;
     std::shared_ptr<media_stream> source_;
     static constexpr std::size_t max_queued_output_bytes_ = 4U * 1024U * 1024U;
 

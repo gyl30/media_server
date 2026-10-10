@@ -150,6 +150,9 @@ def main():
                             assert (status == 200) == accepted, (protocol, status)
                             if accepted:
                                 assert body.startswith(b"FLV"), body
+                                decode_token = signaling.issue("play", stream_id)
+                                decode(ffmpeg, f"http://127.0.0.1:{http}/{stream_id}/{decode_token}.flv", protocol, True)
+                                assert not signaling.pending(decode_token), "FLV decode token was not consumed"
                         elif protocol == "hls":
                             status, headers, _ = request(http, f"/play/hls/{stream_id}/{token}/index.m3u8")
                             assert (status == 307) == accepted, (protocol, status)

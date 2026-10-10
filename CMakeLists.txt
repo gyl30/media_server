@@ -367,6 +367,14 @@ if(BUILD_TESTING)
     add_test(NAME signaling_verify COMMAND signaling_verify_tests)
     set_tests_properties(signaling_verify PROPERTIES TIMEOUT 20)
 
+    add_executable(http_flv_auth_tests tests/http_flv_auth.cpp)
+    target_link_libraries(http_flv_auth_tests PRIVATE media_core media_server_link_options)
+    target_link_options(http_flv_auth_tests PRIVATE
+        -Wl,--wrap=flv_writer_create2 -Wl,--wrap=flv_writer_destroy
+        -Wl,--wrap=flv_muxer_create -Wl,--wrap=flv_muxer_destroy)
+    add_test(NAME http_flv_auth COMMAND http_flv_auth_tests)
+    set_tests_properties(http_flv_auth PROPERTIES TIMEOUT 40)
+
     add_executable(webrtc_auth_tests tests/webrtc_auth.cpp)
     target_link_libraries(webrtc_auth_tests PRIVATE media_core media_server_link_options)
     target_link_options(webrtc_auth_tests PRIVATE -Wl,--wrap=SSL_CTX_new)
