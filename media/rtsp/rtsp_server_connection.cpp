@@ -301,6 +301,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
         const auto owner = self->shared_from_this();
         auto publish = std::make_shared<rtsp_publish_session>(
             self->worker_,
+            target->stream_id,
             self->local_address_,
             [owner](std::span<const std::uint8_t> data)
             {

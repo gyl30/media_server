@@ -373,6 +373,11 @@ if(BUILD_TESTING)
     add_test(NAME rtsp_pull_config COMMAND rtsp_pull_config_tests)
     set_tests_properties(rtsp_pull_config PROPERTIES TIMEOUT 45)
 
+    add_executable(rtsp_publish_tests tests/rtsp_publish.cpp)
+    target_link_libraries(rtsp_publish_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME rtsp_publish COMMAND rtsp_publish_tests)
+    set_tests_properties(rtsp_publish PROPERTIES TIMEOUT 20)
+
     add_executable(http_flv_auth_tests tests/http_flv_auth.cpp)
     target_link_libraries(http_flv_auth_tests PRIVATE media_core media_server_link_options)
     target_link_options(http_flv_auth_tests PRIVATE

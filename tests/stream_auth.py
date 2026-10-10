@@ -110,6 +110,16 @@ def main():
                         before = signaling.count()
                         assert describe(rtsp, stream_id, "", b"invalid SDP") != 200
                         assert signaling.count() == before and signaling.pending(stream_id), "invalid ANNOUNCE consumed token"
+                        sdp = (b"v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=auth-test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
+                               b"m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
+                               b"a=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==\r\n"
+                               b"a=control:trackID=1\r\n")
+                        assert describe(rtsp, "invalid-stream-id", "", sdp) != 200
+                        assert signaling.count() == before, "invalid ANNOUNCE URI requested authorization"
+                        receivers_before = receiver_ids(http)
+                        assert describe(rtsp, secrets.token_hex(32), "", sdp) != 200
+                        assert signaling.count() == before + 1 and signaling.pending(stream_id), "unauthorized ANNOUNCE accepted"
+                        assert receiver_ids(http) == receivers_before, "rejected ANNOUNCE changed receiver registrations"
                     url = f"rtmp://127.0.0.1:{rtmp}/live/{stream_id}" if protocol == "rtmp" else f"rtsp://127.0.0.1:{rtsp}/{stream_id}"
                     command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture), "-c", "copy"]
                     command += ["-f", "flv"] if protocol == "rtmp" else ["-rtsp_transport", "tcp", "-f", "rtsp"]

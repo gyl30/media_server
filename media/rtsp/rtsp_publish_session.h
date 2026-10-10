@@ -29,6 +29,7 @@ class rtsp_publish_session final : public std::enable_shared_from_this<rtsp_publ
 {
    public:
     rtsp_publish_session(worker_context& worker,
+                         std::string stream_id,
                          boost::asio::ip::address bind_address,
                          std::function<void(std::span<const std::uint8_t>)> write,
                          std::function<void()> input_handler);

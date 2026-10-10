@@ -9,7 +9,6 @@
 #include <spdlog/spdlog.h>
 
 #include "media/rtsp/rtsp_sdp.h"
-#include "media/rtsp/rtsp_uri.h"
 #include "media/net/worker_context.h"
 #include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_publish_udp_session.h"
@@ -39,6 +38,7 @@ std::uint32_t random_u32()
 }    // namespace
 
 rtsp_publish_session::rtsp_publish_session(worker_context& worker,
+                                           std::string stream_id,
                                            boost::asio::ip::address bind_address,
                                            std::function<void(std::span<const std::uint8_t>)> write,
                                            std::function<void()> input_handler)
@@ -46,7 +46,8 @@ rtsp_publish_session::rtsp_publish_session(worker_context& worker,
       bind_address_(std::move(bind_address)),
       write_handler_(std::move(write)),
       input_handler_(std::move(input_handler)),
-      tcp_rtcp_timer_(worker_.io())
+      tcp_rtcp_timer_(worker_.io()),
+      stream_id_(std::move(stream_id))
 {
 }
 
@@ -74,12 +75,6 @@ bool rtsp_publish_session::on_interleaved(std::uint8_t channel, std::span<const 
 bool rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view uri, const char* sdp, int length)
 {
     if (sdp == nullptr || length <= 0)
-    {
-        return false;
-    }
-
-    const auto target = parse_rtsp_target(uri);
-    if (!target)
     {
         return false;
     }
@@ -161,7 +156,6 @@ bool rtsp_publish_session::on_announce(rtsp_server_t* server, std::string_view u
         return false;
     }
 
-    stream_id_ = target->stream_id;
     descriptions_ = std::move(descriptions);
     session_id_ = std::to_string(random_u32());
     return true;
