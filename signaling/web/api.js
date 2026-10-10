@@ -60,5 +60,11 @@ export const api = {
     { method: "POST", signal },
   ),
   stopLive: (liveID) => request(`/api/lives/${segment(liveID)}`, { method: "DELETE" }),
-  startPreview: (body, signal) => request("/api/preview/start", { method: "POST", body, signal }),
+  play: (source, signal) => request("/api/play", { method: "POST", body: { source }, signal }),
+  pushDevices: (signal) => request("/api/push-devices", { signal }),
+  createPushDevice: (body) => request("/api/push-devices", { method: "POST", body }),
+  patchPushDevice: (deviceID, body) => request(`/api/push-devices/${segment(deviceID)}`, { method: "PATCH", body }),
+  deletePushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}`, { method: "DELETE" }),
+  publishPushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}/publish`, { method: "POST" }),
+  stopPushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}/stop`, { method: "POST" }),
 };

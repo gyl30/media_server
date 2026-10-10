@@ -119,7 +119,7 @@ export class WHEPPreview {
     this.onState({
       state,
       target: session ? session.label : "",
-      liveID: session?.liveID || "",
+      streamID: session?.streamID || "",
       needsPlaybackGesture: session?.needsPlaybackGesture || false,
       error,
     });
@@ -137,7 +137,7 @@ export class WHEPPreview {
       generation,
       label,
       target,
-      liveID: "",
+      streamID: "",
       mediaStream: new MediaStream(),
       peer: null,
       resourceURL: "",
@@ -191,18 +191,19 @@ export class WHEPPreview {
       this.emit("negotiating", session);
       let answer;
       for (let attempt = 0; attempt < 2; attempt += 1) {
-        const ticket = target.source_id
-          ? await api.startPreview(target, session.controller.signal)
+        const ticket = target.source_id || target.push_device_id || target.live_id
+          ? await api.play(target.source_id ? { source_id: target.source_id } : target.push_device_id
+            ? { push_device_id: target.push_device_id } : { live_id: target.live_id }, session.controller.signal)
           : await api.playChannel(target.device_id, target.channel_id, session.controller.signal);
         if (!this.isCurrent(session)) return null;
         session.whepURL = ticket.whep_url;
-        session.liveID = ticket.live_id || "";
+        session.streamID = ticket.stream_id;
         this.emit("negotiating", session);
         try {
           answer = await postOffer(session, session.peer.localDescription.sdp, Boolean(target.source_id));
           break;
         } catch (error) {
-          if (target.source_id || ![404, 409].includes(error.status) || attempt !== 0) throw error;
+          if (target.source_id || target.push_device_id || target.live_id || ![404, 409].includes(error.status) || attempt !== 0) throw error;
           await waitForDelay(1500, session.controller.signal);
         }
       }

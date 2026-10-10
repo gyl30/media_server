@@ -53,6 +53,18 @@ const elements = {
   stopPreview: byID("stop-preview-button"),
   stopLive: byID("stop-live-button"),
   resumePlayback: byID("resume-playback-button"),
+  addPush: byID("add-push-button"),
+  pushRows: byID("push-rows"),
+  pushEmpty: byID("push-empty"),
+  pushDialog: byID("push-dialog"),
+  pushForm: byID("push-form"),
+  pushFormError: byID("push-form-error"),
+  pushID: byID("push-id"),
+  pushName: byID("push-name"),
+  savePush: byID("save-push-button"),
+  urlDialog: byID("url-dialog"),
+  urlList: byID("url-list"),
+  urlHint: byID("url-hint"),
 };
 
 const state = {
@@ -67,6 +79,7 @@ const state = {
   refreshEpoch: 0,
   selectedDeviceID: "",
   sources: [],
+  pushDevices: [],
 };
 
 const preview = new WHEPPreview(elements.previewVideo, renderPreviewState);
@@ -184,6 +197,8 @@ function errorMessage(error) {
     live_stop_failed: "取流暂时无法停止，请稍后重试", live_start_failed: "设备暂时无法连接，请稍后重试",
     invalid_request: "输入有误，请检查后重试", conflict: "资源正在使用，请稍后重试", not_running: "媒体源尚未开始取流",
     whep_create_404: "播放链接已失效，请重新播放", whep_create_409: "媒体尚未就绪，请稍后重新播放",
+    whep_create_403: "播放授权已失效，请重新申请", source_not_running: "媒体源尚未开始取流",
+    push_device_not_found: "推流设备不存在", push_not_verified: "推流尚未验证，请先使用推流地址连接", push_already_issued: "已签发推流地址，请先停止当前推流",
     media_ended: "设备已离线或媒体已结束", whep_delete_500: "播放器已关闭，服务器资源尚待清理",
     webrtc_connection_failed: "连接中断，请重新播放", network_error: "无法连接服务器，请稍后重试",
   };
@@ -208,9 +223,10 @@ function replaceContent(container, nodes) {
   const active = container.contains(document.activeElement) ? document.activeElement : null;
   const pending = active && (state.pending.has(`source:${active.dataset.sourceId}`)
     || state.pending.has(`channel:${active.dataset.deviceId}:${active.dataset.channelId}`)
-    || state.pending.has(`device:${active.dataset.deviceId}`));
+    || state.pending.has(`device:${active.dataset.deviceId}`)
+    || state.pending.has(`push:${active.dataset.pushId}`));
   container.replaceChildren(...nodes);
-  restoreFocus(active, active && !pending ? (container === elements.sourceRows ? elements.addSource : elements.addDevice) : null);
+  restoreFocus(active, active && !pending ? (container === elements.sourceRows ? elements.addSource : container === elements.pushRows ? elements.addPush : elements.addDevice) : null);
 }
 
 function renderSources() {
@@ -236,6 +252,7 @@ function renderSources() {
       buttons.push(actionButton("停止取流", "stop", "square", "secondary", pending));
       if (session.state === "created") {
         buttons.push(actionButton("播放", "preview", "monitor-play", "secondary", pending));
+        buttons.push(actionButton("播放地址", "urls", "monitor-play", "secondary", pending));
       }
     } else {
       buttons.push(actionButton("开始取流", "start", "play", "primary", pending));
@@ -284,6 +301,36 @@ function renderDevices() {
   elements.deviceCount.textContent = `${state.devices.length} 台设备`;
 }
 
+function renderPushDevices() {
+  const rows = state.pushDevices.map(device => {
+    const row = document.createElement("tr");
+    const pending = state.pending.has(`push:${device.device_id}`);
+    row.append(textCell(device.name, device.device_id, { secondaryCode: true }),
+      badgeCell({idle: "空闲", issued: "已签发", verified: "已验证"}[device.state] || device.state,
+        device.state === "verified" ? "success" : device.state === "issued" ? "pending" : "neutral"),
+      textCell(device.token || "—", "", { code: true }));
+    const actions = document.createElement("td");
+    actions.className = "row-actions";
+    if (device.state === "idle") actions.append(actionButton("签发推流地址", "publish", "play", "primary", pending));
+    else actions.append(actionButton("停止推流", "stop", "square", "secondary", pending));
+    if (device.state === "verified") {
+      actions.append(actionButton("播放", "preview", "monitor-play", "secondary", pending),
+        actionButton("播放地址", "urls", "monitor-play", "secondary", pending));
+    }
+    actions.append(actionIconButton("编辑", "edit", "edit", "", pending),
+      actionIconButton("删除", "delete", "trash", "danger-icon", pending));
+    for (const button of actions.children) button.dataset.pushId = device.device_id;
+    row.append(actions);
+    return row;
+  });
+  replaceContent(elements.pushRows, rows);
+  elements.pushRows.parentElement.hidden = rows.length === 0;
+  elements.pushEmpty.hidden = rows.length !== 0;
+  elements.pushEmpty.dataset.kind = "empty";
+  elements.pushEmpty.querySelector("strong").textContent = "还没有推流设备";
+  elements.pushEmpty.querySelector("p").textContent = "添加设备后签发 RTMP、RTSP 或 WHIP 推流地址";
+}
+
 function liveLabel(value) {
   return {preparing: "正在连接", inviting: "正在连接", starting: "正在连接", streaming: "正在取流", created: "正在取流", stopping: "正在停止", cleanup_pending: "正在清理", unresolved: "正在清理"}[value] || "未取流";
 }
@@ -314,6 +361,7 @@ function renderChannels() {
     actions.setAttribute("aria-busy", String(state.pending.has(`channel:${channel.device_id}:${channel.channel_id}`)));
     if (live) actions.append(actionButton("停止取流", "stop", "square", "secondary", pending));
     actions.append(actionButton("播放", "play", "play", "primary", pending || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
+    actions.append(actionButton("播放地址", "urls", "monitor-play", "secondary", pending || channel.status !== "ON" || Boolean(live && live.state !== "streaming")));
     for (const button of actions.children) {
       button.dataset.deviceId = channel.device_id;
       button.dataset.channelId = channel.channel_id;
@@ -333,6 +381,7 @@ function renderChannels() {
 function renderAll() {
   renderSources();
   renderDevices();
+  renderPushDevices();
   renderChannels();
   renderPlayerButtons();
 }
@@ -358,9 +407,9 @@ async function refreshChannels(deviceID = state.selectedDeviceID) {
     state.channelsDeviceID = deviceID;
     const session = preview.current;
     const target = session?.target;
-    if (target?.device_id === deviceID && session.liveID && !state.pending.has(`channel:${deviceID}:${target.channel_id}`)) {
+    if (target?.device_id === deviceID && session.streamID && !state.pending.has(`channel:${deviceID}:${target.channel_id}`)) {
       const channel = state.channels.find(item => item.channel_id === target.channel_id);
-      if (channel?.live?.live_id !== session.liveID) void preview.end(session);
+      if (channel?.live?.live_id !== session.streamID) void preview.end(session);
     }
     renderChannels();
   } catch (error) {
@@ -391,9 +440,10 @@ async function refreshSnapshots(options = {}) {
   elements.refresh.setAttribute("aria-busy", "true");
   elements.deviceList.setAttribute("aria-busy", "true");
   try {
-    const [sources, devices] = await Promise.all([
+    const [sources, devices, pushDevices] = await Promise.all([
       api.sources(controller.signal),
       api.devices(controller.signal),
+      api.pushDevices(controller.signal),
     ]);
     if (epoch !== state.refreshEpoch) {
       return;
@@ -401,10 +451,15 @@ async function refreshSnapshots(options = {}) {
     const previousDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
     state.sources = sources.sources || [];
     state.devices = devices.devices || [];
+    state.pushDevices = pushDevices.devices || [];
     const session = preview.current;
     if (session?.target.device_id && !state.devices.some(device => device.device_id === session.target.device_id && device.online)) {
       void preview.end(session);
     }
+    if (session?.streamID && session.target.source_id &&
+      state.sources.find(source => source.source_id === session.target.source_id)?.session?.stream_id !== session.streamID) void preview.end(session);
+    if (session?.streamID && session.target.push_device_id &&
+      state.pushDevices.find(device => device.device_id === session.target.push_device_id)?.token !== session.streamID) void preview.end(session);
     const currentDevice = state.devices.find(item => item.device_id === state.selectedDeviceID);
     if (currentDevice?.online && !previousDevice?.online) state.channelSyncUntil = Date.now() + 7500;
     const previousDeviceID = state.selectedDeviceID;
@@ -428,7 +483,7 @@ async function refreshSnapshots(options = {}) {
       showStatus(errorMessage(error), "danger");
       if (!elements.lastUpdated.dateTime) {
         elements.deviceCount.textContent = "暂时无法加载";
-        for (const empty of [elements.deviceEmpty, elements.sourceEmpty]) {
+        for (const empty of [elements.deviceEmpty, elements.sourceEmpty, elements.pushEmpty]) {
           empty.dataset.kind = "error";
           empty.querySelector("strong").textContent = "无法连接服务器";
           empty.querySelector("p").textContent = "请检查网络连接后刷新";
@@ -463,6 +518,8 @@ async function runResourceAction(key, action, successMessage) {
     if (document.activeElement === document.body || document.activeElement === trigger) {
       const fallback = key.startsWith("source:")
         ? elements.sourceRows.querySelector(`[data-source-id="${key.slice(7)}"]:not(:disabled)`) || elements.addSource
+        : key.startsWith("push:")
+          ? elements.pushRows.querySelector(`[data-push-id="${key.slice(5)}"]:not(:disabled)`) || elements.addPush
         : key.startsWith("channel:")
           ? elements.channelRows.querySelector(`button[data-channel-id="${key.split(":")[2]}"]:not(:disabled)`) || elements.addDevice
           : elements.addDevice;
@@ -473,6 +530,57 @@ async function runResourceAction(key, action, successMessage) {
 
 function sourceByID(sourceID) {
   return state.sources.find((source) => source.source_id === sourceID);
+}
+
+function openMediaURLs(result, title) {
+  byID("url-dialog-title").textContent = title;
+  elements.urlHint.textContent = `同组地址共用一次性 token，请选择一种协议使用。首次连接有效期至 ${new Date(result.expires_at).toLocaleString("zh-CN")}；已建立的会话不受此期限影响。播放器会另外申请独立地址。`;
+  const rows = [];
+  for (const [key, label] of [["rtmp_url", "RTMP"], ["rtsp_url", "RTSP"], ["whip_url", "WHIP"],
+    ["flv_url", "HTTP-FLV"], ["hls_url", "HLS"], ["whep_url", "WHEP"]]) {
+    if (!result[key]) continue;
+    const row = document.createElement("label");
+    row.className = "url-row";
+    const caption = document.createElement("span");
+    caption.textContent = label;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.readOnly = true;
+    input.value = result[key];
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "button secondary compact";
+    button.textContent = "复制";
+    button.addEventListener("click", async () => {
+      input.select();
+      try {
+        if (!navigator.clipboard) {
+          showStatus("地址已选中，请按 Ctrl+C 复制", "info");
+          return;
+        }
+        await navigator.clipboard.writeText(input.value);
+        showStatus("已复制地址", "success", 2500);
+      } catch {
+        showStatus("地址已选中，请按 Ctrl+C 复制", "info");
+      }
+    });
+    row.append(caption, input, button);
+    rows.push(row);
+  }
+  elements.urlList.replaceChildren(...rows);
+  elements.urlDialog.showModal();
+}
+
+function openPushDialog(device = null) {
+  if (elements.savePush.disabled) return;
+  elements.pushForm.reset();
+  elements.pushID.value = device?.device_id || "";
+  elements.pushName.value = device?.name || "";
+  elements.pushFormError.hidden = true;
+  byID("push-dialog-title").textContent = device ? "编辑推流设备" : "添加推流设备";
+  elements.savePush.textContent = device ? "保存" : "添加设备";
+  elements.pushDialog.showModal();
+  elements.pushName.focus();
 }
 
 function openSourceDialog(source = null, trigger = null) {
@@ -594,7 +702,7 @@ function renderPreviewState(update) {
   elements.previewPlaceholder.hidden = update.state === "streaming";
   elements.previewPlaceholder.querySelector("strong").textContent = label;
   elements.previewError.textContent = update.error ? errorMessage({code: update.error}) : "";
-  if (update.error === "whep_create_409" && update.liveID) {
+  if (update.error === "whep_create_409" && preview.current?.target.device_id && update.streamID) {
     elements.previewError.textContent += "；若持续失败，请点击通道中的“停止取流”后再播放（会影响该通道的其他观看者）。";
   }
   elements.previewError.hidden = !update.error;
@@ -604,19 +712,19 @@ function renderPlayerButtons() {
   const session = preview.current;
   const target = session?.target;
   elements.stopLive.hidden = !target?.device_id;
-  elements.stopLive.disabled = !session?.liveID || state.pending.has(`channel:${target?.device_id}:${target?.channel_id}`) || state.pending.has(`device:${target?.device_id}`);
+  elements.stopLive.disabled = !session?.streamID || state.pending.has(`channel:${target?.device_id}:${target?.channel_id}`) || state.pending.has(`device:${target?.device_id}`);
 }
 
-async function stopLive(deviceID, channelID, liveID) {
+async function stopLive(deviceID, channelID, streamID) {
   await runResourceAction(`channel:${deviceID}:${channelID}`, async () => {
-    await api.stopLive(liveID);
-    if (preview.current?.liveID === liveID) await preview.end();
+    await api.stopLive(streamID);
+    if (preview.current?.streamID === streamID) await preview.end();
   }, "已停止设备取流");
 }
 
 function activateView(view, updateHash = true) {
   const trigger = document.activeElement;
-  const valid = ["sources", "devices"].includes(view) ? view : "devices";
+  const valid = ["sources", "devices", "push"].includes(view) ? view : "devices";
   if (document.querySelector(".app-layout").dataset.view !== valid) void preview.closeViewer();
   for (const tab of document.querySelectorAll(".view-tab")) {
     const selected = tab.dataset.view === valid;
@@ -710,6 +818,9 @@ elements.sourceRows.addEventListener("click", async (event) => {
     case "preview":
       await runResourceAction(key, () => preview.start({ source_id: source.source_id }, source.stream_name), "播放器已连接");
       break;
+    case "urls":
+      await runResourceAction(key, async () => openMediaURLs(await api.play({ source_id: source.source_id }), `${source.stream_name} · 播放地址`), "已签发播放地址");
+      break;
     case "edit":
       openSourceDialog(source, button);
       break;
@@ -769,14 +880,82 @@ elements.channelRows.addEventListener("click", async (event) => {
       break;
     case "play":
       const device = state.devices.find(item => item.device_id === deviceID);
-      await runResourceAction(key, () => preview.start({ device_id: deviceID, channel_id: channelID }, `${device?.name || "设备"} · ${channel.name || channelID}`), "播放器已连接");
+      await runResourceAction(key, () => preview.start({ device_id: deviceID, channel_id: channelID, live_id: channel.live?.live_id }, `${device?.name || "设备"} · ${channel.name || channelID}`), "播放器已连接");
+      break;
+    case "urls":
+      await runResourceAction(key, async () => openMediaURLs(channel.live
+        ? await api.play({ live_id: channel.live.live_id }) : await api.playChannel(deviceID, channelID), `${channel.name || channelID} · 播放地址`), "已签发播放地址");
+      break;
+  }
+});
+
+elements.addPush.addEventListener("click", () => openPushDialog());
+for (const id of ["close-push-dialog", "cancel-push-dialog"]) byID(id).addEventListener("click", () => elements.pushDialog.close());
+for (const id of ["close-url-dialog", "done-url-dialog"]) byID(id).addEventListener("click", () => elements.urlDialog.close());
+elements.pushDialog.addEventListener("cancel", event => {
+  if (elements.savePush.disabled) event.preventDefault();
+});
+elements.pushForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  if (elements.savePush.disabled) return;
+  const body = { name: elements.pushName.value.trim() };
+  if (!body.name) return;
+  elements.savePush.disabled = true;
+  for (const id of ["close-push-dialog", "cancel-push-dialog"]) byID(id).disabled = true;
+  elements.pushFormError.hidden = true;
+  try {
+    if (elements.pushID.value) await api.patchPushDevice(elements.pushID.value, body);
+    else await api.createPushDevice(body);
+    elements.pushDialog.close();
+    showStatus("已保存推流设备", "success");
+    await refreshSnapshots({ quiet: true });
+  } catch (error) {
+    elements.pushFormError.textContent = errorMessage(error);
+    elements.pushFormError.hidden = false;
+  } finally {
+    elements.savePush.disabled = false;
+    for (const id of ["close-push-dialog", "cancel-push-dialog"]) byID(id).disabled = false;
+  }
+});
+elements.pushRows.addEventListener("click", async event => {
+  const button = event.target.closest("button[data-action]");
+  if (!button || button.disabled) return;
+  const device = state.pushDevices.find(item => item.device_id === button.dataset.pushId);
+  if (!device) return;
+  const key = `push:${device.device_id}`;
+  switch (button.dataset.action) {
+    case "publish":
+      await runResourceAction(key, async () => openMediaURLs(await api.publishPushDevice(device.device_id), `${device.name} · 推流地址`), "已签发推流地址");
+      break;
+    case "preview":
+      await runResourceAction(key, () => preview.start({ push_device_id: device.device_id }, device.name), "播放器已连接");
+      break;
+    case "urls":
+      await runResourceAction(key, async () => openMediaURLs(await api.play({ push_device_id: device.device_id }), `${device.name} · 播放地址`), "已签发播放地址");
+      break;
+    case "edit":
+      openPushDialog(device);
+      break;
+    case "stop":
+      await runResourceAction(key, async () => {
+        await api.stopPushDevice(device.device_id);
+        if (preview.current?.target.push_device_id === device.device_id) await preview.end();
+      }, "已停止推流");
+      break;
+    case "delete":
+      if (await confirmAction("删除推流设备", device.name, "删除设备")) {
+        await runResourceAction(key, async () => {
+          await api.deletePushDevice(device.device_id);
+          if (preview.current?.target.push_device_id === device.device_id) await preview.closeViewer();
+        }, "已删除推流设备");
+      }
       break;
   }
 });
 
 elements.stopLive.addEventListener("click", async () => {
   const session = preview.current;
-  if (session?.liveID) await stopLive(session.target.device_id, session.target.channel_id, session.liveID);
+  if (session?.streamID) await stopLive(session.target.device_id, session.target.channel_id, session.streamID);
 });
 
 elements.resumePlayback.addEventListener("click", () => {
@@ -792,6 +971,8 @@ elements.stopPreview.addEventListener("click", async () => {
   const target = preview.current?.target;
   const trigger = target?.source_id
     ? elements.sourceRows.querySelector(`[data-source-id="${target.source_id}"][data-action="preview"]`)
+    : target?.push_device_id
+      ? elements.pushRows.querySelector(`[data-push-id="${target.push_device_id}"][data-action="preview"]`)
     : elements.channelRows.querySelector(`[data-channel-id="${target?.channel_id}"][data-action="play"]`);
   try {
     const cleanupError = await preview.closeViewer();
@@ -801,7 +982,8 @@ elements.stopPreview.addEventListener("click", async () => {
     showStatus(errorMessage(error), "danger");
   } finally {
     if (document.activeElement === document.body || document.activeElement === elements.stopPreview) {
-      restoreFocus(trigger, document.querySelector(".app-layout").dataset.view === "sources" ? elements.addSource : elements.addDevice);
+      const view = document.querySelector(".app-layout").dataset.view;
+      restoreFocus(trigger, view === "sources" ? elements.addSource : view === "push" ? elements.addPush : elements.addDevice);
     }
   }
 });

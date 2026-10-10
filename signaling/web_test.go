@@ -8,6 +8,26 @@ import (
 	"testing"
 )
 
+func TestWebTokenManagement(t *testing.T) {
+	handler := testInfrastructure(t).handler()
+	for path, snippets := range map[string][]string{
+		"/":        {`id="view-push"`, `id="push-form"`, `id="url-dialog"`},
+		"/api.js":  {`"/api/play"`, `"/api/push-devices"`},
+		"/whep.js": {`ticket.stream_id`, `api.play(`, `new URL(location, session.whepURL)`},
+	} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		for _, snippet := range snippets {
+			if !strings.Contains(response.Body.String(), snippet) {
+				t.Errorf("%s missing %s", path, snippet)
+			}
+		}
+		if strings.Contains(response.Body.String(), "/play/whep/${") || strings.Contains(response.Body.String(), "ticket.live_id") {
+			t.Errorf("%s retains proxy/ticket contract", path)
+		}
+	}
+}
+
 func TestWebManagementPageAndAssets(t *testing.T) {
 	handler := testInfrastructure(t).handler()
 	for path, expected := range map[string]string{

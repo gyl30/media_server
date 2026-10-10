@@ -48,11 +48,15 @@ button { color: inherit; }
 .channel-pane, .welcome { grid-column: 2; grid-row: 1; min-width: 0; }
 .preview-panel { grid-column: 2; grid-row: 1; min-width: 0; scroll-margin-top: 144px; }
 .app-layout:has(.preview-panel:not([hidden])) .channel-pane { grid-row: 2; }
-.app-layout[data-view="sources"] { grid-template-columns: minmax(0, 1fr); }
-.app-layout[data-view="sources"] .workspace { display: block; grid-column: 1; grid-row: 1; min-width: 0; }
-.app-layout[data-view="sources"]:has(.preview-panel:not([hidden])) .workspace { grid-row: 2; }
-.app-layout[data-view="sources"] .preview-panel { grid-column: 1; grid-row: 1; width: min(1100px, 100%); justify-self: center; }
+.app-layout:is([data-view="sources"], [data-view="push"]) { grid-template-columns: minmax(0, 1fr); }
+.app-layout:is([data-view="sources"], [data-view="push"]) .workspace { display: block; grid-column: 1; grid-row: 1; min-width: 0; }
+.app-layout:is([data-view="sources"], [data-view="push"]):has(.preview-panel:not([hidden])) .workspace { grid-row: 2; }
+.app-layout:is([data-view="sources"], [data-view="push"]) .preview-panel { grid-column: 1; grid-row: 1; width: min(1100px, 100%); justify-self: center; }
 .section-heading, .subheading, .preview-heading, .dialog-heading, .dialog-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.url-dialog { width: min(760px, calc(100vw - 32px)); }
+.url-list { display: grid; gap: 12px; }
+.url-row { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.url-row input { min-width: 0; width: 100%; font-family: var(--font-mono, monospace); }
 .section-heading { margin-bottom: 24px; }
 h1, h2 { margin: 0; color: var(--ink); font-weight: 650; }
 h1 { font-size: 24px; line-height: 1.4; letter-spacing: -.5px; }
@@ -152,7 +156,7 @@ dialog::backdrop { background: #15251ccc; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .field { display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 13px; font-weight: 550; }
 .field:nth-child(-n + 2) { grid-column: 1 / -1; }
-.field input { width: 100%; height: 40px; border: 1px solid #bbc7bf; border-radius: 6px; padding: 8px 12px; color: var(--ink); background: var(--surface); font-weight: 400; }
+.field input, .url-row input { width: 100%; height: 40px; border: 1px solid #bbc7bf; border-radius: 6px; padding: 8px 12px; color: var(--ink); background: var(--surface); font-weight: 400; }
 .field input::placeholder { color: var(--muted); }
 .field small { font-size: 12px; color: var(--muted); font-weight: 400; }
 .field input:disabled { background: var(--bg); }
