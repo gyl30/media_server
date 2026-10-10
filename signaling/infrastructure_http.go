@@ -26,6 +26,8 @@ type infrastructureServer struct {
 	sourceControlMu     sync.Mutex
 	sourceControlWait   sync.WaitGroup
 	sourceControlClosed bool
+	tokens              *streamTokens
+	tokenTTL            time.Duration
 }
 
 func newInfrastructureServer(
@@ -35,9 +37,12 @@ func newInfrastructureServer(
 	media *mediaServerHTTPClient,
 	logger *slog.Logger,
 ) *infrastructureServer {
+	tokens := &streamTokens{tokens: make(map[string]streamToken), pushRuns: make(map[string]pushRun)}
+	live.tokens = tokens
 	return &infrastructureServer{
 		httpListen: httpListen, logger: logger, live: live, media: media,
 		sources: sources, rtspPulls: make(map[string]rtspPullSession),
+		tokens: tokens, tokenTTL: 60 * time.Second,
 	}
 }
 
@@ -56,8 +61,15 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("DELETE /api/devices/{device_id}", s.handleDeviceDelete)
 	routes.HandleFunc("GET /api/devices/{device_id}/channels", s.handleChannelList)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/play", s.handleChannelPlay)
-	routes.HandleFunc("POST /play/whep/{play_id}", s.handlePlayWHEP)
-	routes.HandleFunc("OPTIONS /play/whep/{play_id}", s.handlePlayWHEP)
+	routes.HandleFunc("POST /api/play", s.handlePlay)
+	routes.HandleFunc("POST /internal/verify", s.handleVerify)
+	routes.HandleFunc("GET /api/push-devices", s.handlePushDeviceList)
+	routes.HandleFunc("POST /api/push-devices", s.handlePushDeviceCreate)
+	routes.HandleFunc("GET /api/push-devices/{id}", s.handlePushDeviceGet)
+	routes.HandleFunc("PATCH /api/push-devices/{id}", s.handlePushDevicePatch)
+	routes.HandleFunc("DELETE /api/push-devices/{id}", s.handlePushDeviceDelete)
+	routes.HandleFunc("POST /api/push-devices/{id}/publish", s.handlePushPublish)
+	routes.HandleFunc("POST /api/push-devices/{id}/stop", s.handlePushStop)
 	routes.HandleFunc("DELETE /api/lives/{live_id}", s.handleLiveDelete)
 
 	web := embeddedWebHandler()
@@ -87,7 +99,7 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 			case <-serveContext.Done():
 				break sweep
 			case now := <-ticker.C:
-				s.live.expirePlayTickets(now)
+				s.tokens.expire(now)
 			}
 		}
 		shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)

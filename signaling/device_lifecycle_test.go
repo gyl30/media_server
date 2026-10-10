@@ -53,7 +53,7 @@ func TestDeviceDeleteFencesPlayUntilReceiverRemoved(t *testing.T) {
 		t.Fatal("receiver cleanup not reached")
 	}
 	apiRequest(t, handler, "POST", "/api/devices/34020000001320000001/channels/34020000001320000002/play", "", http.StatusConflict)
-	apiRequest(t, handler, "POST", pending.WHEPURL, "offer", http.StatusNotFound)
+	verifyToken(t, s, pending.Token, "play", pending.StreamID, http.StatusForbidden)
 	if creates.Load() != 1 {
 		t.Fatal("new receiver created during device deletion")
 	}
@@ -64,7 +64,7 @@ func TestDeviceDeleteFencesPlayUntilReceiverRemoved(t *testing.T) {
 		t.Fatalf("DELETE: %d %s", response.Code, response.Body.String())
 	}
 	apiRequest(t, handler, "GET", "/api/devices/34020000001320000001", "", http.StatusNotFound)
-	apiRequest(t, handler, "DELETE", "/api/lives/"+pending.LiveID, "", http.StatusNotFound)
+	apiRequest(t, handler, "DELETE", "/api/lives/"+pending.StreamID, "", http.StatusNotFound)
 	apiRequest(t, handler, "POST", "/api/devices/34020000001320000001/channels/34020000001320000002/play", "", http.StatusNotFound)
 	response = apiRequest(t, handler, "GET", "/api/devices", "", http.StatusOK)
 	if strings.Contains(response.Body.String(), "34020000001320000001") || !strings.Contains(response.Body.String(), "34020000001320000003") {
@@ -103,8 +103,8 @@ func TestDeviceExpiryStopsLiveButRetainsConfiguration(t *testing.T) {
 			if strings.TrimSpace(channels.Body.String()) != `{"channels":[]}` {
 				t.Fatal(channels.Body.String())
 			}
-			apiRequest(t, handler, "POST", ticket.WHEPURL, "offer", http.StatusNotFound)
-			apiRequest(t, handler, "DELETE", "/api/lives/"+ticket.LiveID, "", http.StatusNotFound)
+			verifyToken(t, s, ticket.Token, "play", ticket.StreamID, http.StatusForbidden)
+			apiRequest(t, handler, "DELETE", "/api/lives/"+ticket.StreamID, "", http.StatusNotFound)
 			if deletes.Load() != 1 {
 				t.Fatalf("receiver deletes: %d", deletes.Load())
 			}
@@ -156,7 +156,7 @@ func TestDeviceDeleteRetainsConfigurationUntilMediaCleanupConfirmed(t *testing.T
 	ticket := requestPlay(t, handler)
 	apiRequest(t, handler, "DELETE", "/api/devices/34020000001320000001", "", http.StatusBadGateway)
 	apiRequest(t, handler, "GET", "/api/devices/34020000001320000001", "", http.StatusOK)
-	apiRequest(t, handler, "POST", ticket.WHEPURL, "offer", http.StatusNotFound)
+	verifyToken(t, s, ticket.Token, "play", ticket.StreamID, http.StatusForbidden)
 	apiRequest(t, handler, "POST", "/api/devices/34020000001320000001/channels/34020000001320000002/play", "", http.StatusConflict)
 	deleteStatus.Store(http.StatusNotFound)
 	apiRequest(t, handler, "DELETE", "/api/devices/34020000001320000001", "", http.StatusNoContent)
@@ -181,7 +181,7 @@ func TestDeviceDeleteContinuesAfterRemoteByeFailure(t *testing.T) {
 	ticket := requestPlay(t, handler)
 	apiRequest(t, handler, "DELETE", "/api/devices/34020000001320000001", "", http.StatusNoContent)
 	apiRequest(t, handler, "GET", "/api/devices/34020000001320000001", "", http.StatusNotFound)
-	apiRequest(t, handler, "DELETE", "/api/lives/"+ticket.LiveID, "", http.StatusNotFound)
+	apiRequest(t, handler, "DELETE", "/api/lives/"+ticket.StreamID, "", http.StatusNotFound)
 	if deletes.Load() != 1 {
 		t.Fatalf("media deletes: %d", deletes.Load())
 	}

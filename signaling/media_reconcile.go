@@ -2,17 +2,28 @@ package main
 
 import (
 	"context"
+	"maps"
 	"time"
 )
 
 const mediaReconcileInterval = 5 * time.Second
+const pushRegistrationGrace = 3 * time.Second
 
 // reconcileMedia 让信令状态跟随媒体服务器上实际运行的接收会话：
 // 媒体侧已结束的直播和 RTSP 拉流被清理，信令不认识的遗留接收会话被删除。
 func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
+	now := s.live.sip.now()
 	// 先快照再查询：快照中的会话在查询前已在媒体侧创建，查询结果缺失即表示已结束。
 	lives := s.live.streamingSessions()
 	pulls := s.confirmedRTSPPulls()
+	s.tokens.mu.Lock()
+	pushes := make(map[string]pushRun)
+	for deviceID, run := range s.tokens.pushRuns {
+		if !run.verifiedAt.IsZero() && now.Sub(run.verifiedAt) > pushRegistrationGrace {
+			pushes[deviceID] = run
+		}
+	}
+	s.tokens.mu.Unlock()
 	receivers, err := s.media.listReceivers(ctx)
 	if err != nil {
 		return err
@@ -42,11 +53,28 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 			s.logger.Info("rtsp pull ended on media server", "source_id", pull.sourceID, "stream_name", pull.streamName)
 		}
 	}
+	s.tokens.mu.Lock()
+	for deviceID, expected := range pushes {
+		if _, exists := running[expected.streamID]; exists {
+			continue
+		}
+		if current, exists := s.tokens.pushRuns[deviceID]; exists && current.streamID == expected.streamID {
+			delete(s.tokens.pushRuns, deviceID)
+			maps.DeleteFunc(s.tokens.tokens, func(_ string, token streamToken) bool { return token.streamID == expected.streamID })
+			s.logger.Info("push ended on media server", "device_id", deviceID, "stream_id", expected.streamID)
+		}
+	}
+	s.tokens.mu.Unlock()
 
 	// 查询之后再收集已知会话，查询前已存在且仍由信令持有的会话都不会被误删。
 	known := make(map[string]struct{})
 	s.live.collectStreamIDs(known)
 	s.collectRTSPPullStreamIDs(known)
+	s.tokens.mu.Lock()
+	for _, run := range s.tokens.pushRuns {
+		known[run.streamID] = struct{}{}
+	}
+	s.tokens.mu.Unlock()
 	for _, receiver := range receivers {
 		if _, ok := known[receiver.StreamID]; ok {
 			continue
@@ -126,5 +154,6 @@ func (s *infrastructureServer) dropEndedRTSPPull(expected rtspPullSession) bool 
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)
+	s.tokens.revokeStream(session.streamID)
 	return true
 }

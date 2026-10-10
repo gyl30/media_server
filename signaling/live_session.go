@@ -55,7 +55,6 @@ type liveSession struct {
 	established chan struct{}
 	done        chan struct{}
 	cleanupErr  error
-	offers      sync.WaitGroup
 }
 
 type liveView struct {
@@ -68,7 +67,7 @@ type liveView struct {
 type liveService struct {
 	mu              sync.Mutex
 	sessions        map[liveKey]*liveSession
-	tickets         map[string]playTicket
+	tokens          *streamTokens
 	stoppingDevices map[string]struct{}
 	sip             *sipServer
 	media           *mediaServerHTTPClient
@@ -88,7 +87,6 @@ func newLiveService(
 ) *liveService {
 	service := &liveService{
 		sessions:        make(map[liveKey]*liveSession),
-		tickets:         make(map[string]playTicket),
 		stoppingDevices: make(map[string]struct{}),
 		sip:             sipServer,
 		media:           media,
@@ -329,7 +327,7 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 		s.mu.Unlock()
 		return nil
 	}
-	s.invalidateLiveTicketsLocked(session.streamID)
+	s.tokens.revokeStream(session.streamID)
 	if session.state == liveCleanupPending {
 		session.state = liveStopping
 		session.cleanupErr = nil
@@ -404,8 +402,6 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 }
 
 func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
-	// Finish offers against this source before deleting it or allowing a new generation.
-	session.offers.Wait()
 	if sendBye && session.dialog != nil {
 		byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
 		if err := session.dialog.Bye(byeContext); err != nil {
@@ -442,7 +438,7 @@ func markCleanupPendingLocked(session *liveSession, err error) {
 func (s *liveService) remove(session *liveSession) {
 	s.mu.Lock()
 	if current, ok := s.sessions[session.key]; ok && current == session {
-		s.invalidateLiveTicketsLocked(session.streamID)
+		s.tokens.revokeStream(session.streamID)
 		delete(s.sessions, session.key)
 		session.cancel()
 		s.ssrcs.release(session.ssrc)
@@ -479,7 +475,7 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 		return
 	}
 	session.state = liveStopping
-	s.invalidateLiveTicketsLocked(session.streamID)
+	s.tokens.revokeStream(session.streamID)
 	s.mu.Unlock()
 	if err := session.dialog.ReadBye(request, transaction); err != nil {
 		s.logger.Warn("remote BYE failed", "device_id", session.key.deviceID, "channel_id", session.key.channelID, "error", err)

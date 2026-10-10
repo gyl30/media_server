@@ -2,10 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
 )
 
 type previewStartRequest struct {
@@ -27,23 +24,11 @@ func (s *infrastructureServer) handlePreviewStart(writer http.ResponseWriter, re
 		s.writeSourceError(writer, "preview", *sourceID, err)
 		return
 	}
-	session, ok := s.rtspSourceSession(*sourceID)
-	if !ok || session.starting || !session.createConfirmed || session.stopDone != nil {
+	result, err := s.newPlaybackURLs(playSource{SourceID: *sourceID})
+	if err != nil {
 		writeHTTPError(writer, http.StatusConflict, "not_running")
 		return
 	}
-	writeJSON(writer, http.StatusCreated, map[string]string{
-		"whep_url": makeWHEPURL(session.streamID, s.media.server),
-	})
-}
-
-func makeWHEPURL(streamID string, server mediaServer) string {
-	path := "/play/whep/" + streamID
-	endpoint := url.URL{
-		Scheme:  "http",
-		Host:    net.JoinHostPort(server.mediaIP, strconv.FormatUint(uint64(server.httpPort), 10)),
-		Path:    path,
-		RawPath: "/play/whep/" + url.PathEscape(streamID),
-	}
-	return endpoint.String()
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, result)
 }

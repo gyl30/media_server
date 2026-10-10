@@ -103,6 +103,7 @@ func (s *infrastructureServer) removeRTSPPull(expected rtspPullSession) bool {
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)
+	s.tokens.revokeStream(session.streamID)
 	if session.stopDone != nil {
 		close(session.stopDone)
 	}
@@ -124,6 +125,7 @@ func (s *infrastructureServer) beginRTSPPullStop(sourceID string) (rtspPullSessi
 	}
 	session.stopDone = make(chan struct{})
 	s.rtspPulls[sourceID] = session
+	s.tokens.revokeStream(session.streamID)
 	return session, nil, true, nil
 }
 
@@ -154,6 +156,7 @@ func (s *infrastructureServer) shutdownRTSPPulls(ctx context.Context) {
 	pulls := s.rtspPulls
 	s.rtspPulls = make(map[string]rtspPullSession)
 	for _, session := range pulls {
+		s.tokens.revokeStream(session.streamID)
 		if session.stopDone != nil {
 			close(session.stopDone)
 		}

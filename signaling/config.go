@@ -25,11 +25,12 @@ type config struct {
 	mediaRequestTimeout time.Duration
 	inviteTimeout       time.Duration
 	byeTimeout          time.Duration
+	tokenTTL            time.Duration
 }
 
 func parseConfig(args []string) (config, error) {
 	var cfg config
-	var mediaHTTPPort uint
+	var mediaHTTPPort, mediaRTMPPort, mediaRTSPPort uint
 	flags := flag.NewFlagSet("signaling", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	flags.StringVar(&cfg.database, "database", "signaling.db", "SQLite database path")
@@ -45,6 +46,9 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.mediaServer.controlToken, "media-control-token", "", "bearer token for the media server control API")
 	flags.StringVar(&cfg.mediaServer.mediaIP, "media-ip", "127.0.0.1", "media server address advertised to clients and devices")
 	flags.UintVar(&mediaHTTPPort, "media-http-port", 8080, "media server HTTP port")
+	flags.UintVar(&mediaRTMPPort, "media-rtmp-port", 1935, "media server RTMP port")
+	flags.UintVar(&mediaRTSPPort, "media-rtsp-port", 8554, "media server RTSP port")
+	flags.DurationVar(&cfg.tokenTTL, "token-ttl", 60*time.Second, "lifetime of unconsumed stream authorization tokens")
 	flags.DurationVar(&cfg.mediaRequestTimeout, "media-request-timeout", 3*time.Second, "media server HTTP request timeout")
 	flags.DurationVar(&cfg.inviteTimeout, "invite-timeout", 10*time.Second, "live INVITE timeout")
 	flags.DurationVar(&cfg.byeTimeout, "bye-timeout", 3*time.Second, "live BYE timeout")
@@ -98,6 +102,14 @@ func parseConfig(args []string) (config, error) {
 		return config{}, fmt.Errorf("invalid media HTTP port")
 	}
 	cfg.mediaServer.httpPort = uint16(mediaHTTPPort)
+	if mediaRTMPPort == 0 || mediaRTMPPort > 65535 || mediaRTSPPort == 0 || mediaRTSPPort > 65535 {
+		return config{}, fmt.Errorf("invalid media RTMP or RTSP port")
+	}
+	cfg.mediaServer.rtmpPort = uint16(mediaRTMPPort)
+	cfg.mediaServer.rtspPort = uint16(mediaRTSPPort)
+	if cfg.tokenTTL <= 0 {
+		return config{}, fmt.Errorf("invalid token lifetime")
+	}
 	if cfg.mediaRequestTimeout <= 0 || cfg.inviteTimeout <= 0 || cfg.byeTimeout <= 0 {
 		return config{}, fmt.Errorf("invalid live operation timeout")
 	}

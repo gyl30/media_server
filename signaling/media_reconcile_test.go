@@ -6,8 +6,59 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
+
+func TestPushReconcileUsesQueryStartForGrace(t *testing.T) {
+	s := testInfrastructure(t)
+	start := time.Now()
+	var clock atomic.Int64
+	clock.Store(start.UnixNano())
+	s.live.sip.now = func() time.Time { return time.Unix(0, clock.Load()) }
+	deviceID := createPushDevice(t, s)
+	value := requestPushToken(t, s, deviceID)
+	verifyToken(t, s, value, "publish", value, http.StatusOK)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var queries atomic.Int32
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if queries.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{"receivers": []mediaReceiver{}})
+	}))
+	t.Cleanup(media.Close)
+	s.media.server.controlURL = media.URL
+	done := make(chan error, 1)
+	go func() { done <- s.reconcileMedia(t.Context()) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("receiver query did not start")
+	}
+	clock.Store(start.Add(4 * time.Second).UnixNano())
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("receiver query did not complete")
+	}
+	if _, ok := s.tokens.pushRuns[deviceID]; !ok {
+		t.Fatal("query latency incorrectly exhausted registration grace")
+	}
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.tokens.pushRuns[deviceID]; ok {
+		t.Fatal("subsequent query retained missing run beyond grace")
+	}
+}
 
 func testStreamingLive(s *infrastructureServer, channelID, streamID string) *liveSession {
 	established := make(chan struct{})
@@ -109,5 +160,107 @@ func TestMediaReconcileKeepsStateWhenMediaUnavailable(t *testing.T) {
 	}
 	if _, ok := s.live.live(session.key.deviceID, session.key.channelID); !ok {
 		t.Fatal("live stopped without media server evidence")
+	}
+}
+
+func TestPushReconcileRegistrationGraceAndKnownIssuedRuns(t *testing.T) {
+	s := testInfrastructure(t)
+	now := time.Now()
+	s.live.sip.now = func() time.Time { return now }
+	recent, old, issued := createPushDevice(t, s), createPushDevice(t, s), createPushDevice(t, s)
+	recentToken, oldToken, issuedToken := requestPushToken(t, s, recent), requestPushToken(t, s, old), requestPushToken(t, s, issued)
+	verifyToken(t, s, recentToken, "publish", recentToken, http.StatusOK)
+	verifyToken(t, s, oldToken, "publish", oldToken, http.StatusOK)
+	s.tokens.mu.Lock()
+	s.tokens.pushRuns[old] = pushRun{streamID: oldToken, verifiedAt: now.Add(-4 * time.Second)}
+	s.tokens.mu.Unlock()
+	play, err := s.newPlaybackURLs(playSource{PushDeviceID: old})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deleted []string
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/receivers" {
+			writeJSON(writer, http.StatusOK, map[string]any{"receivers": []map[string]string{
+				{"stream_id": issuedToken}, {"stream_id": "orphan"},
+			}})
+			return
+		}
+		var command struct {
+			StreamID string `json:"stream_id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
+			t.Error(err)
+		}
+		deleted = append(deleted, command.StreamID)
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(media.Close)
+	s.media.server.controlURL = media.URL
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.tokens.pushRuns[recent]; !ok {
+		t.Fatal("recent verification was released")
+	}
+	if _, ok := s.tokens.pushRuns[old]; ok {
+		t.Fatal("missing established push run retained")
+	}
+	if _, ok := s.tokens.pushRuns[issued]; !ok {
+		t.Fatal("unconsumed issued run was released")
+	}
+	if len(deleted) != 1 || deleted[0] != "orphan" {
+		t.Fatalf("wrong orphan deletion: %v", deleted)
+	}
+	verifyToken(t, s, play.Token, "play", oldToken, http.StatusForbidden)
+	now = now.Add(3 * time.Second)
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.tokens.pushRuns[recent]; !ok {
+		t.Fatal("exactly-three-second verification should remain in grace")
+	}
+	now = now.Add(time.Nanosecond)
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.tokens.pushRuns[recent]; ok {
+		t.Fatal("missing push beyond grace was retained")
+	}
+}
+
+func TestPushReconcileQueryFailureAndStaleSnapshot(t *testing.T) {
+	for _, scenario := range []string{"query failure", "new run"} {
+		t.Run(scenario, func(t *testing.T) {
+			s := testInfrastructure(t)
+			now := time.Now()
+			s.live.sip.now = func() time.Time { return now }
+			deviceID := createPushDevice(t, s)
+			old := requestPushToken(t, s, deviceID)
+			verifyToken(t, s, old, "publish", old, http.StatusOK)
+			s.tokens.pushRuns[deviceID] = pushRun{streamID: old, verifiedAt: now.Add(-4 * time.Second)}
+			var next string
+			media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				if scenario == "query failure" {
+					writer.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				next, _ = newStreamToken()
+				s.tokens.mu.Lock()
+				s.tokens.pushRuns[deviceID] = pushRun{streamID: next, verifiedAt: now}
+				s.tokens.mu.Unlock()
+				writeJSON(writer, http.StatusOK, map[string]any{"receivers": []mediaReceiver{}})
+			}))
+			t.Cleanup(media.Close)
+			s.media.server.controlURL = media.URL
+			err := s.reconcileMedia(t.Context())
+			if scenario == "query failure" {
+				if err == nil || s.tokens.pushRuns[deviceID].streamID != old {
+					t.Fatal("failed query released run")
+				}
+			} else if err != nil || s.tokens.pushRuns[deviceID].streamID != next {
+				t.Fatal("stale snapshot released replacement run")
+			}
+		})
 	}
 }

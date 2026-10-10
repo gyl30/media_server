@@ -34,6 +34,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	media := newMediaServerHTTPClient(cfg.mediaServer, cfg.mediaRequestTimeout)
 	live := newLiveService(server, media, ssrcs, cfg.inviteTimeout, cfg.byeTimeout, logger)
 	infrastructure := newInfrastructureServer(cfg.httpListen, sources, live, media, logger)
+	infrastructure.tokenTTL = cfg.tokenTTL
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
 	logger.Info("internal HTTP listening", "address", cfg.httpListen)
 	runContext, cancel := context.WithCancel(ctx)
@@ -45,6 +46,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	second := <-results
 	infrastructure.shutdownRTSPPulls(context.Background())
 	live.shutdown(context.Background())
+	infrastructure.shutdownPushRuns(context.Background())
 	if first != nil {
 		return first
 	}

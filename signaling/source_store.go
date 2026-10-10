@@ -78,6 +78,10 @@ func openSourceStore(ctx context.Context, path string) (*sourceStore, error) {
 			username TEXT NOT NULL,
 			password TEXT NOT NULL,
 			desired_state TEXT NOT NULL CHECK (desired_state IN ('stopped', 'running'))
+		);
+		CREATE TABLE IF NOT EXISTS push_devices (
+			device_id TEXT PRIMARY KEY,
+			name TEXT NOT NULL
 		)`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)

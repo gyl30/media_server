@@ -3,16 +3,15 @@ package main
 import (
 	"context"
 	"errors"
-	"maps"
 )
 
 // Caller holds mu: the fence and session snapshot must precede new play or REGISTER.
 func (s *liveService) beginDeviceStopLocked(deviceID string) []*liveSession {
 	s.stoppingDevices[deviceID] = struct{}{}
-	maps.DeleteFunc(s.tickets, func(_ string, ticket playTicket) bool { return ticket.key.deviceID == deviceID })
 	var sessions []*liveSession
 	for _, session := range s.sessions {
 		if session.key.deviceID == deviceID {
+			s.tokens.revokeStream(session.streamID)
 			sessions = append(sessions, session)
 		}
 	}

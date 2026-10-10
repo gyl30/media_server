@@ -18,6 +18,8 @@ type mediaServer struct {
 	controlToken string
 	mediaIP      string
 	httpPort     uint16
+	rtmpPort     uint16
+	rtspPort     uint16
 }
 
 type gb28181ReceiverRequest struct {
