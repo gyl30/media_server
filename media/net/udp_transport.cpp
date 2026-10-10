@@ -15,11 +15,6 @@ udp_transport::udp_transport(boost::asio::io_context& owner) : socket_(owner) {}
 void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error)
 {
     error.clear();
-    if (socket_.is_open())
-    {
-        error = boost::asio::error::already_started;
-        return;
-    }
     if (bind_address.is_unspecified())
     {
         error = boost::asio::error::invalid_argument;
@@ -36,10 +31,6 @@ void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t
     {
         boost::system::error_code close_error;
         socket_.close(close_error);
-    }
-    else
-    {
-        stopped_ = false;
     }
 }
 
@@ -74,7 +65,7 @@ bool udp_transport::write(std::span<const std::uint8_t> data, boost::asio::ip::u
 
 bool udp_transport::write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint)
 {
-    if (stopped_)
+    if (!socket_.is_open())
     {
         return false;
     }
@@ -103,25 +94,17 @@ void udp_transport::start_write()
 
 void udp_transport::on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error, std::size_t bytes)
 {
-    // shutdown 后清空队列；startup 的绑定重试不能使旧 completion 操作新队列。
-    if (stopped_ || write_queue_.empty() || write_queue_.front() != datagram)
+    if (!socket_.is_open() || write_queue_.empty())
     {
         return;
     }
 
     const auto callback = write_callback_;
-    if (error)
-    {
-        stopped_ = true;
-        write_queue_.clear();
-        queued_write_bytes_ = 0;
-        write_callback_ = {};
-    }
     if (callback)
     {
         (*callback)(error, bytes);
     }
-    if (stopped_ || write_queue_.empty() || write_queue_.front() != datagram)
+    if (error || !socket_.is_open() || write_queue_.empty())
     {
         return;
     }
@@ -138,7 +121,6 @@ boost::asio::ip::udp::endpoint udp_transport::local_endpoint(boost::system::erro
 
 void udp_transport::shutdown()
 {
-    stopped_ = true;
     write_queue_.clear();
     queued_write_bytes_ = 0;
     write_callback_ = {};

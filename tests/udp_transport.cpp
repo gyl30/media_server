@@ -228,46 +228,103 @@ void overflow_and_reentrant_write()
     require(completed == 33 && received == 33 && rejections == 2, "overflow recovery failed");
 }
 
-void socket_error_and_rebind_fencing()
+void socket_error_and_reconstruction()
 {
     boost::asio::io_context io;
     auto sender = bound(io);
+    const std::weak_ptr<udp_transport> error_lifetime = sender;
     udp::socket receiver(io, udp::endpoint(loopback, 0));
+    receiver.non_blocking(true);
+    const auto endpoint = receiver.local_endpoint();
+    auto callback_owner = std::make_shared<int>(0);
+    const std::weak_ptr<int> callback_lifetime = callback_owner;
     std::size_t errors{};
-    sender->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
+    bool owner_closed{};
+    sender->set_write_callback([&, callback_owner](boost::system::error_code error, std::size_t bytes)
                               {
                                   require(error == boost::asio::error::message_size && bytes == 0, "real send error not propagated");
                                   ++errors;
-                                  sender->shutdown();
+                                  require(address(sender).port() != 0, "send error closed socket before owner shutdown");
+                                  require(sender->write(std::vector<std::uint8_t>{3}, endpoint), "send error made transport terminal before owner shutdown");
+                                  // 上层稍后关闭；失败包仍在队首，因此新包也不能开始发送。
+                                  boost::asio::post(io, [&]()
+                                                    {
+                                                        require(errors == 1 && !callback_lifetime.expired(), "send error cleared callback before owner shutdown");
+                                                        sender->shutdown();
+                                                        require(callback_lifetime.expired(), "owner shutdown retained write callback");
+                                                        require(!sender->write(std::vector<std::uint8_t>{4}, endpoint), "write after owner shutdown accepted");
+                                                        sender.reset();
+                                                        owner_closed = true;
+                                                    });
                               });
+    callback_owner.reset();
     boost::asio::post(io, [&]()
                       {
-                          require(sender->write(std::vector<std::uint8_t>(65'508, 1), receiver.local_endpoint()), "socket-error packet not admitted");
-                          require(sender->write(std::vector<std::uint8_t>{2}, receiver.local_endpoint()), "socket-error pending packet not admitted");
+                          require(sender->write(std::vector<std::uint8_t>(65'508, 1), endpoint), "socket-error packet not admitted");
+                          require(sender->write(std::vector<std::uint8_t>{2}, endpoint), "socket-error pending packet not admitted");
                       });
     drain(io);
-    require(errors == 1, "socket error completion repeated");
+    require(owner_closed && errors == 1 && error_lifetime.expired(), "socket error completion repeated or transport retained");
+    std::array<std::uint8_t, 2048> buffer{};
+    udp::endpoint remote;
+    boost::system::error_code read_error;
+    const auto unexpected_bytes = receiver.receive_from(boost::asio::buffer(buffer), remote, 0, read_error);
+    require(unexpected_bytes == 0 && (read_error == boost::asio::error::would_block || read_error == boost::asio::error::try_again),
+            "pending datagram sent after socket error");
 
     io.restart();
+    sender = bound(io);
+    const std::weak_ptr<udp_transport> old_lifetime = sender;
+    std::shared_ptr<udp_transport> replacement;
+    std::weak_ptr<udp_transport> replacement_lifetime;
+    std::size_t old_completions{};
     std::size_t completions{};
     boost::asio::post(io, [&]()
                       {
-                          boost::system::error_code error;
-                          sender->startup(loopback, 0, error);
-                          require(!error, "binding retry failed");
-                          require(sender->write(std::vector<std::uint8_t>(1024, 3), receiver.local_endpoint()), "old datagram not admitted");
+                          sender->set_write_callback([&](boost::system::error_code, std::size_t) { ++old_completions; });
+                          require(sender->write(std::vector<std::uint8_t>(1024, 3), endpoint), "old datagram not admitted");
+                          require(sender->write(std::vector<std::uint8_t>{5}, endpoint), "old pending datagram not admitted");
                           sender->shutdown();
-                          sender->startup(loopback, 0, error);
-                          require(!error, "binding retry after shutdown failed");
-                          sender->set_write_callback([&](boost::system::error_code result, std::size_t bytes)
-                                                    {
-                                                        require(!result && bytes == 17, "old completion mutated rebound queue");
-                                                        ++completions;
-                                                    });
-                          require(sender->write(std::vector<std::uint8_t>(17, 4), receiver.local_endpoint()), "rebound enqueue rejected");
+                          require(!sender->write(std::vector<std::uint8_t>{6}, endpoint), "closed old transport accepted write");
+                          sender.reset();
+                          require(!old_lifetime.expired(), "old transport released before in-flight completion");
+                          replacement = bound(io);
+                          replacement_lifetime = replacement;
+                          replacement->set_write_callback([&](boost::system::error_code result, std::size_t bytes)
+                                                          {
+                                                              require(!result && bytes == 17, "old completion affected replacement transport");
+                                                              ++completions;
+                                                              replacement->shutdown();
+                                                              require(!replacement->write(std::vector<std::uint8_t>{7}, endpoint),
+                                                                      "closed replacement accepted write");
+                                                              replacement.reset();
+                                                          });
+                          require(replacement->write(std::vector<std::uint8_t>(17, 4), endpoint), "replacement enqueue rejected");
                       });
     drain(io);
-    require(completions == 1, "rebind completion duplicated/missing");
+    require(old_completions == 0 && completions == 1 && old_lifetime.expired() && replacement_lifetime.expired(),
+            "reconstruction completion or transport lifetime changed");
+    std::size_t old_packets{};
+    std::size_t replacement_packets{};
+    for (;;)
+    {
+        const auto bytes = receiver.receive_from(boost::asio::buffer(buffer), remote, 0, read_error);
+        if (read_error == boost::asio::error::would_block || read_error == boost::asio::error::try_again)
+        {
+            break;
+        }
+        require(!read_error, "reconstruction receive failed");
+        if (bytes == 1024 && buffer.front() == 3)
+        {
+            ++old_packets;
+        }
+        else
+        {
+            require(bytes == 17 && buffer.front() == 4, "closed transport sent a pending datagram");
+            ++replacement_packets;
+        }
+    }
+    require(old_packets <= 1 && replacement_packets == 1, "replacement datagram missing or old write repeated");
 }
 
 void gb_session_error_policies()
@@ -373,7 +430,7 @@ int main()
         serialization_and_endpoints();
         in_flight_shutdown();
         overflow_and_reentrant_write();
-        socket_error_and_rebind_fencing();
+        socket_error_and_reconstruction();
         gb_session_error_policies();
         std::cout << "UDP serialization, endpoints, shutdown, overflow, socket error and GB policies: PASS\n";
     }
