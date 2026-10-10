@@ -213,10 +213,14 @@ void high_water_boundaries()
         pair.read_to_end(received);
         pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
                                           {
-                                              // 超限写入在入队时关闭连接，只通知一次，在途写不再回调。
+                                              // 网络层只报告溢出，连接由上层关闭。
                                               if (overflow)
                                               {
                                                   require(error == boost::asio::error::no_buffer_space && bytes == 0, "high water overflow not rejected");
+                                                  boost::system::error_code endpoint_error;
+                                                  const auto endpoint = pair.transport->local_endpoint(endpoint_error);
+                                                  require(!endpoint_error && endpoint.port() != 0, "transport closed socket before reporting overflow");
+                                                  boost::asio::post(pair.io, [&]() { pair.transport->shutdown(); });
                                               }
                                               else
                                               {
@@ -230,6 +234,11 @@ void high_water_boundaries()
                                           });
         pair.transport->write(std::vector<std::uint8_t>(front_bytes, 0x11));
         pair.transport->write(std::vector<std::uint8_t>(remaining, 0x22));
+        if (overflow)
+        {
+            pair.transport->write(std::vector<std::uint8_t>(19, 0x33));
+            pair.transport->write(std::vector<std::uint8_t>(23, 0x44));
+        }
         pair.drain();
         std::vector<std::uint8_t> expected(front_bytes, 0x11);
         if (overflow)

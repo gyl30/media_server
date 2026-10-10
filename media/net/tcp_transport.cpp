@@ -55,7 +55,7 @@ void tcp_transport::shutdown()
 
 void tcp_transport::safe_write(std::vector<std::uint8_t> data)
 {
-    if (stopped_)
+    if (!socket_.is_open() || !write_callback_)
     {
         return;
     }
@@ -65,7 +65,6 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
     if (writing && queued_write_bytes_ - write_queue_.front()->size() + data.size() > write_high_water_mark)
     {
         const auto callback = std::move(write_callback_);
-        safe_shutdown();
         if (callback)
         {
             callback(boost::asio::error::no_buffer_space, 0);
@@ -90,7 +89,7 @@ void tcp_transport::post_write()
 
 void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
 {
-    if (stopped_)
+    if (!socket_.is_open() || write_queue_.empty() || !write_callback_)
     {
         return;
     }
@@ -109,7 +108,7 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
     {
         return;
     }
-    if (!write_queue_.empty())
+    if (!write_queue_.empty() && write_callback_)
     {
         post_write();
     }
@@ -117,7 +116,6 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
 
 void tcp_transport::safe_shutdown()
 {
-    stopped_ = true;
     write_queue_.clear();
     queued_write_bytes_ = 0;
     write_callback_ = {};

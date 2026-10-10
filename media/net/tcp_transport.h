@@ -47,7 +47,6 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
     std::size_t queued_write_bytes_{};
     std::deque<buffer> write_queue_;
     write_callback write_callback_;
-    bool stopped_{};
 };
 
 }    // namespace media_server
