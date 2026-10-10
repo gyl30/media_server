@@ -57,7 +57,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     {
         return false;
     }
-    shutdown_subscription_ = worker_.subscribe_shutdown([self = shared_from_this()]() { self->safe_shutdown(); });
+    shutdown_subscription_ = worker_.subscribe_shutdown([self = shared_from_this()]() { self->shutdown(); });
     if (!shutdown_subscription_)
     {
         return false;
@@ -75,35 +75,33 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
 
     const auto self = shared_from_this();
     rtp_transport_->set_write_callback(
-        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
             if (!error)
             {
                 return;
             }
-            const auto locked = weak.lock();
-            if (!locked || !locked->stream_ || error == boost::asio::error::operation_aborted)
+            if (!self->stream_ || error == boost::asio::error::operation_aborted)
             {
                 return;
             }
-            locked->sender_->shutdown();
-            locked->shutdown();
+            self->sender_->shutdown();
+            self->shutdown();
         });
     rtcp_transport_->set_write_callback(
-        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
-            const auto locked = weak.lock();
-            if (!locked || !locked->stream_ || error == boost::asio::error::operation_aborted)
+            if (!self->stream_ || error == boost::asio::error::operation_aborted)
             {
                 return;
             }
             if (error)
             {
-                locked->sender_->shutdown();
-                locked->shutdown();
+                self->sender_->shutdown();
+                self->shutdown();
                 return;
             }
-            locked->schedule_rtcp();
+            self->schedule_rtcp();
         });
     sender_ = std::make_shared<gb28181_rtp_sender>(
         worker_, stream_, [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); }, [self]() { self->shutdown(); });

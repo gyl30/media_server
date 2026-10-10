@@ -210,6 +210,52 @@ void parent_shutdown_before_sender_drain()
     media_port_pool::instance().release(*returned);
     std::cout << "GB UDP parent cleanup before PS drain and child cleanup: PASS\n";
 }
+
+void worker_stop_posts_parent_and_child_cleanup()
+{
+    fixture live;
+    const auto address = boost::asio::ip::address_v4::loopback();
+    udp::socket rtp_client(live.sender_worker.io(), {address, 0});
+    udp::socket rtcp_client(live.sender_worker.io(), {address, 0});
+    auto session = std::make_shared<gb28181_udp_sender_session>(
+        live.sender_worker, live.source, "worker-stop", rtp_client.local_endpoint(), rtcp_client.local_endpoint());
+    on_owner(live.sender_worker,
+             [&]()
+             {
+                 require(session_registry::instance().add_sender_session(live.source->stream_id(), "worker-stop", session),
+                         "worker-stop sender registration failed");
+                 require(session->startup(address, 96, 4), "worker-stop sender startup failed");
+             });
+    live.source_worker.io().poll();
+    live.sender_worker.io().poll();
+
+    const std::weak_ptr<gb28181_udp_sender_session> lifetime = session;
+    session.reset();
+    live.sender_worker.request_stop();
+    require(live.sender_worker.io().run_one_for(5s) == 1, "worker stop callback did not run");
+    require(!lifetime.expired(), "worker stop lost its pending parent shutdown");
+    require(!media_port_pool::instance().acquire(), "worker stop returned a port before parent cleanup");
+
+    require(live.sender_worker.io().run_one_for(5s) == 1, "posted parent cleanup did not run after worker stop");
+    require(!session_registry::instance().take_sender_session(live.source->stream_id(), "worker-stop"),
+            "posted parent cleanup retained registry ownership");
+    const auto returned = media_port_pool::instance().acquire();
+    require(returned == 24'440 && !media_port_pool::instance().acquire(), "worker-stop cleanup leaked or duplicated its port");
+    require(!lifetime.expired(), "child callback did not retain its parent until child cleanup");
+    if (const auto current = lifetime.lock())
+    {
+        current->shutdown();
+        current->shutdown();
+    }
+    live.sender_worker.io().run_for(5s);
+    require(lifetime.expired(), "worker stop retained parent through a child callback cycle");
+    require(live.sender_worker.io().stopped(), "worker stop did not drain posted child cleanup");
+    require(!media_port_pool::instance().acquire(), "repeated parent cleanup returned another owner's allocation");
+    udp::socket released_rtp(live.sender_worker.io(), {address, *returned});
+    udp::socket released_rtcp(live.sender_worker.io(), {address, static_cast<std::uint16_t>(*returned + 1U)});
+    media_port_pool::instance().release(*returned);
+    std::cout << "GB UDP worker stop posts parent/child cleanup and releases callback ownership: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -220,6 +266,7 @@ int main()
         late_output_after_shutdown();
         queued_frames_after_shutdown();
         parent_shutdown_before_sender_drain();
+        worker_stop_posts_parent_and_child_cleanup();
         return 0;
     }
     catch (const std::exception& error)

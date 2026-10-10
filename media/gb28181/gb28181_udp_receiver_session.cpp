@@ -58,19 +58,18 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
 
     const auto self = shared_from_this();
     rtcp_transport_->set_write_callback(
-        [weak = weak_from_this()](boost::system::error_code error, std::size_t)
+        [self](boost::system::error_code error, std::size_t)
         {
-            const auto locked = weak.lock();
-            if (!locked || !locked->local_port_)
+            if (!self->local_port_)
             {
                 return;
             }
             if (error)
             {
-                locked->shutdown();
+                self->shutdown();
                 return;
             }
-            locked->schedule_rtcp();
+            self->schedule_rtcp();
         });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
