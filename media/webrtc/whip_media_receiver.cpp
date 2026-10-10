@@ -50,51 +50,52 @@ bool whip_media_receiver::startup(whip_media_receiver_config config)
         return false;
     }
 
-    if (audio_payload_type_ >= 0)
+    if (audio_payload_type_ < 0)
     {
-        audio_demuxer_ = rtsp_demuxer_create(1, 500, &whip_media_receiver::packet_callback, this);
-        if (audio_demuxer_ == nullptr ||
-            rtsp_demuxer_add_payload(audio_demuxer_, static_cast<int>(opus_sample_rate), audio_payload_type_, "opus", nullptr) != 0)
-        {
-            return false;
-        }
-
-        const auto bitrate = 64'000 * static_cast<int>(config.audio_channel_count);
-        audio_transcoder_ = std::make_unique<audio_transcoder>();
-        if (!audio_transcoder_->startup(audio_transcoder_config{
-                .input =
-                    audio_transcoder_format{
-                        .codec = codec_id::opus,
-                        .sample_rate = opus_sample_rate,
-                        .channel_count = config.audio_channel_count,
-                    },
-                .output =
-                    audio_transcoder_format{
-                        .codec = codec_id::aac,
-                        .sample_rate = opus_sample_rate,
-                        .channel_count = config.audio_channel_count,
-                    },
-                .input_codec_config = {},
-                .output_bit_rate = bitrate,
-                .output_cutoff = audio_cutoff,
-            }))
-        {
-            return false;
-        }
-        const auto codec_config = audio_transcoder_->output_codec_config();
-        if (codec_config.empty())
-        {
-            return false;
-        }
-        audio_track_ = media_track{
-            .id = audio_track_id,
-            .kind = media_kind::audio,
-            .codec = codec_id::aac,
-            .clock_rate = opus_sample_rate,
-            .channel_count = config.audio_channel_count,
-            .codec_config = std::vector<std::uint8_t>(codec_config.begin(), codec_config.end()),
-        };
+        return true;
     }
+    audio_demuxer_ = rtsp_demuxer_create(1, 500, &whip_media_receiver::packet_callback, this);
+    if (audio_demuxer_ == nullptr ||
+        rtsp_demuxer_add_payload(audio_demuxer_, static_cast<int>(opus_sample_rate), audio_payload_type_, "opus", nullptr) != 0)
+    {
+        return false;
+    }
+
+    const auto bitrate = 64'000 * static_cast<int>(config.audio_channel_count);
+    audio_transcoder_ = std::make_unique<audio_transcoder>();
+    if (!audio_transcoder_->startup(audio_transcoder_config{
+            .input =
+                audio_transcoder_format{
+                    .codec = codec_id::opus,
+                    .sample_rate = opus_sample_rate,
+                    .channel_count = config.audio_channel_count,
+                },
+            .output =
+                audio_transcoder_format{
+                    .codec = codec_id::aac,
+                    .sample_rate = opus_sample_rate,
+                    .channel_count = config.audio_channel_count,
+                },
+            .input_codec_config = {},
+            .output_bit_rate = bitrate,
+            .output_cutoff = audio_cutoff,
+        }))
+    {
+        return false;
+    }
+    const auto codec_config = audio_transcoder_->output_codec_config();
+    if (codec_config.empty())
+    {
+        return false;
+    }
+    audio_track_ = media_track{
+        .id = audio_track_id,
+        .kind = media_kind::audio,
+        .codec = codec_id::aac,
+        .clock_rate = opus_sample_rate,
+        .channel_count = config.audio_channel_count,
+        .codec_config = std::vector<std::uint8_t>(codec_config.begin(), codec_config.end()),
+    };
     return true;
 }
 
