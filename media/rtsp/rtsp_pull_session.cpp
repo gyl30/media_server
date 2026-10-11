@@ -212,6 +212,10 @@ int rtsp_pull_session::play_callback(
     }
 
     auto* self = static_cast<rtsp_pull_session*>(param);
+    if (!self->media_)
+    {
+        return -1;
+    }
     return self->media_->set_rtp_info(static_cast<std::size_t>(media), static_cast<std::uint16_t>(info[0].seq), info[0].time);
 }
 
