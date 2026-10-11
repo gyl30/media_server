@@ -34,6 +34,8 @@ using clock_type = std::chrono::steady_clock;
 struct configuration
 {
     std::string whep_url;
+    std::filesystem::path whep_urls_file;
+    std::vector<std::string> whep_urls;
     boost::asio::ip::address bind_address{boost::asio::ip::address_v4::any()};
     std::size_t viewers{};
     std::size_t sources{1};
@@ -92,6 +94,10 @@ configuration parse_arguments(int argc, char** argv)
         {
             config.whep_url = argument_value(index, argc, argv, argument);
         }
+        else if (argument == "--whep-urls-file")
+        {
+            config.whep_urls_file = argument_value(index, argc, argv, argument);
+        }
         else if (argument == "--bind-address")
         {
             config.bind_address = boost::asio::ip::make_address(argument_value(index, argc, argv, argument));
@@ -125,11 +131,37 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (config.whep_url.empty() || config.viewers == 0U || config.sources == 0U ||
+    if (config.whep_url.empty() == config.whep_urls_file.empty() || config.viewers == 0U || config.sources == 0U ||
+        (!config.whep_urls_file.empty() && config.sources != 1U) ||
         (config.sources > 1U && !config.whep_url.ends_with("perf0")) || config.ramp_per_second == 0U ||
         config.io_threads == 0U || config.io_threads > 64U || config.duration.count() <= 0 || config.warmup.count() < 0)
     {
-        throw std::runtime_error("whep-url, viewers, ramp-per-second, io-threads and positive duration are required");
+        throw std::runtime_error("exactly one of whep-url or whep-urls-file, viewers, ramp-per-second, io-threads and positive duration are required; whep-urls-file requires sources=1");
+    }
+    if (!config.whep_urls_file.empty())
+    {
+        std::ifstream input(config.whep_urls_file);
+        if (!input)
+        {
+            throw std::runtime_error("cannot read whep-urls-file");
+        }
+        std::string url;
+        while (std::getline(input, url))
+        {
+            if (!url.empty() && url.back() == '\r')
+            {
+                url.pop_back();
+            }
+            if (url.empty() || std::ranges::find(config.whep_urls, url) != config.whep_urls.end())
+            {
+                throw std::runtime_error("whep-urls-file requires nonempty distinct URLs");
+            }
+            config.whep_urls.push_back(std::move(url));
+        }
+        if (input.bad() || config.whep_urls.size() != config.viewers)
+        {
+            throw std::runtime_error("whep-urls-file must contain exactly one URL per viewer");
+        }
     }
     return config;
 }
@@ -417,9 +449,11 @@ int main(int argc, char** argv)
             auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, config.bind_address);
             media_server::bench::webrtc_http_response response;
             std::string error;
-            const auto url = config.sources == 1U
-                                 ? config.whep_url
-                                 : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
+            const auto url = !config.whep_urls.empty()
+                                 ? config.whep_urls[index]
+                                 : config.sources == 1U
+                                       ? config.whep_url
+                                       : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
             const auto posted = media_server::bench::post_webrtc_offer(url, offer, response, error);
             if (!posted || response.status != 201U || !peer->establish(response.body, error))
             {
@@ -514,7 +548,36 @@ int main(int argc, char** argv)
         }
         const auto process_before = sample_process();
         const auto started = clock_type::now();
-        std::this_thread::sleep_for(config.duration);
+        const auto deadline = started + config.duration;
+        auto progress_before = session_before;
+        auto progress_started = started;
+        while (progress_started < deadline)
+        {
+            const bool full_window = deadline - progress_started >= std::chrono::seconds(5);
+            std::this_thread::sleep_until(std::min(progress_started + std::chrono::seconds(5), deadline));
+            const auto progress_finished = clock_type::now();
+            std::size_t progress_count{};
+            std::uint64_t progress_video_min = std::numeric_limits<std::uint64_t>::max();
+            std::uint64_t progress_audio_min = std::numeric_limits<std::uint64_t>::max();
+            std::uint64_t progress_bytes_min = std::numeric_limits<std::uint64_t>::max();
+            for (std::size_t index = 0; index < sessions.size(); ++index)
+            {
+                const session_sample current{sessions[index]->received_bytes(), sessions[index]->video_packets(),
+                                             sessions[index]->audio_packets()};
+                const auto video = current.video - progress_before[index].video;
+                const auto audio = current.audio - progress_before[index].audio;
+                progress_count += video > 0 && audio > 0 ? 1U : 0U;
+                progress_video_min = std::min(progress_video_min, video);
+                progress_audio_min = std::min(progress_audio_min, audio);
+                progress_bytes_min = std::min(progress_bytes_min, current.bytes - progress_before[index].bytes);
+                progress_before[index] = current;
+            }
+            std::cout << "phase=progress progressing=" << progress_count << " full_window=" << full_window
+                      << " duration_seconds=" << std::chrono::duration<double>(progress_finished - progress_started).count()
+                      << " viewer_video_packets_min=" << progress_video_min << " viewer_audio_packets_min=" << progress_audio_min
+                      << " viewer_received_bytes_min=" << progress_bytes_min << std::endl;
+            progress_started = progress_finished;
+        }
         const auto elapsed = std::chrono::duration<double>(clock_type::now() - started).count();
         const auto process_after = sample_process();
         const auto after = total_media(sessions);
