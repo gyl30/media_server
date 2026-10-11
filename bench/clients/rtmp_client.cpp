@@ -25,9 +25,15 @@ rtmp_client::rtmp_client(boost::asio::io_context& io, std::string app, std::stri
 {
 }
 
-rtmp_client::~rtmp_client() { rtmp_client_destroy(client_); }
+rtmp_client::~rtmp_client()
+{
+    if (client_ != nullptr)
+    {
+        rtmp_client_destroy(client_);
+    }
+}
 
-boost::asio::awaitable<boost::system::error_code> rtmp_client::play(std::string host, std::uint16_t port)
+boost::asio::awaitable<boost::system::error_code> rtmp_client::play(std::string host, std::uint16_t port, bool expect_audio)
 {
     boost::system::error_code error;
     const auto endpoints =
@@ -54,41 +60,21 @@ boost::asio::awaitable<boost::system::error_code> rtmp_client::play(std::string 
         co_return boost::asio::error::operation_aborted;
     }
 
-    boost::asio::steady_timer timer(socket_.get_executor());
-    auto timed_out = std::make_shared<bool>(false);
-    timer.expires_after(std::chrono::seconds{60});
-    timer.async_wait(
-        [this, timed_out](const boost::system::error_code& timer_error)
-        {
-            if (!timer_error)
-            {
-                *timed_out = true;
-                socket_.cancel();
-            }
-        });
-
     std::array<std::uint8_t, 8192> read_buffer{};
-    while (received_messages_ == 0)
+    while (received_messages_ == 0 || (expect_audio && received_audio_messages_ == 0))
     {
         error = co_await flush();
         if (error)
         {
-            timer.cancel();
             co_return error;
         }
         const auto bytes =
             co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error || rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
         {
-            timer.cancel();
-            if (*timed_out && error == boost::asio::error::operation_aborted)
-            {
-                co_return boost::asio::error::timed_out;
-            }
             co_return error ? error : boost::asio::error::operation_aborted;
         }
     }
-    timer.cancel();
     co_return boost::system::error_code{};
 }
 
@@ -117,6 +103,7 @@ boost::asio::awaitable<boost::system::error_code> rtmp_client::consume_one()
 void rtmp_client::cancel() noexcept
 {
     boost::system::error_code error;
+    resolver_.cancel();
     socket_.cancel(error);
 }
 

@@ -539,4 +539,11 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
         bench/clients/webrtc_client.cpp
     )
     target_link_libraries(webrtc_disconnect PRIVATE media_core media_server_link_options)
+
+    if(BUILD_TESTING)
+        add_test(NAME perf_tooling
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_tooling.py
+                --build-dir $<TARGET_FILE_DIR:rtmp_fanout>)
+        set_tests_properties(perf_tooling PROPERTIES TIMEOUT 30)
+    endif()
 endif()

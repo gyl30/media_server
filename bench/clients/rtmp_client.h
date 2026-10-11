@@ -23,7 +23,7 @@ class rtmp_client final
     ~rtmp_client();
 
    public:
-    boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port);
+    boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, bool expect_audio);
     boost::asio::awaitable<boost::system::error_code> consume_one();
     void cancel() noexcept;
 

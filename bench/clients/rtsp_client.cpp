@@ -1,4 +1,5 @@
 #include <array>
+#include <string_view>
 #include <utility>
 
 #include <boost/asio/write.hpp>
@@ -10,6 +11,7 @@
 
 extern "C"
 {
+#include "sdp.h"
 #include "rtsp-client.h"
 #include "rtsp-header-transport.h"
 }
@@ -19,11 +21,16 @@ namespace media_server::bench
 
 rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io), path_(std::move(path)) {}
 
-rtsp_client::~rtsp_client() { rtsp_client_destroy(client_); }
-
-boost::asio::awaitable<boost::system::error_code> rtsp_client::play(std::string host, std::uint16_t port)
+rtsp_client::~rtsp_client()
 {
-    received_channels_.clear();
+    if (client_ != nullptr)
+    {
+        rtsp_client_destroy(client_);
+    }
+}
+
+boost::asio::awaitable<boost::system::error_code> rtsp_client::play(std::string host, std::uint16_t port, bool expect_audio)
+{
     received_bytes_ = 0;
     received_messages_ = 0;
     received_audio_bytes_ = 0;
@@ -35,7 +42,7 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::play(std::string 
     }
 
     std::array<std::uint8_t, 8192> read_buffer{};
-    while (received_channels_.size() < 2)
+    while (received_messages_ == 0 || (expect_audio && received_audio_messages_ == 0))
     {
         const auto bytes =
             co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
@@ -72,6 +79,7 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::consume_one()
 void rtsp_client::cancel() noexcept
 {
     boost::system::error_code error;
+    resolver_.cancel();
     socket_.cancel(error);
 }
 
@@ -147,6 +155,19 @@ int rtsp_client::describe_callback(void* param, const char* sdp, int len)
 {
     auto* self = static_cast<rtsp_client*>(param);
     self->sdp_.assign(sdp, static_cast<std::size_t>(len));
+    auto* parsed = sdp_parse(sdp, len);
+    if (parsed == nullptr)
+    {
+        return -1;
+    }
+    self->audio_channels_.clear();
+    const auto count = sdp_media_count(parsed);
+    for (int index = 0; index < count; ++index)
+    {
+        const std::string_view kind(sdp_media_type(parsed, index));
+        self->audio_channels_.push_back(kind == "audio");
+    }
+    sdp_destroy(parsed);
     return rtsp_client_setup(self->client_, self->sdp_.c_str(), static_cast<int>(self->sdp_.size()));
 }
 
@@ -166,13 +187,13 @@ int rtsp_client::play_callback(void* param, int, const std::uint64_t*, const std
 
 int rtsp_client::ignore_callback(void*) { return 0; }
 
-void rtsp_client::rtp_callback(void* param, std::uint8_t channel, const void*, std::uint16_t bytes)
+void rtsp_client::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
-    if ((channel % 2U) == 0U && bytes != 0)
+    auto* self = static_cast<rtsp_client*>(param);
+    const auto* packet = static_cast<const std::uint8_t*>(data);
+    if ((channel % 2U) == 0U && channel / 2U < self->audio_channels_.size() && bytes > 12U && (packet[0] >> 6U) == 2U)
     {
-        auto* self = static_cast<rtsp_client*>(param);
-        // The benchmark fixture advertises video on channel 0 and audio on channel 2.
-        if (channel == 0)
+        if (!self->audio_channels_[channel / 2U])
         {
             self->received_bytes_ += bytes;
             ++self->received_messages_;
@@ -182,7 +203,6 @@ void rtsp_client::rtp_callback(void* param, std::uint8_t channel, const void*, s
             self->received_audio_bytes_ += bytes;
             ++self->received_audio_messages_;
         }
-        self->received_channels_.insert(channel);
     }
 }
 

@@ -118,4 +118,20 @@ HLS 的 27.78 MB 下载证据包含同一 playlist 内旧分片的重复下载�
 BLOCKED 的 reason 可以是 CLIENT_RESOURCE、REMOTE_ACCESS、PROFILE_TOOL 等。
 FAIL 必须区分授权、建连、首媒体、稳态、上游、服务端与清理；容量调度器不能把所有 FAIL 当服务器上限。
 
-工具参数、运行包、完整 TEST 验证与 Pi 命令将在实施后追加；目前没有新工具 PASS 声明。
+工具参数、运行包、完整 TEST 验证与 Pi 命令将在实施后追加。
+
+## Native 基础入口验证
+
+RTMP/RTSP 新增 `--play-paths-file`，每行一个 `stream_id/token`，必须非空、互异、数量等于
+`--viewers`。`--stream-name` 仍可用于单次诊断；正式多 viewer 必须使用独立凭据文件。
+`--video-only` 指定视频单轨，默认要求音视频；`--ready-timeout` 默认 60 秒，覆盖解析地址、
+连接、协商及首媒体；`--progress-interval` 默认 5 秒，完整窗口内预期轨道均需增长。
+
+`tests/perf_tooling.py` 经实际 RED→GREEN 验证凭据入口、重复路径拒绝、连接拒绝清理、
+无媒体 PLAY 超时、视频单轨、SDP 音视频顺序、稳态停滞以及 warmup 中断的有限退出。
+SDP/停滞测试使用受控 TCP RTSP 对端和真实 ireader 客户端，不等同于真实素材解码验证。
+其中旧工具在只发送约 0.25 秒媒体后仍返回 0，warmup 中断则超出 5 秒外层期限；修正后均返回失败。
+连接拒绝还暴露了两个 benchmark 客户端对空 ireader 对象调用 destroy 的可达崩溃，已在客户端修复。
+
+DEV 普通构建通过，相关 CTest 5/5 通过；此前全量 CTest 的其余 55 项通过，新工具开发过程中的
+失败保留在 Codex 自有日志目录。后续完整工具及真实 TEST 验证尚未执行，不据此声明容量工具已完成。

@@ -17,6 +17,8 @@
 #include <boost/asio/steady_timer.hpp>
 #include <boost/asio/use_awaitable.hpp>
 
+#include "bench/media_progress.h"
+#include "bench/credential_file.h"
 #include "bench/clients/rtmp_client.h"
 
 namespace
@@ -25,12 +27,17 @@ namespace
 struct configuration
 {
     std::string stream_name;
+    std::string play_paths_file;
+    std::vector<std::string> play_paths;
     std::string media_host{"127.0.0.1"};
     std::uint16_t media_port{1935};
     std::size_t viewers{};
     std::chrono::seconds warmup{5};
     std::chrono::seconds duration{10};
     std::size_t ramp_per_second{50};
+    std::chrono::seconds ready_timeout{60};
+    bool video_only{};
+    std::chrono::seconds progress_interval{5};
 };
 
 struct results
@@ -77,6 +84,7 @@ struct run_state
     std::size_t trigger_viewer = static_cast<std::size_t>(-1);
     std::chrono::steady_clock::time_point measurement_deadline{};
     std::vector<std::shared_ptr<boost::asio::steady_timer>> ready_gates;
+    bool measurement_finished{};
 };
 
 std::pair<std::string, std::string> split_rtmp_stream_name(std::string_view stream_name)
@@ -112,13 +120,34 @@ configuration parse_arguments(int argc, char** argv)
         {
             config.stream_name = argument_value(index, argc, argv, argument);
         }
+        else if (argument == "--play-paths-file")
+        {
+            config.play_paths_file = argument_value(index, argc, argv, argument);
+        }
         else if (argument == "--media-host")
         {
             config.media_host = argument_value(index, argc, argv, argument);
         }
         else if (argument == "--media-port")
         {
-            config.media_port = static_cast<std::uint16_t>(std::stoul(argument_value(index, argc, argv, argument)));
+            const auto port = std::stoul(argument_value(index, argc, argv, argument));
+            if (port == 0U || port > 65535U)
+            {
+                throw std::runtime_error("media-port must be in 1..65535");
+            }
+            config.media_port = static_cast<std::uint16_t>(port);
+        }
+        else if (argument == "--video-only")
+        {
+            config.video_only = true;
+        }
+        else if (argument == "--progress-interval")
+        {
+            config.progress_interval = std::chrono::seconds{std::stoll(argument_value(index, argc, argv, argument))};
+        }
+        else if (argument == "--ready-timeout")
+        {
+            config.ready_timeout = std::chrono::seconds{std::stoll(argument_value(index, argc, argv, argument))};
         }
         else if (argument == "--viewers")
         {
@@ -141,10 +170,14 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (config.stream_name.empty() || config.viewers == 0U || config.duration.count() <= 0 || config.warmup.count() < 0 ||
-        config.ramp_per_second == 0U)
+    if (config.stream_name.empty() == config.play_paths_file.empty() || config.viewers == 0U || config.duration.count() <= 0 || config.warmup.count() < 0 ||
+        config.ramp_per_second == 0U || config.ready_timeout.count() <= 0 || config.progress_interval.count() <= 0)
     {
-        throw std::runtime_error("stream-name, viewers, duration and ramp-per-second are required");
+        throw std::runtime_error("exactly one of stream-name or play-paths-file, viewers, positive duration and ramp-per-second are required");
+    }
+    if (!config.play_paths_file.empty())
+    {
+        config.play_paths = media_server::bench::read_credentials(config.play_paths_file, config.viewers);
     }
     return config;
 }
@@ -212,6 +245,15 @@ void mark_ready(run_state& state)
             state.measurement_deadline = std::chrono::steady_clock::now() + state.config.duration;
             state.result.measurement_start_unix_ns = unix_now_ns();
             state.result.measurement_cpu_start = std::clock();
+            auto deadline = std::make_shared<boost::asio::steady_timer>(state.io);
+            deadline->expires_at(state.measurement_deadline);
+            deadline->async_wait([&state, deadline](const boost::system::error_code& deadline_error) {
+                if (!deadline_error)
+                {
+                    state.measurement_finished = true;
+                    abort_ready_viewers(state);
+                }
+            });
             state.result.measurement_end_unix_ns = static_cast<std::uint64_t>(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch() + state.config.duration)
                     .count());
@@ -223,11 +265,26 @@ void mark_ready(run_state& state)
 boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::size_t index)
 {
     const auto started = std::chrono::steady_clock::now();
-    const auto stream_parts = split_rtmp_stream_name(state->config.stream_name);
+    const auto stream_parts = split_rtmp_stream_name(state->config.play_paths.empty() ? state->config.stream_name : state->config.play_paths[index]);
     const auto& app = stream_parts.first;
     const auto& stream = stream_parts.second;
     auto client = std::make_shared<media_server::bench::rtmp_client>(state->io, app, stream);
-    const auto play_error = co_await client->play(state->config.media_host, state->config.media_port);
+    auto timed_out = std::make_shared<bool>(false);
+    boost::asio::steady_timer ready_timer(state->io);
+    ready_timer.expires_after(state->config.ready_timeout);
+    ready_timer.async_wait([client, timed_out](const boost::system::error_code& error) {
+        if (!error)
+        {
+            *timed_out = true;
+            client->cancel();
+        }
+    });
+    auto play_error = co_await client->play(state->config.media_host, state->config.media_port, !state->config.video_only);
+    ready_timer.cancel();
+    if (*timed_out)
+    {
+        play_error = boost::asio::error::timed_out;
+    }
     if (play_error)
     {
         record_failure(*state, "connect_or_handshake");
@@ -240,12 +297,7 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count()));
         const auto gate = std::make_shared<boost::asio::steady_timer>(state->io);
         gate->expires_at(std::chrono::steady_clock::time_point::max());
-        gate->async_wait([client](const boost::system::error_code& error) {
-            if (!error)
-            {
-                client->cancel();
-            }
-        });
+        gate->async_wait([client](const boost::system::error_code&) { client->cancel(); });
         state->ready_gates.push_back(gate);
         mark_ready(*state);
 
@@ -254,8 +306,8 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
         std::uint64_t audio_bytes_before{};
         std::uint64_t audio_messages_before{};
         bool measurement_snapshot_taken = false;
-        auto measurement_expired = std::make_shared<bool>(false);
-        boost::asio::steady_timer measurement_timer(state->io);
+        auto progress_timer = std::make_shared<boost::asio::steady_timer>(state->io);
+        auto stalled = std::make_shared<bool>(false);
         boost::system::error_code consume_error;
         while (!state->pre_measurement_abort)
         {
@@ -266,14 +318,9 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
                 messages_before = client->received_messages();
                 audio_bytes_before = client->received_audio_bytes();
                 audio_messages_before = client->received_audio_messages();
-                measurement_timer.expires_at(state->measurement_deadline);
-                measurement_timer.async_wait([client, measurement_expired](const boost::system::error_code& error) {
-                    if (!error)
-                    {
-                        *measurement_expired = true;
-                        client->cancel();
-                    }
-                });
+                boost::asio::co_spawn(state->io, media_server::bench::watch_media(
+                    client, progress_timer, stalled, !state->config.video_only, state->config.progress_interval,
+                    state->measurement_deadline), boost::asio::detached);
             }
             if (measurement_snapshot_taken && std::chrono::steady_clock::now() >= state->measurement_deadline)
             {
@@ -282,7 +329,7 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
             consume_error = co_await client->consume_one();
             if (consume_error)
             {
-                if (*measurement_expired && consume_error == boost::asio::error::operation_aborted)
+                if ((state->measurement_finished || *stalled) && consume_error == boost::asio::error::operation_aborted)
                 {
                     consume_error.clear();
                 }
@@ -294,7 +341,7 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
             record_failure(*state, "consume_before_measurement");
             abort_before_measurement(*state, index, "consume_before_measurement", error_text(consume_error));
         }
-        measurement_timer.cancel();
+        progress_timer->cancel();
         gate->cancel();
         if (state->pre_measurement_abort && index != state->trigger_viewer)
         {
@@ -309,7 +356,8 @@ boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::s
                 record_failure(*state, "runtime");
                 record_runtime_failure(*state, consume_error);
             }
-            else if (client->received_bytes() == bytes_before || client->received_messages() == messages_before)
+            else if (!measurement_snapshot_taken || *stalled || client->received_bytes() == bytes_before || client->received_messages() == messages_before ||
+                     (!state->config.video_only && client->received_audio_messages() == audio_messages_before))
             {
                 record_failure(*state, "non_progressing_media");
                 ++state->result.non_progressing_viewers;
@@ -418,6 +466,15 @@ void print_results(const run_state& state)
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--help")
+    {
+        std::cout << "--play-paths-file FILE | --stream-name PATH\n"
+                     "--viewers N --media-host HOST --media-port PORT\n"
+                     "--ramp-per-second N --ready-timeout SECONDS\n"
+                     "--warmup SECONDS --duration SECONDS --progress-interval SECONDS\n"
+                     "--video-only (default requires video and audio)\n";
+        return 0;
+    }
     try
     {
         const auto config = parse_arguments(argc, argv);

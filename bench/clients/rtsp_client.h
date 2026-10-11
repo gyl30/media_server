@@ -1,7 +1,6 @@
 #ifndef MEDIA_SERVER_BENCH_CLIENTS_RTSP_CLIENT_H
 #define MEDIA_SERVER_BENCH_CLIENTS_RTSP_CLIENT_H
 
-#include <set>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -25,7 +24,7 @@ class rtsp_client final
     ~rtsp_client();
 
    public:
-    boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port);
+    boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, bool expect_audio);
     boost::asio::awaitable<boost::system::error_code> consume_one();
     void cancel() noexcept;
 
@@ -60,7 +59,7 @@ class rtsp_client final
     std::string uri_;
     std::string sdp_;
     std::vector<std::vector<std::uint8_t>> writes_;
-    std::set<std::uint8_t> received_channels_;
+    std::vector<bool> audio_channels_;
     std::uint64_t received_bytes_{};
     std::uint64_t received_messages_{};
     std::uint64_t received_audio_bytes_{};
