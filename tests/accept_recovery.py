@@ -1,13 +1,20 @@
 #!/usr/bin/env python3
+import errno
+import os
 import resource
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
-from fanout_support import stop_process, wait_for_listener
+from fanout_support import stop_process
+
+STAGE_TIMEOUT = 5
+POLL_INTERVAL = 0.01
+SOCKET_TIMEOUT = 0.25
 
 
 def limit_files():
@@ -15,51 +22,87 @@ def limit_files():
 
 
 def rtsp_options(port):
-    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+    with socket.create_connection(("127.0.0.1", port), timeout=SOCKET_TIMEOUT) as connection:
         connection.sendall(b"OPTIONS rtsp://127.0.0.1/check RTSP/1.0\r\nCSeq: 1\r\n\r\n")
-        connection.settimeout(2)
         return connection.recv(64).startswith(b"RTSP/1.0 200")
 
 
 def main():
     server_bin = sys.argv[1]
     held = [socket.socket() for _ in range(3)]
-    for connection in held:
-        connection.bind(("127.0.0.1", 0))
-    ports = [connection.getsockname()[1] for connection in held]
-    for connection in held:
-        connection.close()
-    server = subprocess.Popen([server_bin, "--threads", "1", "--rtmp-port", str(ports[0]), "--rtsp-port", str(ports[1]),
-                               "--http-port", str(ports[2])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                              preexec_fn=limit_files)
     try:
-        wait_for_listener("127.0.0.1", ports[1])
-        connections = []
-        exhausted = False
-        for _ in range(200):
-            try:
-                connections.append(socket.create_connection(("127.0.0.1", ports[1]), timeout=2))
-                time.sleep(0.005)
-            except OSError:
-                exhausted = True
-                break
-        # 服务端 fd 耗尽后 accept 失败；连接可能停留在 backlog 中而不报错。
-        for connection in connections:
-            connection.close()
-        time.sleep(1)
-        # accept 失败后固定 3 秒重试。
-        for _ in range(40):
-            try:
-                if rtsp_options(ports[1]):
-                    print(f"accept recovered after {len(connections)} connections exhausted={exhausted}")
-                    return 0
-            except OSError:
-                pass
-            time.sleep(0.25)
-        print("listener did not recover after descriptor exhaustion")
-        return 1
+        for connection in held:
+            connection.bind(("127.0.0.1", 0))
+        ports = [connection.getsockname()[1] for connection in held]
     finally:
-        stop_process(server)
+        for connection in held:
+            connection.close()
+
+    with tempfile.NamedTemporaryFile(mode="w", prefix="media_server_accept_") as output:
+        log_path = Path(output.name)
+        server = subprocess.Popen([server_bin, "--threads", "1", "--rtmp-port", str(ports[0]), "--rtsp-port", str(ports[1]),
+                                   "--http-port", str(ports[2])], stdout=output, stderr=subprocess.STDOUT,
+                                  preexec_fn=limit_files)
+        connections = []
+        try:
+            deadline = time.monotonic() + STAGE_TIMEOUT
+            while time.monotonic() < deadline:
+                if server.poll() is not None:
+                    print(f"server exited during startup: {server.returncode}")
+                    return 1
+                try:
+                    if rtsp_options(ports[1]):
+                        break
+                except OSError:
+                    pass
+                time.sleep(POLL_INTERVAL)
+            else:
+                print("server did not answer RTSP OPTIONS during startup")
+                return 1
+
+            emfile = f"accept failed port {ports[1]} error {os.strerror(errno.EMFILE)}"
+            deadline = time.monotonic() + STAGE_TIMEOUT
+            while time.monotonic() < deadline:
+                if server.poll() is not None:
+                    print(f"server exited before descriptor exhaustion was confirmed: {server.returncode}")
+                    return 1
+                if any(line.endswith(emfile) for line in log_path.read_text().splitlines()):
+                    break
+                if len(connections) < 200:
+                    try:
+                        connections.append(socket.create_connection(("127.0.0.1", ports[1]), timeout=SOCKET_TIMEOUT))
+                    except OSError:
+                        pass
+                time.sleep(POLL_INTERVAL)
+            else:
+                print("server did not report EMFILE before the exhaustion deadline")
+                return 1
+
+            print(f"server reported EMFILE with {len(connections)} held connections")
+            for connection in connections:
+                connection.close()
+            connections.clear()
+
+            # accept 失败后固定 3 秒重试。
+            deadline = time.monotonic() + STAGE_TIMEOUT
+            while time.monotonic() < deadline:
+                if server.poll() is not None:
+                    print(f"server exited before accept recovered: {server.returncode}")
+                    return 1
+                try:
+                    if rtsp_options(ports[1]) and server.poll() is None:
+                        print("accept recovered; new RTSP OPTIONS returned 200")
+                        return 0
+                except OSError:
+                    pass
+                time.sleep(POLL_INTERVAL)
+            print("listener did not recover after descriptor exhaustion")
+            return 1
+        finally:
+            for connection in connections:
+                connection.close()
+            stop_process(server)
+            print(log_path.read_text(), end="")
 
 
 if __name__ == "__main__":
