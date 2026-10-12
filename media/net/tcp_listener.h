@@ -15,17 +15,15 @@ namespace media_server
 class tcp_listener final
 {
    public:
-    tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address);
+    explicit tcp_listener(boost::asio::io_context& io);
 
    public:
-    void startup(boost::system::error_code& error);
+    void startup(const boost::asio::ip::address& bind_address, std::uint16_t port, boost::system::error_code& error);
     void accept(boost::asio::ip::tcp::socket& socket, boost::asio::yield_context& yield, boost::system::error_code& error);
     void shutdown();
 
    private:
     boost::asio::ip::tcp::acceptor acceptor_;
-    std::uint16_t port_{};
-    boost::asio::ip::address bind_address_;
 };
 
 }    // namespace media_server

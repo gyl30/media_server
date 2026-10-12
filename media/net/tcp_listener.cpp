@@ -1,5 +1,3 @@
-#include <utility>
-
 #include <boost/asio/error.hpp>
 
 #include "media/net/tcp_listener.h"
@@ -7,21 +5,18 @@
 namespace media_server
 {
 
-tcp_listener::tcp_listener(boost::asio::io_context& io, std::uint16_t port, boost::asio::ip::address bind_address)
-    : acceptor_(io), port_(port), bind_address_(std::move(bind_address))
-{
-}
+tcp_listener::tcp_listener(boost::asio::io_context& io) : acceptor_(io) {}
 
-void tcp_listener::startup(boost::system::error_code& error)
+void tcp_listener::startup(const boost::asio::ip::address& bind_address, std::uint16_t port, boost::system::error_code& error)
 {
     error.clear();
-    if (bind_address_.is_unspecified())
+    if (bind_address.is_unspecified())
     {
         error = boost::asio::error::invalid_argument;
         return;
     }
 
-    const boost::asio::ip::tcp::endpoint endpoint{bind_address_, port_};
+    const boost::asio::ip::tcp::endpoint endpoint{bind_address, port};
     acceptor_.open(endpoint.protocol(), error);
     if (!error)
     {

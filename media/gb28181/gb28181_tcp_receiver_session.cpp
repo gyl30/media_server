@@ -45,9 +45,9 @@ bool gb28181_tcp_receiver_session::startup(boost::asio::ip::address bind_address
         return false;
     }
 
-    listener_ = std::make_unique<tcp_listener>(worker_.io(), listen_port, std::move(bind_address));
+    listener_ = std::make_unique<tcp_listener>(worker_.io());
     boost::system::error_code error;
-    listener_->startup(error);
+    listener_->startup(bind_address, listen_port, error);
     if (error)
     {
         spdlog::error("gb28181 tcp listener startup failed stream {} error {}", receiver_.stream_id(), error.message());

@@ -36,8 +36,8 @@ bool start_tcp_listener(worker_pool& workers,
                         boost::system::error_code& error)
 {
     auto& listener_worker = workers.next();
-    auto listener = std::make_shared<tcp_listener>(listener_worker.io(), port, std::move(bind_address));
-    listener->startup(error);
+    auto listener = std::make_shared<tcp_listener>(listener_worker.io());
+    listener->startup(bind_address, port, error);
     if (error)
     {
         listener->shutdown();
