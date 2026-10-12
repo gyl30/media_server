@@ -142,3 +142,101 @@ WHIP 重叠 shutdown 仅作为已核实调用重叠记录，不建议增加 term
 正常测试 CLI 为 `/home/gyl/bin/ffmpeg`。本轮没有重跑无关容量/性能套件，也没有声称 Sanitizer 全量 CTest；上述五项就是实际插桩范围。原始构建、RED、测试证据位于 `/tmp/media_server_hls_audit_viHcza/`，不提交原始日志。
 
 提交仅在本地分支保存；按本轮要求不自动 push。
+
+## 取消错误处理复查（2026-10-12）
+
+本节基线为 `76355e435a766ed6d6c58be5dc315d14256b4e65`，实现提交为
+`9cd85d3`、`80ba127`、`4abaa83`；前文结论属于其各自历史基线。
+仅修改七个网络会话文件及两份现有生命周期测试；生产净减少 21 行。
+新增生产状态、接口、锁、定时器、抽象均为 0。没有修改 transport、
+`third/**`、signaling、bench 或 Pi 的环境。
+
+### 分类与关闭时序
+
+| 位置 | 分类及处理 |
+| --- | --- |
+| GB TCP receiver `run()` 的 error 分支 | 可直接删除：内层取消判断只过滤 warn，保留前面的 `yield.cancelled()` 退出。 |
+| GB TCP sender `run()` 的 error 分支 | 需要先验证：日志读取 `stream_`，关闭后该指针已清空。先用已有资源事实保护建连恢复，再删除日志过滤；保留协程取消判断。 |
+| WHIP/WHEP UDP read/write 四处 | 可直接删除：只过滤 debug，原有关闭、local_port 检查及退出顺序不变。 |
+| RTSP server connection read | 可直接删除：取消判断只过滤 debug，仍然 shutdown 并退出。 |
+| RTSP UDP publish RTP/RTCP read 与 RTCP write | 验证后删除：真实关闭先清空 handler；worker 取消时仍有效的 handler 应收到终止通知。保留 handler 与 local_port 检查。 |
+| GB UDP sender RTP/RTCP write | 验证后删除：保留 stream 生命周期判断，不再单独忽略取消错误。 |
+| GB TCP、RTSP pull 的协程取消与 registry identity | 必须保留：成功 I/O completion 不能证明协程未被取消；旧 session 不可重新进入创建流程。 |
+| service accept、重试等待、signal；HLS 周期清理 | 必须保留：决定退出或继续，不属于日志过滤。accept 的 operation_aborted 不可进入三秒重试。 |
+| worker terminal cancellation、各 timer 的 error 判断 | 必须保留：负责结束 pending 操作、防止取消的定时任务重新启动。 |
+| tests 的取消断言、第三方实现及其他网络错误 | 不属于本轮；不机械改动 eof/reset/非阻塞重试或第三方代码。 |
+| bench 的取消/协议错误分类 | 只读审查，见下文。 |
+
+UDP `shutdown()` 在 owner executor 同步清空队列、字节计数和写回调，
+再 cancel/close socket（`media/net/udp_transport.cpp:122-129`）。
+迟到 `on_write()` 在 socket 已关闭或 queue 已清空时返回（`:95-109`）；
+在途 datagram 由 completion capture 保活。write 没有绑定 worker 协程的取消 slot。
+因此 socket 关闭引起的 write cancellation 不会再次通知 session。
+这些现存机制保留，未修改 transport。
+
+GB UDP `safe_shutdown()` 先移动并清空 stream，再关闭 sender、transport、timer
+和释放端口（`media/gb28181/gb28181_udp_sender_session.cpp:189-217`）。
+已关闭回调由 stream 和 transport fencing 阻断；普通 socket 错误仍关闭 sender/session。
+RTCP timer 的 error/stream 检查保留，不能在取消后重新排定报告链。
+
+RTSP UDP 子会话在 `safe_shutdown()` 清空 shutdown/input handler 后关两路 UDP，
+最后归还端口（`media/rtsp/rtsp_publish_udp_session.cpp:254-277`）。
+worker `request_stop()` 会先取消各协程，再执行 shutdown subscriptions
+（`media/net/worker_context.cpp:66-94`）；不能声称任何读取消都发生在 handler 清空之后。
+若 handler 仍存在，RTP/RTCP 读取消向父层报告，父 relay 移走自己的 handler
+（`media/rtsp/rtsp_publish_session.cpp:227-236`），两路读错误只通知一次。
+父/子 cleanup 仍通过各自 owner post 执行，没有完成等待或延迟关闭。
+
+### 定向证据及边界
+
+- **CONFIRMED**：直接删除 GB TCP sender 日志过滤会使已有 connected/refused
+  及新增 pending-accept 场景 SIGSEGV；恢复原 sender 对照 3/3 PASS。
+  原因是父关闭先清空 stream，socket/accept 取消 completion 后才恢复 run，
+  且这不等于 worker 协程被取消。加入 `!stream_` 的现存资源检查后 3/3 PASS。
+  这是拟议精简产生的回归，不宣称基线已有同样崩溃。
+- **CONFIRMED（publisher 边界）**：真实 ireader ANNOUNCE/SETUP/RECORD 后，
+  两路 UDP read pending 时仅 request_stop，原 RTSP UDP 回调忽略取消，
+  publisher 在五秒期限内仍被持有。新策略同一测试 PASS：父通知一次，
+  weak publisher/input callback owner 释放，source 移除，四份端口可重新 acquire/bind。
+  正常父关闭、重复关闭和 TEARDOWN 对照仍不产生父错误通知。
+  完整 service 停机还会取消 TCP 父连接；该 RED 不等同于证明 service 生产泄漏。
+- `udp_transport` 现有回归覆盖真实 in-flight send、队列清空、buffer lifetime、
+  late callback 抑制及 socket error；`gb_sender_lifecycle` 覆盖父子清理、
+  worker stop、迟到 PS callback、对象释放和端口回收。
+  没有另造独立取消注入或逐协议 RTCP write completion 故障框架。
+
+### 性能工具风险（只读）
+
+**CONFIRMED 源码事实**：`bench/clients/rtmp_client.cpp:105-108` 将普通
+`rtmp_client_input()` 失败（含 payload/timestamp 校验失败）映射为 operation_aborted。
+`bench/media_fanout.h:369-377` 在 measurement_finished 或 progress.stalled 时
+清除该错误。**PROBABLE，未端到端复现**：已经完成正式窗口内的媒体增长，
+成功读 completion 与测量 deadline 交错，截止 handler 先执行，随后恢复的
+RTMP 解析失败可被清除，最终被记为 progressing/runtime_failures=0。
+这可能隐藏截止边界的协议失败；不能据此认定 Pi 既有结果已经失真。
+
+stall 路径仍保留 progress.stalled，最终计入 non_progressing，不是假阳性。
+RTSP viewer 运行期解析失败使用 fault（`bench/clients/rtsp_client.cpp:72-75`），
+不会被该条件清除。RTSP publisher 的普通协议错误虽命名为 operation_aborted，
+仍直接 fail 并统计 establishment/runtime failure（`bench/rtsp_publisher.cpp:518-521,706-724`），
+没有发现同样的成功归类路径。建立阶段错误不会通过稳态截止过滤。
+现有 perf_tooling 测试没有覆盖 RTMP 解析错误与截止交错。
+建议后续单独将 RTMP 普通协议失败返回 fault，并补截止交错负对照；本轮不修改工具，
+不要求中断 Pi 的健康测试。
+
+### 本次验证
+
+- 正常完整构建 PASS；七处日志精简相关定向回归 17/17 PASS，
+  RTSP UDP 相关回归 9/9 PASS，GB UDP 相关回归 7/7 PASS。
+- 全量串行 CTest 56/56 PASS，259.53 秒。
+- 全量并行 CTest `-j8` 56/56 PASS，99.60 秒。
+- UBSan 定向 22/22 PASS，32.07 秒；用户要求不再跑 UBSan 时，
+  已启动的定向任务恰好结束。此后未再运行，不代表全量 UBSan 验证。
+- 自审规范轴：缩短新增测试函数名；需求轴：保留真实取消退出保护，
+  没有新增生产状态或更改 transport，测试覆盖边界如上。
+ASan 配置 **BLOCKED**：当前 Boost.Context 未通过项目 ucontext/sanitizer
+兼容性检查，未关闭检查或改用未验证 workaround。
+原始 RED、基线对照及构建/测试日志保留在
+`/var/tmp/media_server_cancellation_cleanup/`，不提交原始产物。
+按用户后续授权，完成后合并 main、推送，并删除本轮独立 worktree 与临时构建目录；
+不清理其他 Agent/Pi 的工作区、运行环境或报告。

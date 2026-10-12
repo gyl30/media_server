@@ -91,7 +91,7 @@ void receiver_queued_read()
     std::cout << "GB TCP receiver queued RTP read and repeated parent shutdown: PASS\n";
 }
 
-void sender_pending_accept_shutdown()
+void sender_accept_shutdown()
 {
     worker_context worker;
     const auto address = boost::asio::ip::address_v4::loopback();
@@ -188,7 +188,7 @@ int main(int argc, char* argv[])
         }
         else if (scenario == "sender_pending_accept")
         {
-            sender_pending_accept_shutdown();
+            sender_accept_shutdown();
         }
         else
         {
