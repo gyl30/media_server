@@ -96,25 +96,22 @@ bool session_registry::add_sender_session(std::string stream_id, std::string sen
 
 std::shared_ptr<session> session_registry::take_sender_session(std::string_view stream_id, std::string_view sender_id)
 {
-    std::shared_ptr<session> value;
+    std::scoped_lock lock(mutex_);
+    const auto stream_iterator = sessions_.find(stream_id);
+    if (stream_iterator == sessions_.end())
     {
-        std::scoped_lock lock(mutex_);
-        const auto stream_iterator = sessions_.find(stream_id);
-        if (stream_iterator == sessions_.end())
-        {
-            return {};
-        }
-        const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
-        if (sender_iterator == stream_iterator->second.sender_sessions.end())
-        {
-            return {};
-        }
-        value = std::move(sender_iterator->second);
-        stream_iterator->second.sender_sessions.erase(sender_iterator);
-        if (empty(stream_iterator->second))
-        {
-            sessions_.erase(stream_iterator);
-        }
+        return {};
+    }
+    const auto sender_iterator = stream_iterator->second.sender_sessions.find(sender_id);
+    if (sender_iterator == stream_iterator->second.sender_sessions.end())
+    {
+        return {};
+    }
+    auto value = std::move(sender_iterator->second);
+    stream_iterator->second.sender_sessions.erase(sender_iterator);
+    if (empty(stream_iterator->second))
+    {
+        sessions_.erase(stream_iterator);
     }
     return value;
 }
