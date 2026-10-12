@@ -25,10 +25,6 @@ std::size_t tcp_transport::read(std::span<std::uint8_t> data, boost::asio::yield
 
 void tcp_transport::write(std::span<const std::uint8_t> data)
 {
-    if (data.empty())
-    {
-        return;
-    }
     write(std::vector<std::uint8_t>(data.begin(), data.end()));
 }
 
