@@ -52,16 +52,25 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--ffmpeg-bin", type=Path, default=Path("/home/gyl/bin/ffmpeg"))
+    parser.add_argument("--ffprobe-bin", type=Path, default=Path("/home/gyl/bin/ffprobe"))
     parser.add_argument("--build-dir", type=Path, default=Path("build"))
+    parser.add_argument("--whip-fixture", type=Path, help="H.264/Opus fixture derived offline")
+    parser.add_argument("--signaling-bin", type=Path, help="optional built Go signaling service for real authorization verification")
     args = parser.parse_args()
     if args.output.exists():
         parser.error(f"output already exists: {args.output}")
 
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "rtsp_publisher", "gb_ps_fanout")
+    executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "http_flv_fanout", "rtsp_publisher", "gb_ps_fanout")
     files = [(args.build_dir / name, Path("build") / name) for name in executables]
     files.extend((path, Path("bench") / path.name) for path in Path("bench").glob("*.py") if path.name != "package_runtime.py")
-    files.extend(((args.ffmpeg_bin, Path("bin/ffmpeg")), (args.fixture, Path(".cache/perf_fixture_720p30.flv"))))
+    files.extend(((Path("tests/signaling_stub.py"), Path("bench/signaling_stub.py")),
+                  (Path("bench/requirements.txt"), Path("bench/requirements.txt"))))
+    if args.signaling_bin:
+        files.append((args.signaling_bin, Path("bin/signaling")))
+    files.extend(((args.ffprobe_bin, Path("bin/ffprobe")), (args.ffmpeg_bin, Path("bin/ffmpeg")), (args.fixture, Path(".cache/perf_fixture_720p30.flv"))))
+    if args.whip_fixture:
+        files.append((args.whip_fixture, Path(".cache/perf_fixture_whip.mkv")))
     for source, _ in files:
         if not source.is_file():
             parser.error(f"missing runtime file: {source}")
@@ -72,7 +81,7 @@ def main():
         if not source.is_file():
             parser.error(f"missing NSS runtime module: {source}")
     for source, _ in files:
-        if source.suffix == ".py" or source == args.fixture:
+        if source.suffix in {".py", ".txt"} or source in {args.fixture, args.whip_fixture}:
             continue
         for name, path in runtime_libraries(source):
             if name in SYSTEM_RUNTIME_LIBRARIES:
@@ -89,7 +98,9 @@ def main():
             libraries[name] = path
 
     args.output.mkdir(parents=True)
-    manifest = {"head": head, "files": {}, "libraries": {}, "nss_modules": {}}
+    dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], text=True)
+    manifest = {"head": head, "dirty": bool(dirty), "worktree_status": dirty.splitlines(),
+                "fixture_sha256": sha256(args.fixture), "files": {}, "libraries": {}, "nss_modules": {}}
     for source, destination in files:
         target = args.output / destination
         target.parent.mkdir(parents=True, exist_ok=True)

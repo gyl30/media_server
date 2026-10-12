@@ -20,9 +20,18 @@ extern "C"
 namespace media_server::bench
 {
 
-rtmp_client::rtmp_client(boost::asio::io_context& io, std::string app, std::string stream)
-    : resolver_(io), socket_(io), app_(std::move(app)), stream_(std::move(stream))
+rtmp_client::rtmp_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io)
 {
+    const auto slash = path.find('/');
+    if (slash == std::string::npos)
+    {
+        stream_ = std::move(path);
+    }
+    else
+    {
+        app_ = path.substr(0, slash);
+        stream_ = path.substr(slash + 1U);
+    }
 }
 
 rtmp_client::~rtmp_client()
@@ -107,6 +116,12 @@ void rtmp_client::cancel() noexcept
     socket_.cancel(error);
 }
 
+bool rtmp_client::handshake_complete() const noexcept
+{
+    constexpr int media_state = 4;    // rtmp_client_getstate() 的公开 START 值。
+    return client_ != nullptr && rtmp_client_getstate(client_) == media_state;
+}
+
 int rtmp_client::send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes)
 {
     auto* self = static_cast<rtmp_client*>(param);
@@ -125,7 +140,7 @@ int rtmp_client::send_callback(void* param, const void* header, std::size_t head
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-int rtmp_client::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
+int rtmp_client::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     flv_video_tag_header_t header{};
     if (flv_video_tag_header_read(&header, static_cast<const std::uint8_t*>(data), bytes) < 0)
@@ -137,12 +152,16 @@ int rtmp_client::video_callback(void* param, const void* data, std::size_t bytes
         return 0;
     }
     auto* self = static_cast<rtmp_client*>(param);
+    if (!self->video_timestamps_.observe(timestamp))
+    {
+        return -1;
+    }
     self->received_bytes_ += bytes;
     ++self->received_messages_;
     return 0;
 }
 
-int rtmp_client::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t)
+int rtmp_client::audio_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     flv_audio_tag_header_t header{};
     if (flv_audio_tag_header_read(&header, static_cast<const std::uint8_t*>(data), bytes) < 0)
@@ -154,6 +173,10 @@ int rtmp_client::audio_callback(void* param, const void* data, std::size_t bytes
         return 0;
     }
     auto* self = static_cast<rtmp_client*>(param);
+    if (!self->audio_timestamps_.observe(timestamp))
+    {
+        return -1;
+    }
     self->received_audio_bytes_ += bytes;
     ++self->received_audio_messages_;
     return 0;

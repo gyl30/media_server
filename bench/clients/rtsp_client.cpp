@@ -19,7 +19,7 @@ extern "C"
 namespace media_server::bench
 {
 
-rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io), path_(std::move(path)) {}
+rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path) {}
 
 rtsp_client::~rtsp_client()
 {
@@ -46,9 +46,9 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::play(std::string 
     {
         const auto bytes =
             co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
-        if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
+        if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0 || invalid_packets_ != 0)
         {
-            co_return error ? error : boost::asio::error::operation_aborted;
+            co_return error ? error : boost::asio::error::fault;
         }
     }
     co_return boost::system::error_code{};
@@ -69,9 +69,9 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::consume_one()
     {
         co_return error;
     }
-    if (rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
+    if (rtsp_client_input(client_, read_buffer.data(), bytes) != 0 || invalid_packets_ != 0)
     {
-        co_return boost::asio::error::operation_aborted;
+        co_return boost::asio::error::fault;
     }
     co_return boost::system::error_code{};
 }
@@ -125,9 +125,9 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::start(std::string
         }
         const auto bytes =
             co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
-        if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0)
+        if (error || rtsp_client_input(client_, read_buffer.data(), bytes) != 0 || invalid_packets_ != 0)
         {
-            co_return error ? error : boost::asio::error::operation_aborted;
+            co_return error ? error : boost::asio::error::fault;
         }
     }
     co_return co_await flush();
@@ -167,6 +167,7 @@ int rtsp_client::describe_callback(void* param, const char* sdp, int len)
         const std::string_view kind(sdp_media_type(parsed, index));
         self->audio_channels_.push_back(kind == "audio");
     }
+    self->packet_health_.resize(self->audio_channels_.size());
     sdp_destroy(parsed);
     return rtsp_client_setup(self->client_, self->sdp_.c_str(), static_cast<int>(self->sdp_.size()));
 }
@@ -193,6 +194,11 @@ void rtsp_client::rtp_callback(void* param, std::uint8_t channel, const void* da
     const auto* packet = static_cast<const std::uint8_t*>(data);
     if ((channel % 2U) == 0U && channel / 2U < self->audio_channels_.size() && bytes > 12U && (packet[0] >> 6U) == 2U)
     {
+        if (!self->packet_health_[channel / 2U].observe({packet, bytes}))
+        {
+            ++self->invalid_packets_;
+            return;
+        }
         if (!self->audio_channels_[channel / 2U])
         {
             self->received_bytes_ += bytes;

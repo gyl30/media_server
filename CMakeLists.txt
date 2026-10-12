@@ -519,6 +519,9 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
     )
     target_link_libraries(rtsp_fanout PRIVATE media_core media_server_link_options)
 
+    add_executable(http_flv_fanout bench/http_flv_fanout.cpp bench/clients/http_flv_client.cpp)
+    target_link_libraries(http_flv_fanout PRIVATE media_core media_server_link_options)
+
     add_executable(rtsp_publisher bench/rtsp_publisher.cpp)
     target_link_libraries(rtsp_publisher PRIVATE media_core media_server_link_options)
 
@@ -532,7 +535,8 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
         bench/whip_publisher.cpp
         bench/clients/webrtc_client.cpp
     )
-    target_link_libraries(whip_publisher PRIVATE media_core media_server_link_options)
+    pkg_check_modules(FFMPEG_FORMAT REQUIRED IMPORTED_TARGET libavformat)
+    target_link_libraries(whip_publisher PRIVATE media_core media_server_link_options PkgConfig::FFMPEG_FORMAT)
 
     add_executable(webrtc_disconnect
         bench/webrtc_disconnect.cpp

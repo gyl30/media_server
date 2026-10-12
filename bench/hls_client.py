@@ -4,8 +4,9 @@
 import argparse
 import asyncio
 import time
-from dataclasses import dataclass, field
 from typing import Optional
+from pathlib import Path
+import json
 from urllib.parse import urljoin, urlsplit
 
 
@@ -131,274 +132,193 @@ class HttpClient:
         self._endpoint = None
 
 
-@dataclass
-class Results:
-    connected: int = 0
-    ready: int = 0
-    progressing: int = 0
-    completed: int = 0
-    failures: int = 0
-    pre_measurement_failures: int = 0
-    trigger_failures: int = 0
-    pre_measurement_abort_viewers: int = 0
-    collateral_aborted_viewers: int = 0
-    runtime_failures: int = 0
-    non_progressing_viewers: int = 0
-    failure_phases: dict[str, int] = field(default_factory=dict)
-    runtime_errors: dict[str, int] = field(default_factory=dict)
-    first_media_milliseconds: list[int] = field(default_factory=list)
-    received_media_bytes: int = 0
-    received_segments: int = 0
-    steady_media_bytes: int = 0
-    steady_segments: int = 0
-    steady_playlist_bytes: int = 0
-    viewer_media_bytes: list[int] = field(default_factory=list)
-    measurement_start_unix_ns: int = 0
-    measurement_end_unix_ns: int = 0
-    trigger_unix_ns: int = 0
-    trigger_failure_phase: str = ""
-    trigger_error: str = ""
-    media_connections: int = 0
+def playlist_paths(url, text):
+    if not text.startswith("#EXTM3U"):
+        raise RuntimeError("invalid playlist")
+    sequence = None
+    target = 2
+    init_url = None
+    segments = []
+    for line in text.splitlines():
+        if line.startswith("#EXT-X-MEDIA-SEQUENCE:"):
+            sequence = int(line.split(":", 1)[1])
+        elif line.startswith("#EXT-X-TARGETDURATION:"):
+            target = max(1, int(line.split(":", 1)[1]))
+        elif line.startswith("#EXT-X-MAP:"):
+            init_url = urljoin(url, line.split('URI="', 1)[1].split('"', 1)[0])
+        elif line and not line.startswith("#"):
+            if sequence is None:
+                raise RuntimeError("playlist has no media sequence")
+            segments.append((sequence + len(segments), urljoin(url, line)))
+    if "#EXT-X-ENDLIST" in text:
+        raise RuntimeError("source_ended")
+    if not segments:
+        raise RuntimeError("playlist has no segment")
+    return init_url, segments, target
 
 
 class State:
-    def __init__(self, args: argparse.Namespace) -> None:
+    def __init__(self, args):
         self.args = args
-        self.result = Results()
-        self.result.viewer_media_bytes = [0] * args.viewers
-        self.lock = asyncio.Lock()
-        self.ready_event = asyncio.Event()
-        self.abort_event = asyncio.Event()
-        self.measurement_started = False
-        self.measurement_deadline = 0.0
-        self.trigger_viewer = -1
+        self.result = argparse.Namespace(media_connections=0)
+        self.counters = [{"bytes": 0, "segments": 0, "playlist_bytes": 0} for _ in args.urls]
+        self.first_media_ms = []
+        self.ready = asyncio.Event()
+        self.finished = asyncio.Event()
+        self.errors = []
+        self.before = None
+        self.after = None
+        self.start_ns = self.end_ns = 0
+        self.cpu_seconds = 0
 
-    async def fail_before_measurement(self, viewer: int, phase: str, error: BaseException) -> None:
-        async with self.lock:
-            self.result.failures += 1
-            self.result.failure_phases[phase] = self.result.failure_phases.get(phase, 0) + 1
-            if not self.measurement_started and not self.abort_event.is_set():
-                self.result.pre_measurement_failures += 1
-                self.result.trigger_failures += 1
-                self.result.trigger_failure_phase = phase
-                self.result.trigger_error = error_text(error)
-                self.result.trigger_unix_ns = unix_now_ns()
-                self.trigger_viewer = viewer
-                self.abort_event.set()
-                self.ready_event.set()
-
-    async def mark_ready(self, first_media_ms: int) -> None:
-        async with self.lock:
-            self.result.connected += 1
-            self.result.ready += 1
-            self.result.first_media_milliseconds.append(first_media_ms)
-            if self.result.ready == self.args.viewers and not self.abort_event.is_set():
-                asyncio.create_task(self.start_measurement())
-
-    async def start_measurement(self) -> None:
-        await asyncio.sleep(self.args.warmup)
-        async with self.lock:
-            if self.abort_event.is_set():
-                return
-            self.measurement_started = True
-            self.measurement_deadline = time.monotonic() + self.args.duration
-            self.result.measurement_start_unix_ns = unix_now_ns()
-            self.result.measurement_end_unix_ns = self.result.measurement_start_unix_ns + self.args.duration * 1_000_000_000
-            print(f"phase=measurement_start unix_ns={self.result.measurement_start_unix_ns}", flush=True)
-            self.ready_event.set()
+    async def measure(self):
+        await self.ready.wait()
+        try:
+            from perf_support import wait_start
+            start = await wait_start(self.args.start_file, self.args.warmup, self.args.ready_timeout)
+            cpu_before = time.process_time()
+            self.start_ns = time.monotonic_ns()
+            self.before = [item.copy() for item in self.counters]
+            print(f"phase=measurement_start monotonic_ns={self.start_ns} unix_ns={time.time_ns()}", flush=True)
+            deadline = start + self.args.duration
+            previous = [item["segments"] for item in self.counters]
+            next_sample = start + self.args.progress_interval
+            while next_sample <= deadline:
+                await asyncio.sleep(max(0, next_sample - time.monotonic()))
+                current = [item["segments"] for item in self.counters]
+                for index, (old, new) in enumerate(zip(previous, current)):
+                    if old == new:
+                        self.errors.append({"viewer": index, "phase": "non_progressing_media", "monotonic_ns": time.monotonic_ns()})
+                previous = current
+                next_sample += self.args.progress_interval
+            await asyncio.sleep(max(0, deadline - time.monotonic()))
+            self.end_ns = time.monotonic_ns()
+            self.cpu_seconds = time.process_time() - cpu_before
+            self.after = [item.copy() for item in self.counters]
+        except Exception as error:
+            self.errors.append({"phase": "measurement_barrier", "error": error_text(error), "monotonic_ns": time.monotonic_ns()})
+        finally:
+            self.finished.set()
 
 
-def playlist_paths(playlist_url: str, text: str) -> tuple[Optional[str], Optional[str], int]:
-    init_url: Optional[str] = None
-    segment_url: Optional[str] = None
-    target_duration = 2
-    for line in text.splitlines():
-        if line.startswith("#EXT-X-TARGETDURATION:"):
-            target_duration = max(1, int(line.split(":", 1)[1]))
-        elif line.startswith("#EXT-X-MAP:"):
-            marker = 'URI="'
-            begin = line.find(marker)
-            if begin >= 0:
-                end = line.find('"', begin + len(marker))
-                if end >= 0:
-                    init_url = urljoin(playlist_url, line[begin + len(marker) : end])
-        elif line and not line.startswith("#"):
-            segment_url = urljoin(playlist_url, line)
-    return init_url, segment_url, target_duration
-
-
-async def request_playlist(client: HttpClient, url: str) -> tuple[Optional[str], Optional[str], int, int]:
-    status, _, response = await client.request("GET", url)
+async def download(client, url, state, index, media=False):
+    status, headers, body = await client.request("GET", url, retain_body=not media)
     if status != 200:
-        raise RuntimeError(f"playlist status={status}")
-    text = response.decode("utf-8")
-    if "#EXTM3U" not in text:
-        raise RuntimeError("invalid playlist")
-    init_url, segment_url, target_duration = playlist_paths(url, text)
-    if not segment_url:
-        raise RuntimeError("playlist has no segment")
-    return init_url, segment_url, target_duration, len(response)
+        raise RuntimeError(f"HTTP {status}: {url}")
+    size = int(headers.get("content-length", "0"))
+    if size <= 0:
+        raise RuntimeError("empty response")
+    if media:
+        state.counters[index]["bytes"] += size
+    else:
+        state.counters[index]["playlist_bytes"] += size
+    return body
 
 
-async def request_media(client: HttpClient, url: str) -> int:
-    status, headers, _ = await client.request("GET", url, retain_body=False)
-    bytes_received = int(headers.get("content-length", "0"))
-    if status != 200 or bytes_received <= 0:
-        raise RuntimeError(f"media status={status} bytes={bytes_received}")
-    return bytes_received
-
-
-async def run_viewer(state: State, index: int) -> None:
-    started = time.monotonic()
-    bytes_received = 0
-    messages_received = 0
-    steady_bytes_before = 0
-    steady_messages_before = 0
-    playlist_bytes_received = 0
-    steady_playlist_before = 0
-    initialized = False
-    last_segment: Optional[str] = None
-    poll_seconds = 2
+async def run_viewer(state, index):
     client = HttpClient(state)
+    started = time.monotonic()
+    last_sequence = None
     try:
-        play_url = state.args.hls_url
-        status, headers, _ = await client.request("GET", play_url)
+        url = state.args.urls[index]
+        status, headers, _ = await client.request("GET", url)
         if status != 307 or "location" not in headers:
-            raise RuntimeError(f"redirect status={status}")
-        playlist_url = urljoin(play_url, headers["location"])
-        print(f"phase=session viewer={index} playlist={playlist_url}", flush=True)
-        init_url, segment_url, poll_seconds, playlist_bytes = await request_playlist(client, playlist_url)
-        playlist_bytes_received += playlist_bytes
-        if init_url:
-            bytes_received += await request_media(client, init_url)
-        bytes_received += await request_media(client, segment_url)
-        messages_received += 1
-        last_segment = segment_url
-        initialized = True
-        await state.mark_ready(int((time.monotonic() - started) * 1000))
-
-        await state.ready_event.wait()
-        if state.abort_event.is_set():
-            return
-        steady_bytes_before = bytes_received
-        steady_messages_before = messages_received
-        steady_playlist_before = playlist_bytes_received
-
-        while not state.abort_event.is_set():
-            if state.measurement_started and time.monotonic() >= state.measurement_deadline:
-                break
-            await asyncio.sleep(poll_seconds)
-            init_url, segment_url, poll_seconds, playlist_bytes = await request_playlist(client, playlist_url)
-            playlist_bytes_received += playlist_bytes
-            if init_url and not initialized:
-                bytes_received += await request_media(client, init_url)
-                initialized = True
-            if segment_url != last_segment:
-                bytes_received += await request_media(client, segment_url)
-                messages_received += 1
-                last_segment = segment_url
-        async with state.lock:
-            if state.abort_event.is_set() and index != state.trigger_viewer:
-                state.result.failures += 1
-                state.result.failure_phases["pre_measurement_abort"] = state.result.failure_phases.get("pre_measurement_abort", 0) + 1
-                state.result.pre_measurement_abort_viewers += 1
-                state.result.collateral_aborted_viewers += 1
-            elif state.measurement_started and (bytes_received == steady_bytes_before or messages_received == steady_messages_before):
-                state.result.failures += 1
-                state.result.failure_phases["non_progressing_media"] = state.result.failure_phases.get("non_progressing_media", 0) + 1
-                state.result.non_progressing_viewers += 1
-            elif state.measurement_started:
-                state.result.progressing += 1
-                media_bytes = bytes_received - steady_bytes_before
-                state.result.steady_media_bytes += media_bytes
-                state.result.steady_segments += messages_received - steady_messages_before
-                state.result.steady_playlist_bytes += playlist_bytes_received - steady_playlist_before
-                state.result.viewer_media_bytes[index] = media_bytes
-            state.result.received_media_bytes += bytes_received
-            state.result.received_segments += messages_received
+            raise RuntimeError(f"authorization_or_redirect HTTP {status}")
+        url = urljoin(url, headers["location"])
+        while not state.finished.is_set():
+            text = (await download(client, url, state, index)).decode()
+            init_url, segments, target = playlist_paths(url, text)
+            if last_sequence is None:
+                if init_url:
+                    await download(client, init_url, state, index, True)
+                # 新观众从当前尾部开始，历史段不计为实时负载。
+                segments = segments[-1:]
+            elif segments[0][0] > last_sequence + 1:
+                raise RuntimeError("segment_gap: viewer fell behind retention")
+            for sequence, segment in segments:
+                if last_sequence is not None and sequence <= last_sequence:
+                    continue
+                await download(client, segment, state, index, True)
+                state.counters[index]["segments"] += 1
+                if last_sequence is None:
+                    state.first_media_ms.append(int((time.monotonic() - started) * 1000))
+                    if len(state.first_media_ms) == state.args.viewers:
+                        print(f"phase=media_ready ready={state.args.viewers}", flush=True)
+                        state.ready.set()
+                last_sequence = sequence
+            await asyncio.sleep(min(target / 2, 1))
+    except asyncio.CancelledError:
+        raise
     except Exception as error:
-        if not state.measurement_started:
-            await state.fail_before_measurement(index, "connect_or_first_media", error)
-        else:
-            async with state.lock:
-                state.result.failures += 1
-                state.result.failure_phases["runtime"] = state.result.failure_phases.get("runtime", 0) + 1
-                state.result.runtime_failures += 1
-                key = error_text(error)
-                state.result.runtime_errors[key] = state.result.runtime_errors.get(key, 0) + 1
+        state.errors.append({"viewer": index, "phase": "runtime" if state.before is not None else "connect_or_first_media",
+                             "error": error_text(error), "monotonic_ns": time.monotonic_ns()})
+        state.finished.set()
     finally:
         await client.close()
-        async with state.lock:
-            state.result.completed += 1
 
 
-def percentile(values: list[int], fraction: float) -> int:
-    if not values:
-        return 0
-    return sorted(values)[int(fraction * (len(values) - 1))]
-
-
-def print_results(state: State) -> None:
-    result = state.result
-    print(
-        f"phase=measurement requested={state.args.viewers} connected={result.connected} ready={result.ready} "
-        f"progressing={result.progressing} failed={result.failures} pre_measurement_failures={result.pre_measurement_failures} "
-        f"trigger_failures={result.trigger_failures} pre_measurement_abort_viewers={result.pre_measurement_abort_viewers} "
-        f"collateral_aborted_viewers={result.collateral_aborted_viewers} runtime_failures={result.runtime_failures} "
-        f"non_progressing_viewers={result.non_progressing_viewers} received_media_bytes={result.received_media_bytes} "
-        f"received_segments={result.received_segments} steady_media_bytes={result.steady_media_bytes} "
-        f"steady_segments={result.steady_segments} steady_playlist_bytes={result.steady_playlist_bytes} "
-        f"viewer_media_bytes_min={percentile(result.viewer_media_bytes, 0.0)} "
-        f"viewer_media_bytes_p10={percentile(result.viewer_media_bytes, 0.1)} "
-        f"viewer_media_bytes_p50={percentile(result.viewer_media_bytes, 0.5)} "
-        f"viewer_media_bytes_p90={percentile(result.viewer_media_bytes, 0.9)} "
-        f"viewer_media_bytes_max={percentile(result.viewer_media_bytes, 1.0)} "
-        f"measurement_start_unix_ns={result.measurement_start_unix_ns} "
-        f"measurement_end_unix_ns={result.measurement_end_unix_ns} measurement_started={int(state.measurement_started)} "
-        f"trigger_unix_ns={result.trigger_unix_ns} media_connections={result.media_connections}"
-    )
-    print(f"trigger_failure_phase={result.trigger_failure_phase}")
-    print(f"trigger_error={result.trigger_error}")
-    print(
-        f"first_media_ms_p50={percentile(result.first_media_milliseconds, 0.50)} "
-        f"p95={percentile(result.first_media_milliseconds, 0.95)} p99={percentile(result.first_media_milliseconds, 0.99)} "
-        f"max={percentile(result.first_media_milliseconds, 1.0)}"
-    )
-    for phase, count in sorted(result.failure_phases.items()):
-        print(f"failure_phase={phase} count={count}")
-    for error, count in sorted(result.runtime_errors.items()):
-        print(f"runtime_error={error} count={count}")
-
-
-async def run(args: argparse.Namespace) -> int:
+async def run(args):
     state = State(args)
-    tasks = []
-    for index in range(args.viewers):
-        tasks.append(asyncio.create_task(run_viewer(state, index)))
-        if index + 1 < args.viewers:
+    viewers = []
+    measurement = asyncio.create_task(state.measure())
+    try:
+        for index in range(args.viewers):
+            viewers.append(asyncio.create_task(run_viewer(state, index)))
+            if state.finished.is_set():
+                break
             await asyncio.sleep(1 / args.ramp_per_second)
-    await asyncio.gather(*tasks)
-    print_results(state)
-    return 0 if state.result.ready == args.viewers and state.result.progressing == args.viewers else 1
+        await asyncio.wait_for(state.finished.wait(), args.ready_timeout + args.warmup + args.duration + args.viewers / args.ramp_per_second)
+    except asyncio.TimeoutError:
+        state.errors.append({"phase": "ready_timeout", "monotonic_ns": time.monotonic_ns()})
+    finally:
+        measurement.cancel()
+        for task in viewers:
+            task.cancel()
+        await asyncio.gather(measurement, *viewers, return_exceptions=True)
+    deltas = []
+    if state.before is not None and state.after is not None:
+        deltas = [{key: end[key] - begin[key] for key in begin} for begin, end in zip(state.before, state.after)]
+    success = len(deltas) == args.viewers and not state.errors and all(item["segments"] > 0 for item in deltas)
+    result = {"status": "PASS" if success else "FAIL", "ready": len(state.first_media_ms), "requested": args.viewers,
+              "measurement_start_monotonic_ns": state.start_ns, "measurement_end_monotonic_ns": state.end_ns,
+              "viewers": deltas, "first_media_ms": state.first_media_ms, "errors": state.errors,
+              "media_connections": state.result.media_connections, "client_cpu_seconds": state.cpu_seconds}
+    if args.output:
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+    print("phase=measurement requested={} ready={} progressing={} failed={} steady_media_bytes={} measurement_start_monotonic_ns={} measurement_end_monotonic_ns={}".format(
+        args.viewers, len(state.first_media_ms), sum(item["segments"] > 0 for item in deltas), len(state.errors),
+        sum(item["bytes"] for item in deltas), state.start_ns, state.end_ns), flush=True)
+    if state.end_ns > state.start_ns:
+        print(f"phase=client_resources client_cpu_cores={state.cpu_seconds / ((state.end_ns - state.start_ns) / 1e9)}", flush=True)
+    for error in state.errors[:20]:
+        print(json.dumps(error), flush=True)
+    return 0 if success else 1
 
 
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--hls-url", required=True)
+def parse_arguments():
+    from perf_support import read_credentials
+    parser = argparse.ArgumentParser(description="HLS unique segment download and per-viewer progress check")
+    parser.add_argument("--hls-urls-file", type=Path, required=True)
     parser.add_argument("--viewers", type=int, required=True)
-    parser.add_argument("--duration", type=int, required=True)
-    parser.add_argument("--warmup", type=int, default=5)
-    parser.add_argument("--ramp-per-second", type=int, required=True)
+    parser.add_argument("--duration", type=float, required=True)
+    parser.add_argument("--warmup", type=float, default=5)
+    parser.add_argument("--ramp-per-second", type=int, default=50)
+    parser.add_argument("--ready-timeout", type=float, default=60)
+    parser.add_argument("--progress-interval", type=float, default=6, help="must exceed playlist target duration")
+    parser.add_argument("--start-file", type=Path)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--persistent", action="store_true")
     args = parser.parse_args()
-    if args.viewers <= 0 or args.duration <= 0 or args.ramp_per_second <= 0 or args.warmup < 0:
-        parser.error("viewers, duration and ramp-per-second must be positive; warmup must be nonnegative")
+    if min(args.viewers, args.duration, args.ramp_per_second, args.ready_timeout, args.progress_interval) <= 0 or args.warmup < 0:
+        parser.error("positive viewers, duration, ramp, timeouts and nonnegative warmup required")
+    if args.duration < args.progress_interval:
+        parser.error("duration must cover at least one progress interval")
+    try:
+        args.urls = read_credentials(args.hls_urls_file, args.viewers)
+    except ValueError as error:
+        parser.error(str(error))
     return args
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(asyncio.run(run(parse_arguments())))
-    except Exception as error:
-        print(f"fanout HLS generator failed: {error}", flush=True)
-        raise SystemExit(2)
+    raise SystemExit(asyncio.run(run(parse_arguments())))

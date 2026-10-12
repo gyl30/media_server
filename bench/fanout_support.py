@@ -66,9 +66,31 @@ def proc_snapshot(pid):
                 udp_tx_queue += int(tx, 16)
                 udp_rx_queue += int(rx, 16)
                 udp_drops += int(fields[-1])
+    tcp_tx_queue = tcp_rx_queue = 0
+    for family in ("tcp", "tcp6"):
+        for line in Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]:
+            fields = line.split()
+            if fields[9] in sockets:
+                tx, rx = fields[4].split(":")
+                tcp_tx_queue += int(tx, 16)
+                tcp_rx_queue += int(rx, 16)
+    snmp = {}
+    lines = Path(f"/proc/{pid}/net/snmp").read_text().splitlines()
+    for names, values in zip(lines[::2], lines[1::2]):
+        prefix = names.split()[0].rstrip(":")
+        for key, value in zip(names.split()[1:], values.split()[1:]):
+            if key in {"RetransSegs", "InErrors", "RcvbufErrors", "SndbufErrors"}:
+                snmp[prefix + key] = int(value)
     status = proc_status(pid)
+    if "VmRSS" not in status:
+        raise ProcessLookupError(pid)
     return {
+        "monotonic_ns": time.monotonic_ns(),
+        "cpu_affinity": sorted(os.sched_getaffinity(pid)),
         "cpu": proc_cpu(pid),
+        "tcp_tx_queue_bytes": tcp_tx_queue,
+        "tcp_rx_queue_bytes": tcp_rx_queue,
+        "namespace_snmp": snmp,
         "rss_kib": status["VmRSS"],
         "vmsize_kib": status["VmSize"],
         "thread_count": status["Threads"],

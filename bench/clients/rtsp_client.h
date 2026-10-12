@@ -10,6 +10,8 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 
+#include "bench/packet_health.h"
+
 struct rtsp_client_t;
 struct rtsp_rtp_info_t;
 
@@ -27,6 +29,7 @@ class rtsp_client final
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, bool expect_audio);
     boost::asio::awaitable<boost::system::error_code> consume_one();
     void cancel() noexcept;
+    [[nodiscard]] bool handshake_complete() const noexcept { return completed_; }
 
     [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_; }
     [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
@@ -60,6 +63,8 @@ class rtsp_client final
     std::string sdp_;
     std::vector<std::vector<std::uint8_t>> writes_;
     std::vector<bool> audio_channels_;
+    std::vector<rtp_health> packet_health_;
+    std::uint64_t invalid_packets_{};
     std::uint64_t received_bytes_{};
     std::uint64_t received_messages_{};
     std::uint64_t received_audio_bytes_{};

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <csignal>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -25,6 +26,13 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include "bench/clients/webrtc_client.h"
+#include "bench/credential_file.h"
+
+extern "C"
+{
+#include <libavformat/avformat.h>
+#include "mpeg4-avc.h"
+}
 
 namespace
 {
@@ -33,14 +41,13 @@ using clock_type = std::chrono::steady_clock;
 
 struct configuration
 {
-    std::string whip_base_url;
-    std::string stream_prefix;
+    std::string urls_file;
+    std::string fixture;
+    std::string bind_address{"0.0.0.0"};
+    std::vector<std::string> urls;
     std::size_t sources{};
     std::size_t ramp_per_second{100};
     std::size_t io_threads{4};
-    std::uint32_t frames_per_second{25};
-    std::uint32_t gop{25};
-    std::uint64_t bitrate{710'000};
     std::chrono::seconds duration{15};
 };
 
@@ -50,13 +57,21 @@ struct rtp_payload
     bool marker{};
 };
 
+struct fixture_frame
+{
+    std::chrono::nanoseconds at{};
+    std::uint32_t timestamp{};
+    bool video{};
+    std::vector<rtp_payload> packets;
+};
+
 struct media_fixture
 {
-    std::vector<rtp_payload> key_frame;
-    std::vector<rtp_payload> delta_frame;
-    std::shared_ptr<const std::vector<std::uint8_t>> opus;
-    std::uint64_t bitrate{};
+    std::vector<fixture_frame> frames;
+    std::chrono::nanoseconds duration{};
 };
+
+volatile std::sig_atomic_t stop_requested{};
 
 struct process_sample
 {
@@ -101,13 +116,13 @@ configuration parse_arguments(int argc, char** argv)
     for (int index = 1; index < argc; ++index)
     {
         const std::string_view argument = argv[index];
-        if (argument == "--whip-base-url")
+        if (argument == "--whip-urls-file")
         {
-            config.whip_base_url = argument_value(index, argc, argv, argument);
+            config.urls_file = argument_value(index, argc, argv, argument);
         }
-        else if (argument == "--stream-prefix")
+        else if (argument == "--fixture")
         {
-            config.stream_prefix = argument_value(index, argc, argv, argument);
+            config.fixture = argument_value(index, argc, argv, argument);
         }
         else if (argument == "--sources")
         {
@@ -121,17 +136,9 @@ configuration parse_arguments(int argc, char** argv)
         {
             config.io_threads = std::stoull(argument_value(index, argc, argv, argument));
         }
-        else if (argument == "--fps")
+        else if (argument == "--bind-address")
         {
-            config.frames_per_second = static_cast<std::uint32_t>(std::stoul(argument_value(index, argc, argv, argument)));
-        }
-        else if (argument == "--gop")
-        {
-            config.gop = static_cast<std::uint32_t>(std::stoul(argument_value(index, argc, argv, argument)));
-        }
-        else if (argument == "--bitrate")
-        {
-            config.bitrate = std::stoull(argument_value(index, argc, argv, argument));
+            config.bind_address = argument_value(index, argc, argv, argument);
         }
         else if (argument == "--duration")
         {
@@ -142,14 +149,13 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (!config.whip_base_url.starts_with("http://") || !config.whip_base_url.ends_with('/') ||
-        config.stream_prefix.find('/') == std::string::npos || config.sources == 0U ||
-        config.ramp_per_second == 0U || config.io_threads == 0U || config.io_threads > 64U || config.frames_per_second == 0U ||
-        config.frames_per_second > 50U || config.gop == 0U || config.duration.count() <= 0)
+    if (config.urls_file.empty() || config.fixture.empty() || config.sources == 0U || config.ramp_per_second == 0U ||
+        config.io_threads == 0U || config.io_threads > 64U || config.duration.count() <= 0)
     {
-        throw std::runtime_error(
-            "whip-base-url ending in '/', stream-prefix with app, sources, ramp-per-second, io-threads, fps, gop and positive duration are required");
+        throw std::runtime_error("fixture, whip-urls-file, positive sources, ramp, io-threads and duration required");
     }
+    config.urls = media_server::bench::read_credentials(config.urls_file, config.sources);
+    (void)boost::asio::ip::make_address(config.bind_address);
     return config;
 }
 
@@ -214,28 +220,87 @@ void append_h264_nalu(std::vector<rtp_payload>& packets, std::span<const std::ui
 
 media_fixture make_media_fixture(const configuration& config)
 {
-    constexpr std::array<std::uint8_t, 21> sps{0x67, 0x42, 0xc0, 0x0a, 0xda, 0x7b, 0x01, 0x10, 0x00, 0x00, 0x03,
-                                               0x00, 0x10, 0x00, 0x00, 0x03, 0x03, 0x28, 0xf1, 0x22, 0x6a};
-    constexpr std::array<std::uint8_t, 4> pps{0x68, 0xce, 0x0f, 0xc8};
-    const auto bytes_per_frame = std::max<std::size_t>(64U, config.bitrate / 8U / config.frames_per_second);
-    std::vector<std::uint8_t> key(bytes_per_frame, 0xffU);
-    std::vector<std::uint8_t> delta(bytes_per_frame, 0xffU);
-    const std::array<std::uint8_t, 10> key_prefix{0x65, 0x88, 0x84, 0x3a, 0x26, 0x28, 0x00, 0x09, 0x02, 0xe0};
-    const std::array<std::uint8_t, 10> delta_prefix{0x41, 0x9a, 0x20, 0x26, 0x94, 0x10, 0x08, 0x04, 0x02, 0x01};
-    std::copy(key_prefix.begin(), key_prefix.end(), key.begin());
-    std::copy(delta_prefix.begin(), delta_prefix.end(), delta.begin());
-    key.back() = 0x80U;
-    delta.back() = 0x80U;
-
+    AVFormatContext* input{};
+    if (avformat_open_input(&input, config.fixture.c_str(), nullptr, nullptr) < 0)
+    {
+        throw std::runtime_error("cannot open fixture");
+    }
+    const auto close_input = [](AVFormatContext* pointer) { avformat_close_input(&pointer); };
+    std::unique_ptr<AVFormatContext, decltype(close_input)> owner(input, close_input);
+    if (avformat_find_stream_info(input, nullptr) < 0)
+    {
+        throw std::runtime_error("cannot read fixture tracks");
+    }
+    const auto video = av_find_best_stream(input, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+    const auto audio = av_find_best_stream(input, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    if (video < 0 || audio < 0 || input->streams[video]->codecpar->codec_id != AV_CODEC_ID_H264 ||
+        input->streams[audio]->codecpar->codec_id != AV_CODEC_ID_OPUS)
+    {
+        throw std::runtime_error("WHIP fixture requires H.264 and Opus (derive audio from the standard fixture)");
+    }
+    const auto* parameters = input->streams[video]->codecpar;
+    mpeg4_avc_t avc{};
+    if (mpeg4_avc_decoder_configuration_record_load(parameters->extradata, static_cast<std::size_t>(parameters->extradata_size), &avc) <= 0)
+    {
+        throw std::runtime_error("fixture requires AVC configuration");
+    }
+    const auto free_packet = [](AVPacket* pointer) { av_packet_free(&pointer); };
+    std::unique_ptr<AVPacket, decltype(free_packet)> packet(av_packet_alloc(), free_packet);
     media_fixture fixture;
-    append_h264_nalu(fixture.key_frame, sps);
-    append_h264_nalu(fixture.key_frame, pps);
-    append_h264_nalu(fixture.key_frame, key);
-    append_h264_nalu(fixture.delta_frame, delta);
-    fixture.key_frame.back().marker = true;
-    fixture.delta_frame.back().marker = true;
-    fixture.opus = std::make_shared<const std::vector<std::uint8_t>>(std::initializer_list<std::uint8_t>{0xf8, 0xff, 0xfe});
-    fixture.bitrate = static_cast<std::uint64_t>(bytes_per_frame) * config.frames_per_second * 8U;
+    int result{};
+    while ((result = av_read_frame(input, packet.get())) >= 0)
+    {
+        if (packet->stream_index == video || packet->stream_index == audio)
+        {
+            if (packet->pts == AV_NOPTS_VALUE || packet->dts != packet->pts)
+            {
+                throw std::runtime_error("fixture requires presentation timestamps without B frames");
+            }
+            const auto* stream = input->streams[packet->stream_index];
+            fixture_frame frame;
+            frame.video = packet->stream_index == video;
+            frame.at = std::chrono::nanoseconds{av_rescale_q(packet->pts, stream->time_base, {1, 1'000'000'000})};
+            frame.timestamp = static_cast<std::uint32_t>(av_rescale_q(packet->pts, stream->time_base, {1, frame.video ? 90'000 : 48'000}));
+            if (frame.video)
+            {
+                std::vector<std::uint8_t> annex_b(static_cast<std::size_t>(packet->size) + 8192U);
+                const auto bytes = h264_mp4toannexb(&avc, packet->data, static_cast<std::size_t>(packet->size), annex_b.data(), annex_b.size());
+                if (bytes <= 0 || mpeg4_h264_annexb_nalu(annex_b.data(), static_cast<std::size_t>(bytes),
+                    [](void* param, const std::uint8_t* nalu, std::size_t size) {
+                        append_h264_nalu(*static_cast<std::vector<rtp_payload>*>(param), {nalu, size});
+                    }, &frame.packets) != 0 || frame.packets.empty())
+                {
+                    throw std::runtime_error("invalid fixture H.264 access unit");
+                }
+                frame.packets.back().marker = true;
+            }
+            else
+            {
+                frame.packets.push_back({std::make_shared<const std::vector<std::uint8_t>>(packet->data, packet->data + packet->size), true});
+            }
+            fixture.duration = std::max(fixture.duration, frame.at + std::chrono::nanoseconds{
+                av_rescale_q(packet->duration, stream->time_base, {1, 1'000'000'000})});
+            fixture.frames.emplace_back(std::move(frame));
+        }
+        av_packet_unref(packet.get());
+    }
+    if (result != AVERROR_EOF || fixture.frames.empty())
+    {
+        throw std::runtime_error("fixture read failed");
+    }
+    std::stable_sort(fixture.frames.begin(), fixture.frames.end(), [](const auto& left, const auto& right) { return left.at < right.at; });
+    const auto origin = fixture.frames.front().at;
+    for (auto& frame : fixture.frames)
+    {
+        frame.at -= origin;
+        const auto rate = frame.video ? 90'000 : 48'000;
+        frame.timestamp = static_cast<std::uint32_t>(av_rescale_q(frame.at.count(), {1, 1'000'000'000}, {1, rate}));
+    }
+    fixture.duration -= origin;
+    if (fixture.duration <= fixture.frames.back().at)
+    {
+        throw std::runtime_error("fixture duration does not include its final packet");
+    }
     return fixture;
 }
 
@@ -311,7 +376,7 @@ class publish_session final : public std::enable_shared_from_this<publish_sessio
                     self->fail("udp_receive", error.message());
                 }
             });
-        next_audio_ = next_video_ = clock_type::now();
+        origin_ = clock_type::now();
         schedule();
     }
 
@@ -360,7 +425,7 @@ class publish_session final : public std::enable_shared_from_this<publish_sessio
         {
             return;
         }
-        const auto next = std::min(next_audio_, next_video_);
+        const auto next = origin_ + fixture_->frames[frame_index_].at;
         pacing_.expires_at(next);
         pacing_.async_wait(
             [self = shared_from_this()](const boost::system::error_code& error)
@@ -376,38 +441,24 @@ class publish_session final : public std::enable_shared_from_this<publish_sessio
 
     void send_due_media()
     {
-        const auto now = clock_type::now();
-        const auto audio_interval = std::chrono::milliseconds(20);
-        if (next_audio_ <= now)
+        const auto& frame = fixture_->frames[frame_index_];
+        const auto rate = frame.video ? 90'000 : 48'000;
+        const auto offset = static_cast<std::uint32_t>(av_rescale_q(cycles_ * fixture_->duration.count(), {1, 1'000'000'000}, {1, rate}));
+        for (const auto& payload : frame.packets)
         {
-            if (!send_packet(*fixture_->opus, 111, true, audio_sequence_, audio_timestamp_, audio_ssrc_, '1'))
+            if (!send_packet(*payload.bytes, frame.video ? 102 : 111, payload.marker,
+                             frame.video ? video_sequence_ : audio_sequence_, frame.timestamp + offset,
+                             frame.video ? video_ssrc_ : audio_ssrc_, frame.video ? '0' : '1'))
             {
                 return;
             }
-            audio_timestamp_ += 960U;
-            do
-            {
-                next_audio_ += audio_interval;
-            } while (next_audio_ <= now);
         }
-
-        const auto video_interval = std::chrono::nanoseconds{1'000'000'000LL / config_.frames_per_second};
-        if (next_video_ <= now && !terminal_)
+        ++frame_index_;
+        if (frame_index_ == fixture_->frames.size())
         {
-            const auto& frame = video_frame_ % config_.gop == 0U ? fixture_->key_frame : fixture_->delta_frame;
-            for (const auto& payload : frame)
-            {
-                if (!send_packet(*payload.bytes, 102, payload.marker, video_sequence_, video_timestamp_, video_ssrc_, '0'))
-                {
-                    return;
-                }
-            }
-            ++video_frame_;
-            video_timestamp_ += 90'000U / config_.frames_per_second;
-            do
-            {
-                next_video_ += video_interval;
-            } while (next_video_ <= now);
+            frame_index_ = 0;
+            ++cycles_;
+            origin_ += fixture_->duration;
         }
     }
 
@@ -434,15 +485,14 @@ class publish_session final : public std::enable_shared_from_this<publish_sessio
     std::string resource_url_;
     std::size_t index_{};
     boost::asio::steady_timer pacing_;
-    clock_type::time_point next_video_;
-    clock_type::time_point next_audio_;
+    clock_type::time_point origin_;
+    std::size_t frame_index_{};
+    std::int64_t cycles_{};
     std::uint32_t video_ssrc_{};
     std::uint32_t audio_ssrc_{};
-    std::uint32_t video_timestamp_{};
-    std::uint32_t audio_timestamp_{};
+
     std::uint16_t video_sequence_{};
     std::uint16_t audio_sequence_{};
-    std::uint64_t video_frame_{};
     std::atomic_uint64_t sent_bytes_{};
     std::atomic_uint64_t sent_packets_{};
     std::atomic_uint64_t received_bytes_{};
@@ -515,6 +565,14 @@ std::size_t stop_and_remove_sessions(const std::vector<std::shared_ptr<publish_s
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--help")
+    {
+        std::cout << "--whip-urls-file FILE --fixture H264_OPUS_MKV --sources N\n"
+                     "--bind-address IP --ramp-per-second N --io-threads N --duration SECONDS\n";
+        return 0;
+    }
+    std::signal(SIGTERM, [](int) { stop_requested = 1; });
+    std::signal(SIGINT, [](int) { stop_requested = 1; });
     try
     {
         const auto config = parse_arguments(argc, argv);
@@ -545,10 +603,9 @@ int main(int argc, char** argv)
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.sources; ++index)
         {
-            const auto stream_name = config.stream_prefix + std::to_string(index);
-            const auto publish_url = config.whip_base_url + stream_name;
+            const auto& publish_url = config.urls[index];
             auto& shard = *shards[index % shards.size()];
-            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, boost::asio::ip::address_v4::any());
+            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, boost::asio::ip::make_address(config.bind_address));
             media_server::bench::webrtc_http_response response;
             std::string error;
             if (!media_server::bench::post_webrtc_offer(publish_url, offer, response, error) || response.status != 201U ||
@@ -586,14 +643,11 @@ int main(int argc, char** argv)
                   << " ramp_seconds=" << std::chrono::duration<double>(clock_type::now() - ramp_started).count()
                   << " generator_cpu_seconds=" << established.cpu_seconds << " generator_rss_kib=" << established.rss_kib
                   << " generator_pss_kib=" << established.pss_kib << " generator_fds=" << established.fds << '\n';
-        std::cout << "io_threads=" << config.io_threads << " fps=" << config.frames_per_second << " gop=" << config.gop
-                  << " requested_bitrate=" << config.bitrate << " actual_fixture_bitrate=" << fixture->bitrate << '\n';
+        std::cout << "io_threads=" << config.io_threads << " fixture=" << config.fixture
+                  << " fixture_frames=" << fixture->frames.size() << " fixture_seconds="
+                  << std::chrono::duration<double>(fixture->duration).count() << std::endl;
         if (results->ready.load() != config.sources)
         {
-            for (const auto& error : results->errors)
-            {
-                std::cerr << error << '\n';
-            }
             const auto removed = stop_and_remove_sessions(sessions, results, shards);
             std::cout << "phase=disconnect stopped=" << results->stopped.load() << " removed=" << removed << " requested=" << config.sources << '\n';
             stop_shards(shards);
@@ -608,7 +662,10 @@ int main(int argc, char** argv)
         }
         const auto process_before = sample_process();
         const auto started = clock_type::now();
-        std::this_thread::sleep_for(config.duration);
+        while (!stop_requested && clock_type::now() < started + config.duration)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds{100});
+        }
         const auto elapsed = std::chrono::duration<double>(clock_type::now() - started).count();
         const auto process_after = sample_process();
         const auto [bytes_after, packets_after] = media_totals(sessions);
@@ -627,11 +684,11 @@ int main(int argc, char** argv)
 
         const auto removed = stop_and_remove_sessions(sessions, results, shards);
         std::cout << "phase=disconnect stopped=" << results->stopped.load() << " removed=" << removed << " requested=" << config.sources << '\n';
+        stop_shards(shards);
         for (const auto& error : results->errors)
         {
             std::cerr << error << '\n';
         }
-        stop_shards(shards);
         return progressing == config.sources && results->runtime_failures.load() == 0U && results->stopped.load() == config.sources &&
                        removed == config.sources
                    ? 0

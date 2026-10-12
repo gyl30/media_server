@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fanout_support import benchmark_head
+from perf_support import wait_start
 
 
 @dataclass
@@ -20,6 +21,7 @@ class Sender:
     sender_id: str
     ssrc: int
     created_at: float
+    stream_name: str
 
 
 def percentile(values, fraction):
@@ -43,10 +45,11 @@ def distribution(values):
 
 
 class ControlClient:
-    def __init__(self, base_url):
+    def __init__(self, base_url, token):
         parsed = urlsplit(base_url)
         if parsed.scheme != "http" or not parsed.hostname or parsed.query or parsed.fragment:
             raise ValueError("control URL must be an http URL without query or fragment")
+        self.token = token
         self.host = parsed.hostname
         self.port = parsed.port or 80
         self.base_path = parsed.path.rstrip("/")
@@ -61,6 +64,7 @@ class ControlClient:
             request = (
                 f"POST {target} HTTP/1.1\r\n"
                 f"Host: {self.host}:{self.port}\r\n"
+                f"Authorization: Bearer {self.token}\r\n"
                 "Connection: close\r\n"
                 "Content-Type: application/json\r\n"
                 f"Content-Length: {len(payload)}\r\n\r\n"
@@ -97,6 +101,10 @@ class State:
         self.packets_by_ssrc = {}
         self.last_sequence = {}
         self.sequence_gaps = {}
+        self.video_by_ssrc = {}
+        self.audio_by_ssrc = {}
+        self.pts_by_track = {}
+        self.ps_buffers = {}
         self.ready = asyncio.Event()
         self.measurement_started = False
         self.cleanup_started = False
@@ -104,6 +112,8 @@ class State:
         self.errors = []
 
     def packet(self, packet, received_bytes):
+        if self.cleanup_started:
+            return
         if (
             len(packet) < 12
             or packet[0] >> 6 != 2
@@ -118,13 +128,63 @@ class State:
         sequence = int.from_bytes(packet[2:4], "big")
         previous = self.last_sequence.get(ssrc)
         if previous is not None:
-            gap = (sequence - previous - 1) & 0xFFFF
-            if gap < 0x8000:
-                self.sequence_gaps[ssrc] = self.sequence_gaps.get(ssrc, 0) + gap
+            delta = (sequence - previous) & 0xFFFF
+            if delta != 1:
+                self.sequence_gaps[ssrc] = self.sequence_gaps.get(ssrc, 0) + (delta - 1 if 1 < delta < 0x8000 else 1)
+                if len(self.errors) < 20:
+                    self.errors.append(f"rtp_sequence_error:ssrc={ssrc}:previous={previous}:current={sequence}")
+            if delta == 0:
+                return
         self.last_sequence[ssrc] = sequence
+        offset = 12 + (packet[0] & 15) * 4
+        if packet[0] & 16:
+            if len(packet) < offset + 4:
+                return
+            offset += 4 + int.from_bytes(packet[offset + 2:offset + 4], "big") * 4
+        payload = packet[offset:]
+        buffer = self.ps_buffers.setdefault(ssrc, bytearray())
+        buffer.extend(payload)
+        while len(buffer) >= 6:
+            if buffer[:3] != b"\x00\x00\x01":
+                if len(self.errors) < 20:
+                    self.errors.append(f"invalid_ps_prefix:ssrc={ssrc}")
+                buffer.clear()
+                break
+            stream_type = buffer[3]
+            if stream_type == 0xba:
+                if len(buffer) < 14:
+                    break
+                size = 14 + (buffer[13] & 7)
+            else:
+                size = 6 + int.from_bytes(buffer[4:6], "big")
+            if len(buffer) < size:
+                break
+            if 0xc0 <= stream_type <= 0xef:
+                if size < 9 or buffer[6] & 0xc0 != 0x80 or size <= 9 + buffer[8]:
+                    if len(self.errors) < 20:
+                        self.errors.append(f"invalid_pes_header:ssrc={ssrc}")
+                else:
+                    if buffer[7] & 0x80:
+                        stamp = buffer[9:14]
+                        if buffer[8] < 5 or len(stamp) != 5 or stamp[0] & 1 == 0 or stamp[2] & 1 == 0 or stamp[4] & 1 == 0:
+                            if len(self.errors) < 20:
+                                self.errors.append(f"invalid_pes_timestamp:ssrc={ssrc}")
+                        else:
+                            pts = ((stamp[0] >> 1 & 7) << 30) | (stamp[1] << 22) | (stamp[2] >> 1 << 15) | (stamp[3] << 7) | (stamp[4] >> 1)
+                            key = (ssrc, stream_type)
+                            previous_pts = self.pts_by_track.get(key)
+                            if previous_pts is not None and ((pts - previous_pts) & 0x1ffffffff) > 0x100000000:
+                                if len(self.errors) < 20:
+                                    self.errors.append(f"timestamp_reversal:ssrc={ssrc}:track={stream_type}")
+                            self.pts_by_track[key] = pts
+                    if 0xe0 <= stream_type <= 0xef:
+                        self.video_by_ssrc[ssrc] = self.video_by_ssrc.get(ssrc, 0) + 1
+                    else:
+                        self.audio_by_ssrc[ssrc] = self.audio_by_ssrc.get(ssrc, 0) + 1
+            del buffer[:size]
         self.bytes_by_ssrc[ssrc] = self.bytes_by_ssrc.get(ssrc, 0) + received_bytes
         self.packets_by_ssrc[ssrc] = self.packets_by_ssrc.get(ssrc, 0) + 1
-        if ssrc not in self.first_seen:
+        if ssrc not in self.first_seen and self.video_by_ssrc.get(ssrc, 0) and (self.args.video_only or self.audio_by_ssrc.get(ssrc, 0)):
             self.first_seen.add(ssrc)
             self.first_media_ms.append((time.monotonic() - sender.created_at) * 1000)
             if len(self.first_seen) == self.args.viewers:
@@ -185,14 +245,17 @@ class TcpSink:
 
 async def create_sender(control, state, sender, port):
     body = {
-        "stream_id": state.args.stream_name,
+        "stream_id": sender.stream_name,
         "sender_id": sender.sender_id,
         "transport": state.args.transport,
         "payload_type": state.args.payload_type,
         "ssrc": sender.ssrc,
         "remote_address": state.args.host,
     }
-    if state.args.transport == "udp":
+    if state.args.transport == "tcp_passive":
+        body.pop("remote_address")
+        body["listen_port"] = port
+    elif state.args.transport == "udp":
         body.update(remote_rtp_port=port)
     else:
         body["remote_port"] = port
@@ -203,7 +266,7 @@ async def create_sender(control, state, sender, port):
 
 async def delete_sender(control, stream_name, sender):
     body = {
-        "stream_id": stream_name,
+        "stream_id": sender.stream_name,
         "sender_id": sender.sender_id,
     }
     status, response = await control.post("/gb28181/sender/delete", body)
@@ -314,7 +377,7 @@ def make_result(
 
 
 async def run(args):
-    control = ControlClient(args.control_url)
+    control = ControlClient(args.control_url, args.control_token)
     state = State(args)
     senders = []
     attempted_senders = []
@@ -329,6 +392,9 @@ async def run(args):
     before_bytes = None
     before_packets = None
     before_sequence_gaps = None
+    start_ns = end_ns = 0
+    cpu_before = cpu_seconds = 0.0
+    stalled = set()
 
     try:
         loop = asyncio.get_running_loop()
@@ -347,7 +413,7 @@ async def run(args):
         next_create = time.monotonic()
         for index in range(args.viewers):
             ssrc = (initial_ssrc + index) & 0xFFFFFFFF or index + 1
-            sender = Sender(str(uuid.uuid4()), ssrc, time.monotonic())
+            sender = Sender(str(uuid.uuid4()), ssrc, time.monotonic(), args.streams[index % len(args.streams)])
             attempted_senders.append(sender)
             state.expected[ssrc] = sender
             transport = None
@@ -358,9 +424,17 @@ async def run(args):
                         lambda: UdpSink(state), sock=sock
                     )
                     port = transport.get_extra_info("sockname")[1]
-                else:
+                elif args.transport == "tcp_active":
                     port = shared_tcp_port
+                else:
+                    port = args.listen_port + index
                 await create_sender(control, state, sender, port)
+                if args.transport == "tcp_passive":
+                    if tcp_sink is None:
+                        tcp_sink = TcpSink(state)
+                    reader, writer = await asyncio.wait_for(asyncio.open_connection(control.host, port), args.ready_timeout)
+                    task = asyncio.create_task(tcp_sink.accepted(reader, writer))
+                    tcp_sink.tasks.add(task)
             except Exception:
                 state.expected.pop(ssrc, None)
                 if transport is not None:
@@ -376,7 +450,7 @@ async def run(args):
         try:
             await asyncio.wait_for(
                 state.ready.wait(),
-                timeout=max(30, args.viewers / args.ramp_per_second + 20),
+                timeout=args.ready_timeout,
             )
         except asyncio.TimeoutError as error:
             raise RuntimeError(
@@ -389,15 +463,38 @@ async def run(args):
             f"seconds={establishment_seconds:.6f}",
             flush=True,
         )
-        await asyncio.sleep(args.warmup)
+        print(f"phase=media_ready ready={len(state.first_seen)}", flush=True)
+        start = await wait_start(args.start_file, args.warmup, args.ready_timeout)
+        cpu_before = time.process_time()
+        start_ns = time.monotonic_ns()
         before_bytes = state.bytes_by_ssrc.copy()
         before_packets = state.packets_by_ssrc.copy()
         before_sequence_gaps = state.sequence_gaps.copy()
         state.measurement_started = True
-        print("phase=measurement_start", flush=True)
-        started = time.monotonic()
-        await asyncio.sleep(args.duration)
-        elapsed = time.monotonic() - started
+        print(f"phase=measurement_start monotonic_ns={start_ns} unix_ns={time.time_ns()}", flush=True)
+        previous_video = state.video_by_ssrc.copy()
+        previous_audio = state.audio_by_ssrc.copy()
+        deadline = start + args.duration
+        next_sample = start + args.progress_interval
+        while next_sample <= deadline:
+            await asyncio.sleep(max(0, next_sample - time.monotonic()))
+            for sender in senders:
+                ssrc = sender.ssrc
+                if state.video_by_ssrc.get(ssrc, 0) == previous_video.get(ssrc, 0) or (
+                    not args.video_only and state.audio_by_ssrc.get(ssrc, 0) == previous_audio.get(ssrc, 0)):
+                    stalled.add(ssrc)
+            previous_video = state.video_by_ssrc.copy()
+            previous_audio = state.audio_by_ssrc.copy()
+            next_sample += args.progress_interval
+        await asyncio.sleep(max(0, deadline - time.monotonic()))
+        end_ns = time.monotonic_ns()
+        cpu_seconds = time.process_time() - cpu_before
+        elapsed = (end_ns - start_ns) / 1e9
+        # 在同一事件循环内固定结束快照，清理流量不计入测量。
+        state.bytes_by_ssrc = state.bytes_by_ssrc.copy()
+        state.packets_by_ssrc = state.packets_by_ssrc.copy()
+        state.sequence_gaps = state.sequence_gaps.copy()
+        state.cleanup_started = True
     except Exception as error:
         state.errors.append(f"{type(error).__name__}:{error}")
     finally:
@@ -425,9 +522,8 @@ async def run(args):
         deleted,
         cleanup_errors,
     )
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-    print(json.dumps(result, indent=2))
+    result["measurement"].update(measurement_start_monotonic_ns=start_ns, measurement_end_monotonic_ns=end_ns,
+                                  non_progressing_ssrcs=sorted(stalled))
     measurement = result["measurement"]
     success = (
         len(senders) == args.viewers
@@ -436,8 +532,16 @@ async def run(args):
         and not measurement["tcp_disconnects"]
         and deleted == len(attempted_senders)
         and not cleanup_errors
-        and not state.errors
+        and not state.errors and not stalled and end_ns > start_ns and measurement["sequence_gaps"] == 0
     )
+    result["status"] = "PASS" if success else "FAIL"
+    args.output.mkdir(parents=True, exist_ok=True)
+    (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
+    print(f"phase=measurement requested={args.viewers} ready={len(state.first_seen)} progressing={measurement['progressing']} "
+          f"failed={len(state.errors) + len(stalled)} steady_media_bytes={measurement['received_bytes']} "
+          f"measurement_start_monotonic_ns={start_ns} measurement_end_monotonic_ns={end_ns}", flush=True)
+    if elapsed > 0:
+        print(f"phase=client_resources client_cpu_cores={cpu_seconds / elapsed}", flush=True)
     return 0 if success else 1
 
 
@@ -446,9 +550,16 @@ def parse_arguments():
         description="Fan out one existing media stream through many GB28181 sender sessions"
     )
     parser.add_argument("--control-url", required=True, help="media server HTTP control base URL")
-    parser.add_argument("--stream-name", required=True, help="existing source stream name")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--stream-name", help="existing source stream name")
+    source.add_argument("--streams-file", type=Path, help="one distinct source stream id per line")
+    parser.add_argument("--control-token", required=True)
+    parser.add_argument("--start-file", type=Path)
+    parser.add_argument("--ready-timeout", type=float, default=60)
+    parser.add_argument("--progress-interval", type=float, default=5)
+    parser.add_argument("--video-only", action="store_true")
     parser.add_argument(
-        "--transport", choices=("udp", "tcp_active"), required=True
+        "--transport", choices=("udp", "tcp_active", "tcp_passive"), required=True
     )
     parser.add_argument(
         "--host",
@@ -465,7 +576,7 @@ def parse_arguments():
     args = parser.parse_args()
     try:
         ipaddress.ip_address(args.host)
-        ControlClient(args.control_url)
+        ControlClient(args.control_url, args.control_token)
     except ValueError as error:
         parser.error(str(error))
     if (
@@ -479,6 +590,13 @@ def parse_arguments():
         parser.error(
             "viewers, ramp and duration must be positive; warmup, payload type and listen port must be valid"
         )
+    if args.ready_timeout <= 0 or args.progress_interval <= 0 or args.duration < args.progress_interval:
+        parser.error("positive readiness timeout and duration covering a progress interval required")
+    if args.transport == "tcp_passive" and not 0 < args.listen_port <= 65536 - args.viewers:
+        parser.error("tcp_passive requires a nonzero listen-port range fitting all viewers")
+    args.streams = [args.stream_name] if args.stream_name else args.streams_file.read_text().splitlines()
+    if not args.streams or len(set(args.streams)) != len(args.streams) or any(not item.strip() for item in args.streams):
+        parser.error("source stream ids must be nonempty and distinct")
     return args
 
 

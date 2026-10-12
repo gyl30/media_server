@@ -12,13 +12,15 @@
 
 struct rtmp_client_t;
 
+#include "bench/packet_health.h"
+
 namespace media_server::bench
 {
 
 class rtmp_client final
 {
    public:
-    rtmp_client(boost::asio::io_context& io, std::string app, std::string stream);
+    rtmp_client(boost::asio::io_context& io, std::string path);
 
     ~rtmp_client();
 
@@ -26,6 +28,7 @@ class rtmp_client final
     boost::asio::awaitable<boost::system::error_code> play(std::string host, std::uint16_t port, bool expect_audio);
     boost::asio::awaitable<boost::system::error_code> consume_one();
     void cancel() noexcept;
+    [[nodiscard]] bool handshake_complete() const noexcept;
 
     [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_; }
     [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
@@ -47,6 +50,8 @@ class rtmp_client final
     std::string app_;
     std::string stream_;
     std::vector<std::vector<std::uint8_t>> writes_;
+    timestamp_health video_timestamps_;
+    timestamp_health audio_timestamps_;
     std::uint64_t received_bytes_{};
     std::uint64_t received_messages_{};
     std::uint64_t received_audio_bytes_{};
