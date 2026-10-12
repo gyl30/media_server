@@ -2,7 +2,7 @@
 
 ## 先读结论
 
-本轮负责工具验收，不交付新容量结果。先读 [verification](verification.md)、[audit](audit.md) 与 [result_format](result_format.md)。CODE VERIFIED、DEV VERIFIED、TEST VERIFIED 是不同证据；TEST 仅完成包部署/校验/依赖/帮助，正式负载、容量及高负载 profiling **NOT RUN / REQUIRES_TEST**。不引用旧最大 viewer 数作为当前成绩。
+本轮负责工具验收，不交付新容量结果。先读 [方案审查](test_plan_review.md)、[verification](verification.md)、[audit](audit.md) 与 [result_format](result_format.md)。总体为 **CONDITIONALLY_READY**：当前合成 H.264/AAC（WHIP 输入 H.264/Opus 转 AAC）的短时、固定源数 native fanout 已具备工具条件；完整网络归因、严格零输出 publish-only、长期 soak、全部 codec/协议组合尚不具备同等证据。CODE VERIFIED、DEV VERIFIED、TEST VERIFIED 是不同证据；TEST 仅完成包部署/校验/依赖/帮助，正式负载、容量及高负载 profiling **NOT RUN / REQUIRES_TEST**。不引用旧最大 viewer 数作为当前成绩。
 
 正式入口：perf_run、perf_publish、perf_validate、perf_capacity、perf_profile；HLS/GB Python 与 RTMP/RTSP/FLV/WHEP/WHIP native 客户端。旧独立 wrapper/GB/browser/lifecycle 授权迁移未完成，见 legacy_tools/functional_verification，不能用其旧 URL 作为正常流程。GB perf_run 是网络 PS 输入，不等于完整 SIP 模拟设备验证。
 
@@ -10,7 +10,7 @@
 
 DEV 编译打包；TEST `root@172.20.63.32` 执行正式性能。进入 TEST 后先执行 environment.md 的只读检查，记录 uname/lscpu/free、CPU topology、内存/磁盘、工具版本、端口、当前 Pi PID/starttime/namespace。server 0–7、client 8–15、worker 8、地址198.19.0.10/.11 是约定，必须以当次可用环境确认。
 
-不要进入其他任务的 namespace，不停止不属于本轮的进程。只有在确认本轮归属的独立网络空间已准备好后才运行；本工具不自动创建或清理 namespace。客户端本地 UDP 地址与服务端媒体端口地址必须隔离，不能把 EADDRINUSE 当服务器容量瓶颈。不得调全局 sysctl/ulimit/allocator 改善基线。
+不要进入其他任务的 namespace，不停止不属于本轮的进程。只有在确认本轮归属的独立网络空间已准备好后才运行；本工具不自动创建或清理 namespace。TEST已核对0–15为不同物理CORE，16–31为其SMT兄弟（0↔16，8↔24）；两组自身不共享物理核，但必须记录16–31的其他负载，不能声称完全隔离。客户端本地 UDP 地址与服务端媒体端口地址必须隔离，不能把 EADDRINUSE 当服务器容量瓶颈。不得调全局 sysctl/ulimit/allocator 改善基线。
 
 ## B. 构建、打包与校验
 
@@ -56,6 +56,8 @@ ROOT=$(mktemp -d /var/tmp/media-perf-pi.XXXXXX)
 
 默认地址198.19.0.10/.11、CPU0–7/8–15、worker8必须在 namespace 内存在且可用。低负载 ready/逐轨进展、实际完整测量窗口、独立 token、退出码/result 一致、所有 owned process/receiver 清理都要成立。负对照全部 PASS 才能信任拒绝/中断判断，但负对照永不构成容量失败档。
 
+执行顺序：先完成包/ELF/fixture校验和进程、监听端口归属，再记录CPU兄弟核及背景负载；建立低负载逐轨媒体基线、验证负对照及 source replacement/churn；随后固定源数、固定输入分别测 RTMP/RTSP/FLV/HLS/WHEP 与 GB 输出，再做少量混合组。WHIP→WHEP 是 Opus→AAC→Opus 双转换，必须单列，不能混作 RTMP/AAC→WHEP 的同组结果。多源成本必须固定 viewer/source 比例另外测量，不能仅改变 viewer 总量就推断转码随源数的成本。容量与 profiling 在以上步骤健康后开展。
+
 ## D. 场景与入口
 
 | 场景 | perf_run 参数（其余用上面相同路径） | 限制 |
@@ -72,7 +74,7 @@ ROOT=$(mktemp -d /var/tmp/media-perf-pi.XXXXXX)
 | 源替换 | perf_publish --cycles 2；perf_run --input existing | 真实Go服务/独立DB；保留每代sources.json，旧播放必须结束，不自动切流 |
 | viewer churn | 同一ready源依次运行多个existing短窗 | 每轮新token/新result目录，不重用凭据 |
 
-existing 必须提供真实 `--sources-file --signaling-url --server-pid --control-token`；工具不会关闭外部 DUT。真实发布用 perf_publish.md，Go服务参数核对其当前 help，与media控制Bearer一致。真实服务管理API监听loopback/可信隔离网络，别对外暴露。
+existing 必须提供真实 `--sources-file --signaling-url --server-pid --control-token --server-bin`；工具不会关闭外部 DUT。`--server-bin` 必须指向正在运行的同一 ELF 文件，而非仅 SHA 相同的另一份副本。sources 里有 publisher_pid 时还必须有新版 perf_publish 保存的 publisher_starttick。用准确ELF验证进程身份，同时保存 `ss -lntup`/`/proc/PID/fd` 的目标监听端口归属证据；exe相同不证明两个同ELF实例中哪一个服务这些URL。真实发布用 perf_publish.md，Go服务参数核对其当前 help，与media控制Bearer一致。真实服务管理API监听loopback/可信隔离网络，别对外暴露。
 
 ## E. 正式容量（本轮未执行）
 
@@ -80,7 +82,7 @@ existing 必须提供真实 `--sources-file --signaling-url --server-pid --contr
 
 ```bash
 ./run.sh python3 bench/perf_capacity.py --output "$ROOT/capacity-plan" \
-  --protocols whep --start 100 --step 250 --granularity 100 --maximum 5000 \
+  --protocols whep --start 100 --step 250 --granularity 50 --maximum 5000 \
   --healthy-repeats 3 --failed-repeats 2 --round-timeout 900 --plan-only -- \
   --input rtmp --server-bin build/media_server --client-dir build \
   --ffmpeg-bin bin/ffmpeg --ffprobe-bin bin/ffprobe \
@@ -92,7 +94,11 @@ existing 必须提供真实 `--sources-file --signaling-url --server-pid --contr
 
 正式健康：全部请求viewer有真实媒体ready、双轨持续进展、请求窗口至少99%实证覆盖（调度精度界限，见runner）、无确认媒体错误、清理正确。资源预算、客户端CPU/FD/UDPdrop、来源失败、未知失败或矛盾结果都不是服务端F；不确定返回INCONCLUSIVE。CPU高本身不证明容量耗尽。近边界根据真实证据调整后续独立计划，但不修改已经运行的结果或降低媒体标准。
 
+这些 native 判据证明合法媒体计数持续增长，并不自动证明每个 viewer 达到源帧率、画质或浏览器解码质量。Pi 须在低负载先记录每 viewer 逐轨有效速率，正式组保留相同统计口径；出现明显降速时不凭 runner PASS 宣称稳定容量。组内分位数不能平均为全体 viewer 的 p95/p99；小样本只作功能验证。至少保留每次独立结果、中位数、最小/最大和离散程度。CPU以核数报告，PSS取实际同一测量窗；1Hz采样最大值不是精确内存峰值。
+
 默认预算0只观测，不停止；上述8192/2048/16384MiB是针对约93GiB测试主机的保守执行例，不是已测性能上限，必须经当时预检确认。正式执行前显式加入约定的free-memory/free-disk/server-PSS上限。预算不能代替操作员监控CPU/I/O PSI、客户端及整个host。测试主机压力、媒体停滞、持续队列/丢包、FD/内存逼限、非本轮服务受影响时停止，保留首失败与PID身份，不无界施压。
+
+预算保护现在覆盖准备、分组建立、ready、warmup和测量，超预算不继续升档。`--counts` 遇到客户端/源/工具/资源/身份不确定边界也停止；正常搜索不拿它们作 F。UDP socket drop 聚合负差值表示历史统计不可恢复，必须 INCONCLUSIVE，不能判零丢包或服务端失稳。正式网络归因还须在同一 namespace 保存 NIC/veth/lo 计数、UDP/TCP队列、SNMP及TCP重传增量；现有 runner 的 payload 字节不等于 wire Mbps/PPS。
 
 ## F. 独立诊断
 
@@ -124,6 +130,7 @@ heap-report只分析已有真实jemalloc dump，不自动LD_PRELOAD、启用mall
 - DEV VERIFIED：小规模真实媒体及运行包功能，见verification实际数值；无容量成绩。
 - TEST VERIFIED：独立包传输/SHA/依赖/CLI，不包含性能负载。
 - NOT RUN：TEST正式容量、跨机吞吐、高负载On/Off-CPU与jemalloc。
+- PARTIAL：严格空闲/零输出基线需要单独拥有的 DUT 加现有资源采样组合；`none` 不能替代。长时间运行的 runner 将采样保存在内存中直到最终写出，WHIP 自管源有86400秒时限，不能直接视作可靠的多日 soak 驱动。长期任务须另行审查证据落盘与源持续性，不在本次交接中承诺长期验收。
 - BLOCKED：需Playwright/Chrome的历史工具未内置，部分旧授权入口不可直接执行；用准确当前入口，不猜参数。
 
 任何新增真实生产缺陷先保留RED，停止依赖该结果的升级；本任务交付不授权重构生产架构或立即实施性能优化。

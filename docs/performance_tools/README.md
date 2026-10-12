@@ -15,6 +15,7 @@
 | 旧生命周期工具、可用替代流程 | [生命周期](lifecycle_verify.md) |
 | 所有旧独立 wrapper 与替代命令 | [旧入口](legacy_tools.md) |
 | 审计、结果解释、异常处理 | [audit](audit.md)、[result_format](result_format.md)、[troubleshooting](troubleshooting.md) |
+| 场景、指标、隔离及工具充分性独立复审 | [方案审查](test_plan_review.md) |
 
 正常播放工具需要当前授权。每个 viewer 使用独立一次性 token，不重用 URL；成功认领后任何失败也不回滚。自管 perf_run 使用协议真实的一次性 verifier fixture，existing/perf_publish 使用 Go signaling；二者证据等级不能混写。
 

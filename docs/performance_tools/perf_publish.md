@@ -30,7 +30,7 @@ python3 bench/perf_publish.py --output "$ROOT/publish" \
 ```bash
 python3 bench/perf_run.py --output "$ROOT/viewers" --input existing \
   --sources-file "$ROOT/publish/sources.json" --signaling-url http://127.0.0.1:9090 \
-  --server-pid "$DUT_PID" --control-token "$CONTROL_TOKEN" \
+  --server-pid "$DUT_PID" --control-token "$CONTROL_TOKEN" --server-bin build-tooling/media_server \
   --client-dir build-tooling --outputs flv:3,whep:3 --duration 10
 ```
 
