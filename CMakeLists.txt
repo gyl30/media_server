@@ -361,7 +361,7 @@ if(BUILD_TESTING)
     add_executable(udp_transport_tests tests/udp_transport.cpp)
     target_link_libraries(udp_transport_tests PRIVATE media_core media_server_link_options)
     add_test(NAME udp_transport COMMAND udp_transport_tests)
-    set_tests_properties(udp_transport PROPERTIES TIMEOUT 30)
+    set_tests_properties(udp_transport PROPERTIES TIMEOUT 30 RESOURCE_LOCK media_server_auth_udp)
     add_executable(tcp_transport_tests tests/tcp_transport.cpp)
     target_link_libraries(tcp_transport_tests PRIVATE media_core media_server_link_options)
     foreach(tcp_case IN ITEMS serialization callback_shutdown in_flight_shutdown high_water stalled_reader socket_error)
@@ -440,6 +440,8 @@ if(BUILD_TESTING)
     set_tests_properties(whep_dtls_late_completion PROPERTIES TIMEOUT 15)
     add_test(NAME whep_dtls_establishment COMMAND whep_dtls_timeout_tests establishment)
     set_tests_properties(whep_dtls_establishment PROPERTIES TIMEOUT 25)
+    set_tests_properties(whep_dtls_timeout whep_dtls_late_completion whep_dtls_establishment
+        PROPERTIES RESOURCE_LOCK whep_dtls_fixed_udp)
     find_program(MEDIA_SERVER_TEST_FFMPEG ffmpeg)
     if(MEDIA_SERVER_TEST_FFMPEG)
         find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -458,7 +460,7 @@ if(BUILD_TESTING)
         add_test(NAME input_idle
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/input_idle.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
-        set_tests_properties(input_idle PROPERTIES TIMEOUT 90)
+        set_tests_properties(input_idle PROPERTIES TIMEOUT 90 RESOURCE_LOCK media_server_auth_udp)
         add_test(NAME stream_auth
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/stream_auth.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})
@@ -467,6 +469,7 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/stream_auth.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} udp)
         set_tests_properties(stream_auth_udp PROPERTIES TIMEOUT 180)
+        set_tests_properties(stream_auth stream_auth_udp PROPERTIES RESOURCE_LOCK media_server_auth_udp)
     endif()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME accept_recovery
@@ -480,7 +483,7 @@ if(BUILD_TESTING)
     set_tests_properties(accept_errors PROPERTIES TIMEOUT 40)
     add_test(NAME control_auth
         COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/control_auth.py $<TARGET_FILE:media_server>)
-    set_tests_properties(control_auth PROPERTIES TIMEOUT 30)
+    set_tests_properties(control_auth PROPERTIES TIMEOUT 30 RESOURCE_LOCK media_server_auth_udp)
     add_test(NAME media_server_help COMMAND media_server --help)
     foreach(invalid_case IN ITEMS threads port bind_address webrtc_address signaling_url)
         if(invalid_case STREQUAL "threads")
@@ -549,5 +552,8 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_tooling.py
                 --build-dir $<TARGET_FILE_DIR:rtmp_fanout>)
         set_tests_properties(perf_tooling PROPERTIES TIMEOUT 30)
+        add_test(NAME perf_tooling_followup
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_tooling_followup.py)
+        set_tests_properties(perf_tooling_followup PROPERTIES TIMEOUT 30)
     endif()
 endif()
