@@ -255,7 +255,7 @@ void http_flv_session::on_frame(const media_frame& entry)
         shutdown();
         return;
     }
-    if (!output_buffer_.empty() && !enqueue(std::move(output_buffer_)))
+    if (!enqueue(std::move(output_buffer_)))
     {
         shutdown();
     }
