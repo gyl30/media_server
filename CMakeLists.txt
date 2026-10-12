@@ -555,5 +555,11 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
         add_test(NAME perf_tooling_followup
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_tooling_followup.py)
         set_tests_properties(perf_tooling_followup PROPERTIES TIMEOUT 30)
+        add_test(NAME perf_profile_acceptance
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_profile_acceptance.py)
+        set_tests_properties(perf_profile_acceptance PROPERTIES TIMEOUT 60)
+        add_test(NAME perf_publish_acceptance
+            COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/perf_publish_acceptance.py)
+        set_tests_properties(perf_publish_acceptance PROPERTIES TIMEOUT 30)
     endif()
 endif()

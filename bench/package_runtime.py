@@ -3,8 +3,10 @@
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -35,7 +37,17 @@ def sha256(path):
 
 
 def runtime_libraries(executable):
-    output = subprocess.check_output(["ldd", str(executable)], text=True)
+    checked = subprocess.run(["ldd", str(executable)], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30,
+                             env={**os.environ, "LC_ALL": "C"})
+    output = checked.stdout + checked.stderr
+    if checked.returncode:
+        with executable.open("rb") as source:
+            header = source.read(18)
+        if (len(header) >= 18 and header[:4] == b"\x7fELF" and
+                int.from_bytes(header[16:18], "little" if header[5] == 1 else "big") in (2, 3) and
+                ("not a dynamic executable" in output or "statically linked" in output)):
+            return
+        raise RuntimeError(f"ldd failed for {executable}: {output.strip()}")
     for line in output.splitlines():
         fields = line.split()
         if "not found" in line:
@@ -61,6 +73,8 @@ def main():
         parser.error(f"output already exists: {args.output}")
 
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], text=True)
+    submodules = subprocess.check_output(["git", "submodule", "status", "--recursive"], text=True).splitlines()
     executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "http_flv_fanout", "rtsp_publisher", "gb_ps_fanout")
     files = [(args.build_dir / name, Path("build") / name) for name in executables]
     files.extend((path, Path("bench") / path.name) for path in Path("bench").glob("*.py") if path.name != "package_runtime.py")
@@ -71,6 +85,19 @@ def main():
     files.extend(((args.ffprobe_bin, Path("bin/ffprobe")), (args.ffmpeg_bin, Path("bin/ffmpeg")), (args.fixture, Path(".cache/perf_fixture_720p30.flv"))))
     if args.whip_fixture:
         files.append((args.whip_fixture, Path(".cache/perf_fixture_whip.mkv")))
+    cache = args.build_dir / "CMakeCache.txt"
+    build = {"directory": str(args.build_dir.resolve()), "binary_source_head": "NOT_RECORDED",
+             "note": "head describes the packaging source tree, not an independently verified ELF build commit"}
+    if cache.is_file():
+        files.append((cache, Path("build/CMakeCache.txt")))
+        build["cmake_cache"] = {}
+        for line in cache.read_text().splitlines():
+            if not line or line.startswith(("#", "//")) or "=" not in line or ":" not in line.split("=", 1)[0]:
+                continue
+            key, value = line.split("=", 1)
+            name = key.split(":", 1)[0]
+            if name.startswith(("CMAKE_", "Boost_", "BOOST_", "FFMPEG_", "OPENSSL_", "MEDIA_SERVER_")):
+                build["cmake_cache"][name] = value
     for source, _ in files:
         if not source.is_file():
             parser.error(f"missing runtime file: {source}")
@@ -97,10 +124,21 @@ def main():
                 raise RuntimeError(f"different libraries use the same SONAME: {name}")
             libraries[name] = path
 
-    args.output.mkdir(parents=True)
-    dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], text=True)
+    args.output.mkdir(parents=True, mode=0o700)
     manifest = {"head": head, "dirty": bool(dirty), "worktree_status": dirty.splitlines(),
-                "fixture_sha256": sha256(args.fixture), "files": {}, "libraries": {}, "nss_modules": {}}
+                "submodules": submodules, "build": build, "fixture_sha256": sha256(args.fixture),
+                "files": {}, "libraries": {}, "nss_modules": {},
+                "packaging_python": sys.version, "tool_versions": {},
+                "host_requirements": {"python": ">=3.10", "python_packages": Path("bench/requirements.txt").read_text().splitlines(),
+                                      "system_runtime": sorted(SYSTEM_RUNTIME_LIBRARIES), "commands": ["taskset", "ldd"]},
+                "optional_assets": {"signaling": bool(args.signaling_bin), "whip_fixture": bool(args.whip_fixture),
+                                    "not_bundled": ["Chrome/Firefox", "Playwright", "GB28181 simulator", "perf/BCC/jeprof",
+                                                    "legacy lifecycle disconnect test assets and compiler"]}}
+    for name, executable in (("ffmpeg", args.ffmpeg_bin), ("ffprobe", args.ffprobe_bin)):
+        version = subprocess.run([str(executable), "-version"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
+                                 env={**os.environ, "LC_ALL": "C"})
+        manifest["tool_versions"][name] = {"exit_code": version.returncode,
+                                           "version": (version.stdout or version.stderr).splitlines()[:1]}
     for source, destination in files:
         target = args.output / destination
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -128,6 +166,7 @@ def main():
         'exec "$@"\n'
     )
     runner.chmod(0o755)
+    manifest["files"]["run.sh"] = sha256(runner)
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"packaged {len(files)} files, {len(libraries)} libraries and {len(nss_modules)} NSS modules from {head} into {args.output}")
 
