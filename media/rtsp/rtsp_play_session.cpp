@@ -212,13 +212,10 @@ void rtsp_play_session::shutdown()
 void rtsp_play_session::safe_shutdown()
 {
     playing_ = false;
-    if (stream_)
-    {
-        stream_->remove_sink(this);
-    }
     waiting_video_track_.reset();
     if (stream_)
     {
+        stream_->remove_sink(this);
         spdlog::debug("rtsp play shutdown {}", stream_->stream_id());
         stream_.reset();
     }
