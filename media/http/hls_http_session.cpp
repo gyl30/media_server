@@ -261,10 +261,6 @@ void hls_http_session::response_completed(const boost::system::error_code& error
 
 void hls_http_session::read_request()
 {
-    if (!stream_.socket().is_open())
-    {
-        return;
-    }
     request_ = {};
     stream_.expires_after(std::chrono::seconds(30));
     const auto self = shared_from_this();
