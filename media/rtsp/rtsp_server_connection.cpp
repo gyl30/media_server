@@ -152,11 +152,6 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
                     return;
                 }
                 consumed = remaining.size() - remaining_bytes;
-                if (result == 0 && consumed == 0)
-                {
-                    shutdown();
-                    return;
-                }
             }
 
             if (consumed == 0 || consumed > remaining.size())
