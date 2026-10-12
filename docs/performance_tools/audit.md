@@ -48,7 +48,7 @@
 - UDP/TCP 容量、媒体端口和 CTest RESOURCE_LOCK 语义保持。DEV 用本轮用户 network namespace 隔离，不能修改其他 Agent 环境。
 - HLS 持续下载不同实时分片是有效的轻量客户端契约；双轨是否真正可解码另用小规模 FFmpeg 样本证明，不能宣称 HLS client 本身逐轨解码。
 - perf_publish 的 cycles 已有同逻辑设备重发、独立 generation；源替换/churn 复用它，不创建生命周期框架。
-- 输出 none 仍会运行一次源 FLV 双轨探针；必须写清，不称严格零输出。
+- 输出 none 在整个测量窗口仍运行每源1个 FLV 双轨 viewer（另有准备探针）；只能称 publish+validation，不是严格零输出。
 - 资源预算默认 0 只记录；Pi 正式测试必须明确设置预算。UDP drop 为存活 socket 采样差值，不是所有历史 socket 的完整累计。
 - 旧回归授权迁移是一项实际缺口；本轮优先保证正式入口。未修入口明确 NOT_COMPATIBLE/NOT_RUN，不向 Pi 提供假可执行正常示例。
 - profiler 无权限/工具缺失为 BLOCKED，不修改全局配置来制造 PASS；正式高负载 profiling 留给 Pi。
