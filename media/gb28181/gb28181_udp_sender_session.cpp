@@ -130,11 +130,6 @@ void gb28181_udp_sender_session::shutdown()
 
 void gb28181_udp_sender_session::schedule_rtcp()
 {
-    if (!stream_)
-    {
-        return;
-    }
-
     rtcp_timer_.expires_after(rtcp_interval);
     const auto self = shared_from_this();
     rtcp_timer_.async_wait(
