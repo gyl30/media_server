@@ -489,18 +489,6 @@ bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtc
 
 int rtsp_play_session::prepare_presentation()
 {
-    track_states_.clear();
-    waiting_video_track_.reset();
-    if (muxer_ != nullptr)
-    {
-        rtsp_muxer_destroy(muxer_);
-        muxer_ = nullptr;
-    }
-
-    if (!stream_)
-    {
-        return 404;
-    }
     const auto& snapshot = stream_->tracks();
     auto* prepared_muxer = rtsp_muxer_create(&rtsp_play_session::muxer_packet_callback, this);
     if (prepared_muxer == nullptr)
