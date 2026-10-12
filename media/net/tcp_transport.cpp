@@ -65,10 +65,7 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
     if (writing && queued_write_bytes_ - write_queue_.front()->size() + data.size() > write_high_water_mark)
     {
         const auto callback = std::exchange(write_callback_, {});
-        if (callback)
-        {
-            callback(boost::asio::error::no_buffer_space, 0);
-        }
+        callback(boost::asio::error::no_buffer_space, 0);
         return;
     }
     queued_write_bytes_ += data.size();
@@ -100,10 +97,7 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
         write_queue_.pop_front();
     }
 
-    if (write_callback_)
-    {
-        write_callback_(error, bytes);
-    }
+    write_callback_(error, bytes);
     if (error)
     {
         return;
