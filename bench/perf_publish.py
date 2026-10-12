@@ -34,12 +34,11 @@ def main():
     args = parser.parse_args()
     if min(args.sources, args.duration, args.cycles, args.ready_timeout, args.ramp_per_second, args.group_size) <= 0:
         parser.error("counts, timeouts and rate must be positive")
-    args.output.mkdir(parents=True, exist_ok=False)
-    subprocess.run(["taskset", "-pc", args.client_cpus, str(os.getpid())], check=True, capture_output=True)
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     devices = []
     publishers = []
     logs = []
-    result = {"status": "NOT_RUN", "input": args.input, "fixture_sha256": sha256(args.whip_fixture if args.input == "whip" else args.fixture),
+    result = {"status": "NOT_RUN", "input": args.input, "started_monotonic_ns": time.monotonic_ns(),
               "generations": [], "errors": [], "cleanup_errors": []}
 
     def interrupt(_number, _frame):
@@ -65,6 +64,9 @@ def main():
         return process
 
     try:
+        subprocess.run(["taskset", "-pc", args.client_cpus, str(os.getpid())], check=True,
+                       capture_output=True, stdin=subprocess.DEVNULL)
+        result["fixture_sha256"] = sha256(args.whip_fixture if args.input == "whip" else args.fixture)
         for index in range(args.sources):
             device = request(args.signaling_url, "/api/push-devices", {"name": f"perf-source-{index}"})
             devices.append(device["device_id"])
@@ -157,6 +159,8 @@ def main():
             log.close()
         if result["cleanup_errors"]:
             result["status"] = "FAIL"
+        result["ended_monotonic_ns"] = time.monotonic_ns()
+        result["cleanup"] = {"all_owned_publishers_reaped": not publishers, "devices_deleted": not result["cleanup_errors"]}
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"status": result["status"], "result": str(args.output / "result.json")}))
     return 0 if result["status"] == "PASS" else 1

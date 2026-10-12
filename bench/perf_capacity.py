@@ -60,6 +60,7 @@ def run_round(command, directory, timeout):
     log = directory.parent / f"{directory.name}.runner.log"
     exit_code = None
     failure = None
+    failed_boundary = "RUNNER_FAILED"
     with log.open("w") as output:
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -77,13 +78,14 @@ def run_round(command, directory, timeout):
                     os.killpg(process.pid, signal.SIGKILL)
                     exit_code = process.wait()
             except KeyboardInterrupt:
+                failure = "operator cancelled runner"
+                failed_boundary = "CANCELLED"
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
-                    process.wait(timeout=30)
+                    exit_code = process.wait(timeout=30)
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
-                    process.wait()
-                raise
+                    exit_code = process.wait()
     result_file = directory / "result.json"
     result = None
     if result_file.exists():
@@ -95,8 +97,19 @@ def run_round(command, directory, timeout):
         failure = "runner did not write result.json"
     if not isinstance(result, dict) or "status" not in result:
         failure = failure or "runner result missing status"
-    if failure or (exit_code != 0 and result and result.get("status") == "PASS"):
-        return {"status": "INCONCLUSIVE", "boundary": "RUNNER_FAILED", "error": failure or "runner exited nonzero despite PASS",
+    if not failure:
+        state = result["status"]
+        boundary = result.get("capacity_boundary", "UNCONFIRMED")
+        if state not in ("PASS", "FAIL", "BLOCKED", "UNSUPPORTED", "NOT_RUN", "INCONCLUSIVE"):
+            failure = "runner result has unknown status"
+        elif (state == "PASS") != (exit_code == 0):
+            failure = "runner status contradicts its exit code"
+        elif (boundary == "HEALTHY") != (state == "PASS"):
+            failure = "runner status contradicts HEALTHY boundary"
+        elif boundary == "SERVER_UNSTABLE" and state != "FAIL":
+            failure = "SERVER_UNSTABLE requires a failed workload"
+    if failure:
+        return {"status": "INCONCLUSIVE", "boundary": failed_boundary, "error": failure,
                 "exit_code": exit_code, "log": str(log), "result": str(result_file) if result_file.exists() else None}
     return {"status": result["status"], "boundary": result.get("capacity_boundary", "UNCONFIRMED"),
             "exit_code": exit_code, "log": str(log), "result": str(result_file)}
@@ -122,14 +135,23 @@ def main():
         parser.error("distinct supported output protocols required")
     if min(args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats, args.round_timeout) <= 0 or args.start > args.maximum or args.step % args.granularity or args.start % args.granularity:
         parser.error("positive schedule aligned with granularity required")
-    counts = [int(value) for value in args.counts.split(",")] if args.counts else list(range(args.start, args.maximum + 1, args.step))
+    try:
+        counts = [int(value) for value in args.counts.split(",")] if args.counts else list(range(args.start, args.maximum + 1, args.step))
+    except ValueError:
+        parser.error("counts must be comma-separated integers")
     if any(count < len(protocols) for count in counts):
         parser.error("each count must cover all protocols")
-    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    rounds = []
     forwarded = args.runner_args[1:] if args.runner_args[:1] == ["--"] else args.runner_args
     if any(value.split("=", 1)[0] in ("--outputs", "--output", "--fault") for value in forwarded):
         parser.error("driver owns output/counts; deliberate faults are not capacity tests")
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    rounds = []
+
+    def interrupt(_number, _frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, interrupt)
+    signal.signal(signal.SIGINT, interrupt)
 
     def execute(count):
         directory = args.output / f"round-{len(rounds):03d}-{count}"
@@ -137,18 +159,23 @@ def main():
                    "--outputs", split_load(count, protocols), *forwarded]
         round_result = run_round(command, directory, args.round_timeout)
         rounds.append({"viewers": count, **round_result})
+        (args.output / "result.json").write_text(json.dumps({"status": "NOT_RUN", "rounds": rounds}, indent=2) + "\n")
         return round_result["boundary"]
 
-    if args.plan_only:
-        result = {"status": "NOT_RUN", "counts": [{"viewers": count, "outputs": split_load(count, protocols)} for count in counts],
-                  "step": args.step, "granularity": args.granularity}
-    elif args.counts:
-        for count in counts:
-            execute(count)
-        result = {"status": "PASS" if all(item["status"] == "PASS" for item in rounds) else "INCONCLUSIVE", "rounds": rounds}
-    else:
-        result = search(execute, args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats)
-        result["rounds"] = rounds
+    try:
+        if args.plan_only:
+            result = {"status": "NOT_RUN", "counts": [{"viewers": count, "outputs": split_load(count, protocols)} for count in counts],
+                      "step": args.step, "granularity": args.granularity}
+        elif args.counts:
+            for count in counts:
+                if execute(count) == "CANCELLED":
+                    break
+            result = {"status": "PASS" if all(item["status"] == "PASS" for item in rounds) else "INCONCLUSIVE", "rounds": rounds}
+        else:
+            result = search(execute, args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats)
+            result["rounds"] = rounds
+    except KeyboardInterrupt:
+        result = {"status": "INCONCLUSIVE", "reason": "CANCELLED", "rounds": rounds}
     (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result))
     return 0 if result["status"] in ("PASS", "NOT_RUN") else 1

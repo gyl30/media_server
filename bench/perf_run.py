@@ -186,7 +186,7 @@ def run(args):
         return process
 
     def ffmpeg_source(name, source, transport, host, ports):
-        command = [args.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-threads", "1", "-re", "-stream_loop", "-1", "-i", args.fixture, "-c", "copy"]
+        command = [args.ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-re", "-stream_loop", "-1", "-i", args.fixture, "-c", "copy"]
         if transport == "rtmp":
             command += ["-f", "flv", f"rtmp://{host}:{ports[0]}/live/{source}"]
         else:
@@ -415,8 +415,15 @@ def run(args):
                     result["capacity_boundary"] = "RESOURCE_BUDGET"
                     raise RuntimeError("operator-defined resource budget reached")
                 if args.fault == "source_stop" and not stopped_source and time.monotonic_ns() >= start_ns + args.duration * 500000000:
+                    result["fault_evidence"] = {"kind": "source_stop", "requested_monotonic_ns": time.monotonic_ns(), "media_ready_groups": len(clients)}
                     for process in publishers:
-                        stop_process(process)
+                        if process.poll() is not None:
+                            raise RuntimeError("publisher exited before source_stop injection")
+                        process.kill()
+                    for process in publishers:
+                        process.wait(timeout=5)
+                    result["fault_evidence"]["completed_monotonic_ns"] = time.monotonic_ns()
+                    result["fault_evidence"]["publishers"] = [{"pid": process.pid, "exit_code": process.poll()} for process in publishers]
                     stopped_source = True
                 next_sample += 1000000000
                 time.sleep(max(0, (min(next_sample, deadline_ns) - time.monotonic_ns()) / 1e9))
@@ -445,8 +452,19 @@ def run(args):
                 latency = [parse_phase(line) for line in lines if line.startswith("first_media_ms_p50=")]
                 result["groups"].append({"name": name, "requested": count, "exit_code": process.returncode,
                                          "measurement": media, "first_media": latency[-1] if latency else {}, "log": f"{name}.log"})
+            for group in result["groups"]:
+                media = group["measurement"]
+                actual_start = media.get("measurement_start_monotonic_ns", 0)
+                actual_end = media.get("measurement_end_monotonic_ns", 0)
+                overlap = max(0, min(actual_end, deadline_ns) - max(actual_start, start_ns)) if actual_start > 0 and actual_end > actual_start else 0
+                group["window"] = {"actual_start_monotonic_ns": actual_start, "actual_end_monotonic_ns": actual_end,
+                                   "actual_seconds": max(0, actual_end - actual_start) / 1e9,
+                                   "start_delay_seconds": (actual_start - start_ns) / 1e9 if actual_start else None,
+                                   "end_delay_seconds": (actual_end - deadline_ns) / 1e9 if actual_end else None,
+                                   "coverage": overlap / (args.duration * 1e9), "required_coverage": 0.99}
             success = all(item["exit_code"] == 0 and item["measurement"].get("ready") == item["requested"] and
-                          item["measurement"].get("progressing") == item["requested"] for item in result["groups"])
+                          item["measurement"].get("progressing") == item["requested"] and item["window"]["coverage"] >= 0.99
+                          for item in result["groups"])
             result["status"] = "PASS" if success else "FAIL"
             result["capacity_boundary"] = "HEALTHY" if success else "UNCONFIRMED"
             if server is not None and server.poll() is not None:
@@ -501,7 +519,9 @@ def run(args):
         result["server_exit_before_cleanup"] = server.poll() if server else None
         for name, process, count in clients:
             if not any(group["name"] == name for group in result["groups"]):
-                result["groups"].append({"name": name, "requested": count, "exit_code": process.poll(), "measurement": {}, "log": f"{name}.log"})
+                lines = (args.output / f"{name}.log").read_text().splitlines()
+                measurements = [parse_phase(line) for line in lines if line.startswith("phase=measurement ")]
+                result["groups"].append({"name": name, "requested": count, "exit_code": process.poll(), "measurement": measurements[-1] if measurements else {}, "log": f"{name}.log"})
             group = next(group for group in result["groups"] if group["name"] == name)
             text = (args.output / f"{name}.log").read_text()
             group["first_errors"] = [line for line in text.splitlines() if "error=" in line or line.startswith("trigger_")][:20]
@@ -512,7 +532,7 @@ def run(args):
                     category = "AUTHORIZATION"
                 elif "first_media_timeout" in text:
                     category = "FIRST_MEDIA_TIMEOUT"
-                elif args.fault == "source_stop" or "source_ended" in text:
+                elif result.get("fault_evidence", {}).get("kind") == "source_stop" or "source_ended" in text:
                     category = "SOURCE_ENDED"
                 elif "non_progressing" in text or "phase=progress progressing=0" in text:
                     category = "MEDIA_STALL"

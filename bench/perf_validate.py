@@ -14,13 +14,15 @@ CASES = ("invalid_token", "expired_token", "replayed_token", "source_stop", "can
 
 
 def verdict(case, result, was_cancelled):
-    if result is None:
-        return "FAIL", "runner did not produce a result"
+    if not isinstance(result, dict):
+        return "FAIL", "runner did not produce a result object"
     cleanup = result.get("cleanup", {})
     if cleanup.get("all_owned_processes_reaped") is not True or cleanup.get("remaining_owned_receivers") or cleanup.get("errors"):
         return "FAIL", "owned processes or receivers were not cleaned up"
     if result.get("status") == "PASS":
         return "FAIL", "negative fault incorrectly accepted as healthy"
+    if result.get("status") != "FAIL":
+        return "INCONCLUSIVE", "runner did not complete a confirmed negative failure"
     if result.get("capacity_boundary") in ("SERVER_UNSTABLE", "CLIENT_RESOURCE"):
         return "INCONCLUSIVE", "resource/server boundary conflicts with targeted negative test"
     groups = result.get("groups", [])
@@ -31,12 +33,21 @@ def verdict(case, result, was_cancelled):
     if not groups:
         return "FAIL", "no viewer group evidence"
     if case == "source_stop":
-        if any(group.get("failure_category") in ("SOURCE_ENDED", "MEDIA_STALL") and (group.get("first_errors") or group.get("measurement", {}).get("failed", 0)) for group in groups):
+        fault = result.get("fault_evidence", {})
+        window = result.get("requested_window", {})
+        if not (fault.get("kind") == "source_stop" and fault.get("media_ready_groups") == len(groups) and
+                window.get("start_monotonic_ns", 0) < fault.get("requested_monotonic_ns", 0) <= fault.get("completed_monotonic_ns", 0) < window.get("end_monotonic_ns", 0) and
+                fault.get("publishers") and all(item.get("exit_code") is not None for item in fault["publishers"])):
+            return "INCONCLUSIVE", "source stop was not observed after all viewers became media-ready"
+        if all(group.get("failure_category") in ("SOURCE_ENDED", "MEDIA_STALL") and
+               group.get("measurement", {}).get("ready") == group.get("requested") and
+               group.get("measurement", {}).get("measurement_start_monotonic_ns", 0) > 0 and
+               group.get("measurement", {}).get("failed", 0) > 0 for group in groups):
             return "PASS", "media interruption detected"
         return "INCONCLUSIVE", "source stop did not produce a confirmed media-progress failure"
-    if any(group.get("failure_category") == "AUTHORIZATION" and any(
+    if all(group.get("failure_category") == "AUTHORIZATION" and group.get("measurement", {}).get("ready") == 0 and any(
             indicator in str(error).lower() for error in group.get("first_errors", [])
-            for indicator in ("403", "401", "unauthor", "forbidden", "denied", "reject", "invalid")) for group in groups):
+            for indicator in ("403", "401", "unauthor", "forbidden", "denied", "reject")) for group in groups):
         return "PASS", "client observed authorization rejection"
     return "INCONCLUSIVE", "authorization classification lacks observable rejection evidence"
 
@@ -60,13 +71,13 @@ def execute(case, directory, forwarded, timeout):
     command = [sys.executable, str(Path(__file__).with_name("perf_run.py")),
                "--output", str(directory), "--input", "rtmp", "--outputs", "flv:2", "--sources", "1",
                "--warmup", "1", "--duration", "60" if case == "cancel" else "18",
-               "--progress-interval", "2", "--fault", "none" if case == "cancel" else case,
+               "--progress-interval", "2", "--group-size", "1", "--fault", "none" if case == "cancel" else case,
                *forwarded]
     stdout = directory.parent / f"{case}.runner.log"
     interrupted = False
     reason = None
     with stdout.open("w") as log:
-        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         try:
             if case == "cancel":
                 barrier = directory / "measurement.start"
@@ -103,6 +114,8 @@ def execute(case, directory, forwarded, timeout):
     except (FileNotFoundError, ValueError):
         result = None
     state, detail = verdict(case, result, interrupted)
+    if process.returncode == 0:
+        state, detail = "FAIL", "negative runner unexpectedly exited successfully"
     if reason:
         state, detail = "FAIL", reason
     return {"case": case, "status": state, "reason": detail, "runner_exit_code": process.returncode,
@@ -120,7 +133,7 @@ def main():
     if len(set(cases)) != len(cases) or any(case not in CASES for case in cases) or args.case_timeout <= 0:
         parser.error("choose distinct known cases and a positive timeout")
     forwarded = args.runner_args[1:] if args.runner_args[:1] == ["--"] else args.runner_args
-    owned = {"--output", "--input", "--outputs", "--sources", "--fault", "--duration", "--warmup", "--progress-interval"}
+    owned = {"--output", "--input", "--outputs", "--sources", "--fault", "--duration", "--warmup", "--progress-interval", "--group-size"}
     if any(value.split("=", 1)[0] in owned for value in forwarded):
         parser.error("runner_args must not override negative-test scenario settings")
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
