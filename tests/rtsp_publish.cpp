@@ -49,6 +49,7 @@ struct publish_context
     std::exception_ptr error;
     std::weak_ptr<int> input_lifetime;
     unsigned announce_calls{};
+    unsigned shutdown_calls{};
 };
 
 void content_urls(const std::string& scenario)
@@ -84,6 +85,16 @@ void content_urls(const std::string& scenario)
                 boost::asio::ip::address_v4::loopback(),
                 [](std::span<const std::uint8_t>) {},
                 [input_owner]() { ++*input_owner; });
+            const std::weak_ptr<rtsp_publish_session> publisher = current.publisher;
+            current.publisher->set_shutdown_handler(
+                [&current, publisher]()
+                {
+                    ++current.shutdown_calls;
+                    if (const auto owner = publisher.lock())
+                    {
+                        owner->shutdown();
+                    }
+                });
             if (!current.publisher->on_announce(server, uri, sdp, bytes))
             {
                 return -1;
@@ -277,34 +288,50 @@ void content_urls(const std::string& scenario)
                             "UDP RECORD failed after all tracks SETUP");
                     const auto registered = stream_registry::instance().find(context.stream_id);
                     require(registered && registered->tracks().size() == (two_tracks ? 2U : 1U), "RECORD did not fix and register expected tracks");
-                    const auto teardown = "TEARDOWN " + context.request_uri + " RTSP/1.0\r\nCSeq: 11\r\nSession: " + session_id + "\r\n\r\n";
-                    require(input(teardown) < 0 && context.replies.size() == 1 && context.replies.front().starts_with("RTSP/1.0 200"),
-                            "TEARDOWN did not reply successfully and terminate the connection");
+                    if (scenario != "udp_worker_stop")
+                    {
+                        const auto teardown = "TEARDOWN " + context.request_uri + " RTSP/1.0\r\nCSeq: 11\r\nSession: " + session_id + "\r\n\r\n";
+                        require(input(teardown) < 0 && context.replies.size() == 1 && context.replies.front().starts_with("RTSP/1.0 200"),
+                                "TEARDOWN did not reply successfully and terminate the connection");
+                    }
                 }
             }
             const std::weak_ptr<rtsp_publish_session> lifetime = context.publisher;
             bool parent_cleanup_observed{};
-            context.publisher->shutdown();
-            boost::asio::post(
-                worker.io(),
-                [&]()
-                {
-                    const auto parent = lifetime.lock();
-                    require(parent != nullptr, "UDP child did not retain publisher until child cleanup");
-                    require(parent->stream_id().empty(), "publisher cleanup did not precede child cleanup");
-                    require(!context.input_lifetime.expired(), "UDP child released input callback before child cleanup");
-                    parent->shutdown();
-                    parent->shutdown();
-                    parent_cleanup_observed = true;
-                });
+            if (scenario == "udp_worker_stop")
+            {
+                require(worker.io().poll() != 0, "UDP readers were not started before worker stop");
+                worker.request_stop();
+            }
+            else
+            {
+                context.publisher->shutdown();
+                boost::asio::post(
+                    worker.io(),
+                    [&]()
+                    {
+                        const auto parent = lifetime.lock();
+                        require(parent != nullptr, "UDP child did not retain publisher until child cleanup");
+                        require(parent->stream_id().empty(), "publisher cleanup did not precede child cleanup");
+                        require(!context.input_lifetime.expired(), "UDP child released input callback before child cleanup");
+                        parent->shutdown();
+                        parent->shutdown();
+                        parent_cleanup_observed = true;
+                    });
+            }
             context.publisher.reset();
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
             while ((!lifetime.expired() || stream_registry::instance().find(context.stream_id)) && std::chrono::steady_clock::now() < deadline)
             {
                 worker.io().run_one_for(std::chrono::milliseconds(20));
             }
+            if (!lifetime.expired())
+            {
+                context.publisher = lifetime.lock();
+            }
             require(lifetime.expired(), "UDP publisher remained after shutdown");
-            require(parent_cleanup_observed, "publisher cleanup ordering was not observed");
+            require(scenario == "udp_worker_stop" ? context.shutdown_calls == 1U : parent_cleanup_observed && context.shutdown_calls == 0U,
+                    "UDP cancellation notified the parent incorrectly");
             require(context.input_lifetime.expired(), "UDP shutdown retained input callback owner");
             require(!stream_registry::instance().find(context.stream_id), "shutdown retained registered source");
             worker.request_stop();
@@ -353,7 +380,8 @@ int main()
         std::cout << "RTSP AAC configuration guards: PASS\n";
         media_port_pool::init(24'400, 24'407);
         for (const auto* scenario :
-             {"relative", "content_base", "content_location", "absolute", "invalid_sdp", "udp_one", "udp_two", "udp_duplicate", "udp_incomplete"})
+             {"relative", "content_base", "content_location", "absolute", "invalid_sdp", "udp_one", "udp_two", "udp_duplicate", "udp_incomplete",
+              "udp_worker_stop"})
         {
             content_urls(scenario);
         }

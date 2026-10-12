@@ -51,7 +51,7 @@ void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yie
         const auto bytes = transport.read(buffer, endpoint, yield, error);
         if (error)
         {
-            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
+            if (shutdown_handler_)
             {
                 shutdown_handler_();
             }
@@ -88,7 +88,7 @@ void rtsp_publish_udp_session::run_rtcp(std::size_t track_index, boost::asio::yi
         const auto bytes = transport.read(buffer, endpoint, yield, error);
         if (error)
         {
-            if (error != boost::asio::error::operation_aborted && shutdown_handler_)
+            if (shutdown_handler_)
             {
                 shutdown_handler_();
             }
@@ -169,7 +169,7 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
             }
             if (error)
             {
-                if (error != boost::asio::error::operation_aborted && self->shutdown_handler_)
+                if (self->shutdown_handler_)
                 {
                     self->shutdown_handler_();
                 }
