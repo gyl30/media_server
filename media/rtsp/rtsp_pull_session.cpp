@@ -233,12 +233,7 @@ void rtsp_pull_session::run(boost::asio::yield_context yield)
     boost::system::error_code error;
     const auto endpoints = resolver_.async_resolve(config_.host, std::to_string(config_.port), yield[error]);
     if (yield.cancelled() != boost::asio::cancellation_type::none ||
-        session_registry::instance().find_receiver_session(config_.stream_id).get() != this)
-    {
-        shutdown();
-        return;
-    }
-    if (error)
+        session_registry::instance().find_receiver_session(config_.stream_id).get() != this || error)
     {
         shutdown();
         return;
@@ -246,12 +241,7 @@ void rtsp_pull_session::run(boost::asio::yield_context yield)
 
     boost::asio::async_connect(connect_socket_, endpoints, yield[error]);
     if (yield.cancelled() != boost::asio::cancellation_type::none ||
-        session_registry::instance().find_receiver_session(config_.stream_id).get() != this)
-    {
-        shutdown();
-        return;
-    }
-    if (error)
+        session_registry::instance().find_receiver_session(config_.stream_id).get() != this || error)
     {
         shutdown();
         return;
