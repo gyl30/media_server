@@ -302,10 +302,6 @@ int rtsp_publish_session::on_tcp_record(rtsp_server_t* server)
 
 void rtsp_publish_session::schedule_tcp_rtcp()
 {
-    if (!write_handler_ || !tcp_media_)
-    {
-        return;
-    }
     tcp_rtcp_timer_.expires_after(std::chrono::seconds(1));
     const auto self = shared_from_this();
     tcp_rtcp_timer_.async_wait(
