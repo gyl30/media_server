@@ -52,7 +52,7 @@ def silent_connection_closed(rtsp_port, results):
 def frozen_udp_publisher_released(ffmpeg, rtsp_port, http_port, signaling, results):
     stream_id = signaling.issue("publish")
     url = f"rtsp://127.0.0.1:{rtsp_port}/{stream_id}"
-    publish = [ffmpeg, "-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
+    publish = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
                "-c:v", "libx264", "-preset", "ultrafast", "-g", "20", "-an", "-f", "rtsp", "-rtsp_transport", "udp"]
     frozen = subprocess.Popen([*publish, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     replacement = None
@@ -71,7 +71,7 @@ def frozen_udp_publisher_released(ffmpeg, rtsp_port, http_port, signaling, resul
         started = time.monotonic()
         token = signaling.issue("play", next_id)
         play_url = f"rtsp://127.0.0.1:{rtsp_port}/{next_id}/{token}"
-        player = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", play_url,
+        player = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i", play_url,
                                  "-t", str(IDLE_TIMEOUT_SECONDS + 4), "-f", "null", "-"], capture_output=True, timeout=60)
         played = time.monotonic() - started
         passed = player.returncode == 0 and played >= IDLE_TIMEOUT_SECONDS + 3 and replacement.poll() is None

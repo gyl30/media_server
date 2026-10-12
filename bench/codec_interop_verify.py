@@ -33,7 +33,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     if args.fixture is None:
         args.fixture = args.output / "fixture.mkv"
-        command = [str(args.ffmpeg), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20"]
+        command = [str(args.ffmpeg), "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20"]
         if args.audio_codec != "none":
             rate = 48000 if args.audio_codec == "aac" else 8000
             command += ["-f", "lavfi", "-i", f"sine=frequency=1000:sample_rate={rate}"]
@@ -64,7 +64,7 @@ def main():
                     url = f"http://127.0.0.1:{port}/play/hls/{name}/index.m3u8" if target == "hls" else (
                         f"{target}://127.0.0.1:{port}/{name}" + (".flv" if target == "http" else ""))
                     progress = args.output / f"{output}-progress.txt"
-                    command = [args.ffmpeg, "-hide_banner", "-loglevel", "info", "-xerror", "-nostats", "-progress", progress]
+                    command = [args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-xerror", "-nostats", "-progress", progress]
                     command += ["-rtsp_transport", "tcp", "-timeout", "5000000"] if target == "rtsp" else ["-rw_timeout", "5000000"]
                     command += ["-analyzeduration", "1000000", "-probesize", "500000", "-i", url, "-map", "0:v:0"]
                     if args.audio_codec != "none":

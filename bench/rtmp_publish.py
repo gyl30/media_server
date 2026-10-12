@@ -46,7 +46,7 @@ def main():
             wait_for_listener(args.host, args.rtmp_port)
             targets = "|".join(f"[f=flv]rtmp://{args.host}:{args.rtmp_port}/live/perf{index}" for index in range(args.sources))
             publisher = subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "tee", targets],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )

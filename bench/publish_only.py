@@ -69,7 +69,7 @@ def main():
             progress_path = args.output / "publisher-progress.log"
             publish_started = time.monotonic()
             publisher = subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-progress", str(progress_path), "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", str(progress_path), "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", format_name, output],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )

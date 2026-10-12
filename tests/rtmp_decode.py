@@ -17,7 +17,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="media-rtmp-decode-") as temporary:
         output = Path(temporary)
         fixture = output / "fixture.flv"
-        command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
+        command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
                         "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=44100", "-t", "3", "-c:v", "libx264",
                         "-preset", "ultrafast", "-tune", "zerolatency", "-g", "20", "-c:a", "aac", "-ac", "2"]
         if video_codec == "h265":
@@ -39,7 +39,7 @@ def main():
             try:
                 wait_for_listener("127.0.0.1", ports[0])
                 stream_id = signaling.issue("publish")
-                publisher = subprocess.Popen([ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture),
+                publisher = subprocess.Popen([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture),
                                               "-c", "copy", "-f", "flv", f"rtmp://127.0.0.1:{ports[0]}/live/{stream_id}"],
                                              stdout=publish_log, stderr=subprocess.STDOUT)
                 deadline = time.monotonic() + 10
@@ -48,7 +48,7 @@ def main():
                     time.sleep(0.05)
                 for attempt in range(3):
                     token = signaling.issue("play", stream_id)
-                    decoded = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "info", "-rw_timeout", "2000000",
+                    decoded = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-rw_timeout", "2000000",
                                               "-analyzeduration", "500000", "-probesize", "500000",
                                               "-i", f"rtmp://127.0.0.1:{ports[0]}/{stream_id}/{token}", "-map", "0:v:0", "-map", "0:a:0",
                                               "-t", "1", "-f", "null", "-"], capture_output=True, text=True, timeout=10)

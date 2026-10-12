@@ -46,7 +46,7 @@ def main():
         try:
             wait_for_listener(args.host, args.rtmp_port)
             publisher = subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-c", "copy", "-f", "flv", f"rtmp://{args.host}:{args.rtmp_port}/live/perf0"],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )

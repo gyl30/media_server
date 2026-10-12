@@ -8,6 +8,7 @@ import http.client
 import json
 import math
 import os
+import re
 import resource
 import secrets
 import shutil
@@ -51,6 +52,23 @@ def sha256(path):
         for block in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def redacted_command(command):
+    redacted = []
+    redact_next = False
+    for value in command:
+        if redact_next:
+            redacted.append("<redacted>")
+            redact_next = False
+        elif value == "--control-token":
+            redacted.append(value)
+            redact_next = True
+        elif value.startswith("--control-token="):
+            redacted.append("--control-token=<redacted>")
+        else:
+            redacted.append(re.sub(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", "<token>", value))
+    return redacted
 
 
 def workload_counts(text):
@@ -126,8 +144,8 @@ def parse_arguments():
 
 
 def run(args):
-    args.output.mkdir(parents=True, exist_ok=False)
-    result = {"status": "NOT_RUN", "head": benchmark_head(), "config": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    result = {"status": "NOT_RUN", "head": benchmark_head(), "config": {key: "<redacted>" if key == "control_token" and value else str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
               "auth_mode": "real_signaling" if args.input == "existing" else "one_time_verifier_fixture", "errors": [], "groups": [], "samples": [], "cleanup": {}}
     def interrupt(_number, _frame):
         raise KeyboardInterrupt
@@ -153,7 +171,7 @@ def run(args):
             raise FileNotFoundError(f"CLIENT_STARTUP: executable missing: {command[0]}")
         log = (args.output / f"{name}.log").open("w")
         logs.append(log)
-        process = subprocess.Popen(["taskset", "-c", cpus, *command], stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(["taskset", "-c", cpus, *command], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         processes.append((name, process, command, category))
         return process
 
@@ -534,7 +552,7 @@ def run(args):
         if result["cleanup"].get("errors") or result["cleanup"].get("remaining_owned_receivers"):
             result["status"] = "FAIL"
             result["capacity_boundary"] = "CLEANUP_FAILED"
-        result["processes"] = [{"name": name, "pid": process.pid, "exit_code": process.returncode, "command": command} for name, process, command, _ in processes]
+        result["processes"] = [{"name": name, "pid": process.pid, "exit_code": process.returncode, "command": redacted_command(command)} for name, process, command, _ in processes]
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"status": result["status"], "result": str(args.output / "result.json"), "capacity_boundary": result.get("capacity_boundary")}))
     return 0 if result["status"] == "PASS" else 1

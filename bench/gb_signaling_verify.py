@@ -54,7 +54,7 @@ def main():
         command = list(map(str, command))
         path = args.output / f"{label}.log"
         with path.open("w") as log:
-            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         process.log_path = path
         processes.append(process)
         commands.append({"label": label, "command": command})
@@ -116,7 +116,7 @@ def main():
     started = time.monotonic()
     try:
         if not args.media_file:
-            subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+            subprocess.run([args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
                 "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-pix_fmt", "yuv420p",
                 "-g", "25", "-bf", "0", "-bsf:v", "h264_metadata=aud=insert", "-an", "-f", "h264", str(fixture)], check=True)
         media = start_media("media-1")
@@ -137,7 +137,7 @@ def main():
         mark("eight concurrent play requests share one live")
 
         if args.audio_file:
-            command = [args.ffmpeg, "-hide_banner", "-loglevel", "info", "-rtsp_transport", "tcp",
+            command = [args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-rtsp_transport", "tcp",
                 "-i", f"rtsp://127.0.0.1:{base+1}/{live_id}", "-map", "0:v:0", "-map", "0:a:0",
                 "-t", "4", "-c:v", "rawvideo", "-threads:v", "1", "-c:a", "pcm_s16le", "-f", "framecrc", "-"]
             decoded = subprocess.run(command, capture_output=True, text=True, timeout=30)

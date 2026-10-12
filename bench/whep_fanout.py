@@ -51,7 +51,7 @@ def main():
             addresses = [f"rtmp://{args.host}:{args.rtmp_port}/live/perf{index}" for index in range(args.sources)]
             output = addresses[0] if args.sources == 1 else "|".join(f"[f=flv]{address}" for address in addresses)
             publisher = subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "flv" if args.sources == 1 else "tee", output],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             )

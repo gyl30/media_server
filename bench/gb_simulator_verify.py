@@ -118,7 +118,7 @@ def launch(run, name, command, expected=0):
     command = list(map(str, command))
     path = run["output"] / f"{len(run['processes']):04d}-{name}.log"
     with path.open("w") as output:
-        process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
     process.log_path = path
     run["processes"].append((process, expected))
     run["result"]["commands"].append({"name": name, "command": command, "log": str(path), "pid": process.pid})
@@ -888,7 +888,7 @@ def system(args):
             "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}}
     run["fixture"] = args.output / "fixture.h264"
     try:
-        subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+        subprocess.run([args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
             "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0",
             "-bsf:v", "h264_metadata=aud=insert", "-an", "-f", "h264", str(run["fixture"])], check=True)
         start_media(run)

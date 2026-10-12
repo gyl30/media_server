@@ -53,7 +53,7 @@ def offer(direction):
 
 
 def decode(ffmpeg, url, protocol, accepted):
-    command = [ffmpeg, "-hide_banner", "-loglevel", "error"]
+    command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error"]
     if protocol == "rtsp":
         command += ["-rtsp_transport", "tcp"]
     else:
@@ -94,7 +94,7 @@ def main():
     with SignalingStub() as signaling, tempfile.TemporaryDirectory(prefix="media-stream-auth-") as temporary:
         output = Path(temporary)
         fixture = output / "source.flv"
-        subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10",
+        subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10",
                         "-f", "lavfi", "-i", "sine=sample_rate=48000", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
                         "-tune", "zerolatency", "-g", "10", "-c:a", "aac", "-ac", "2", str(fixture)], check=True, timeout=15)
         publishers = []
@@ -123,7 +123,7 @@ def main():
                         assert signaling.count() == before + 1 and signaling.pending(stream_id), "unauthorized ANNOUNCE accepted"
                         assert receiver_ids(http) == receivers_before, "rejected ANNOUNCE changed receiver registrations"
                     url = f"rtmp://127.0.0.1:{rtmp}/live/{stream_id}" if protocol == "rtmp" else f"rtsp://127.0.0.1:{rtsp}/{stream_id}"
-                    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture), "-c", "copy"]
+                    command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(fixture), "-c", "copy"]
                     command += ["-f", "flv"] if protocol == "rtmp" else ["-rtsp_transport", publish_transport, "-f", "rtsp"]
                     publisher = subprocess.Popen([*command, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     publishers.append(publisher)
@@ -260,7 +260,7 @@ def main():
                 print("HLS shared viewers decode + retained playlist/segment after source end: PASS", flush=True)
                 assert request(http, f"/publish/whip/{whip_id}", "POST", offer("sendonly"), "application/sdp")[0] != 201
                 for protocol, stream_id in zip(("rtmp", "rtsp"), source_ids):
-                    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-re", "-i", str(fixture), "-c", "copy", "-t", "1"]
+                    command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-re", "-i", str(fixture), "-c", "copy", "-t", "1"]
                     command += (["-f", "flv", f"rtmp://127.0.0.1:{rtmp}/live/{stream_id}"] if protocol == "rtmp"
                                 else ["-rtsp_transport", "tcp", "-f", "rtsp", f"rtsp://127.0.0.1:{rtsp}/{stream_id}"])
                     result = subprocess.run(command, capture_output=True, timeout=10)
@@ -270,7 +270,7 @@ def main():
                     if protocol == "whip":
                         assert request(http, f"/publish/whip/{wrong_operation}", "POST", offer("sendonly"), "application/sdp")[0] != 201
                     else:
-                        command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-i", str(fixture), "-c", "copy", "-t", "1"]
+                        command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-i", str(fixture), "-c", "copy", "-t", "1"]
                         command += (["-f", "flv", f"rtmp://127.0.0.1:{rtmp}/live/{wrong_operation}"] if protocol == "rtmp"
                                     else ["-rtsp_transport", "tcp", "-f", "rtsp", f"rtsp://127.0.0.1:{rtsp}/{wrong_operation}"])
                         result = subprocess.run(command, capture_output=True, timeout=10)
@@ -299,7 +299,7 @@ def main():
                 publisher = None
                 try:
                     wait_for_listener("127.0.0.1", http)
-                    command = [ffmpeg, "-hide_banner", "-loglevel", "error", "-re", "-i", str(fixture), "-c", "copy"]
+                    command = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-re", "-i", str(fixture), "-c", "copy"]
                     command += (["-f", "flv", f"rtmp://127.0.0.1:{rtmp}/live/{stream_id}"] if protocol == "rtmp"
                                 else ["-rtsp_transport", "tcp", "-f", "rtsp", f"rtsp://127.0.0.1:{rtsp}/{stream_id}"])
                     publisher = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

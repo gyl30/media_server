@@ -99,7 +99,7 @@ def main():
                     wait_for_stream("127.0.0.1", run.http_port, "browser/real")
                     result["before"] = page.evaluate("async () => [...(await peer.getStats()).values()]")
                     progress = args.output / "decode-progress.txt"
-                    probe = run.launch("decode-browser-whip", [args.ffmpeg, "-hide_banner", "-loglevel", "info",
+                    probe = run.launch("decode-browser-whip", [args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info",
                         "-xerror", "-nostats", "-progress", progress,
                         "-rtsp_transport", "tcp", "-timeout", "5000000", "-i",
                         f"rtsp://127.0.0.1:{run.rtsp_port}/browser/real", "-map", "0:v:0", "-map", "0:a:0",

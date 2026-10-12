@@ -3,6 +3,8 @@
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +55,53 @@ def search(execute, start, step, granularity, maximum, healthy_repeats=3, failed
                                            ((healthy * 125 + 9999) // 10000) * 100, ((healthy * 150 + 9999) // 10000) * 100]}
 
 
+def run_round(command, directory, timeout):
+    """Keep an explicit, inconclusive record even if perf_run cannot write result.json."""
+    log = directory.parent / f"{directory.name}.runner.log"
+    exit_code = None
+    failure = None
+    with log.open("w") as output:
+        try:
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+        except OSError as error:
+            failure = f"cannot start runner: {error}"
+        else:
+            try:
+                exit_code = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                failure = f"runner exceeded {timeout} seconds"
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    exit_code = process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    exit_code = process.wait()
+            except KeyboardInterrupt:
+                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    process.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait()
+                raise
+    result_file = directory / "result.json"
+    result = None
+    if result_file.exists():
+        try:
+            result = json.loads(result_file.read_text())
+        except (ValueError, OSError) as error:
+            failure = f"invalid runner result: {error}"
+    elif not failure:
+        failure = "runner did not write result.json"
+    if not isinstance(result, dict) or "status" not in result:
+        failure = failure or "runner result missing status"
+    if failure or (exit_code != 0 and result and result.get("status") == "PASS"):
+        return {"status": "INCONCLUSIVE", "boundary": "RUNNER_FAILED", "error": failure or "runner exited nonzero despite PASS",
+                "exit_code": exit_code, "log": str(log), "result": str(result_file) if result_file.exists() else None}
+    return {"status": result["status"], "boundary": result.get("capacity_boundary", "UNCONFIRMED"),
+            "exit_code": exit_code, "log": str(log), "result": str(result_file)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -63,6 +112,7 @@ def main():
     parser.add_argument("--maximum", type=int, default=10000)
     parser.add_argument("--healthy-repeats", type=int, default=3, help="independent H verification rounds")
     parser.add_argument("--failed-repeats", type=int, default=2, help="independent F verification rounds")
+    parser.add_argument("--round-timeout", type=int, default=900, help="seconds before terminating an unresponsive workload")
     parser.add_argument("--counts", help="explicit comma-separated fixed/overload counts, skips search")
     parser.add_argument("--plan-only", action="store_true", help="emit schedule, do not launch a workload")
     parser.add_argument("runner_args", nargs=argparse.REMAINDER, help="after --: perf_run arguments excluding output and outputs")
@@ -70,12 +120,12 @@ def main():
     protocols = args.protocols.split(",")
     if len(set(protocols)) != len(protocols) or any(protocol not in OUTPUTS for protocol in protocols):
         parser.error("distinct supported output protocols required")
-    if min(args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats) <= 0 or args.start > args.maximum or args.step % args.granularity or args.start % args.granularity:
+    if min(args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats, args.round_timeout) <= 0 or args.start > args.maximum or args.step % args.granularity or args.start % args.granularity:
         parser.error("positive schedule aligned with granularity required")
     counts = [int(value) for value in args.counts.split(",")] if args.counts else list(range(args.start, args.maximum + 1, args.step))
     if any(count < len(protocols) for count in counts):
         parser.error("each count must cover all protocols")
-    args.output.mkdir(parents=True, exist_ok=False)
+    args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     rounds = []
     forwarded = args.runner_args[1:] if args.runner_args[:1] == ["--"] else args.runner_args
     if any(value.split("=", 1)[0] in ("--outputs", "--output", "--fault") for value in forwarded):
@@ -85,11 +135,9 @@ def main():
         directory = args.output / f"round-{len(rounds):03d}-{count}"
         command = [sys.executable, str(Path(__file__).with_name("perf_run.py")), "--output", str(directory),
                    "--outputs", split_load(count, protocols), *forwarded]
-        subprocess.run(command, check=False)
-        result = json.loads((directory / "result.json").read_text())
-        boundary = result.get("capacity_boundary", "UNCONFIRMED")
-        rounds.append({"viewers": count, "status": result["status"], "boundary": boundary, "result": str(directory / "result.json")})
-        return boundary
+        round_result = run_round(command, directory, args.round_timeout)
+        rounds.append({"viewers": count, **round_result})
+        return round_result["boundary"]
 
     if args.plan_only:
         result = {"status": "NOT_RUN", "counts": [{"viewers": count, "outputs": split_load(count, protocols)} for count in counts],

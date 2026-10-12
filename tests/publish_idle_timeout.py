@@ -24,7 +24,7 @@ def main():
     ports = [connection.getsockname()[1] for connection in held]
     for connection in held:
         connection.close()
-    publish = [ffmpeg, "-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
+    publish = [ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-re", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=20",
                "-c:v", "libx264", "-preset", "ultrafast", "-g", "20", "-an", "-f", "flv"]
     with SignalingStub() as signaling, tempfile.TemporaryDirectory(prefix="media-idle-") as temporary:
         log_path = Path(temporary) / "server.log"

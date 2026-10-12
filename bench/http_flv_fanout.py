@@ -201,7 +201,7 @@ def main():
             publisher_log = (args.output / f"publisher-{source}.log").open("w")
             publisher_logs.append(publisher_log)
             publishers.append(subprocess.Popen(
-                [str(args.ffmpeg_bin), "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
+                [str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", str(args.fixture),
                  "-c", "copy", "-f", "flv", f"rtmp://{args.host}:{args.rtmp_port}/live/perf{source}"],
                 stdout=publisher_log, stderr=subprocess.STDOUT,
             ))

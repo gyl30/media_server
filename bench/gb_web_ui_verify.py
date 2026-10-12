@@ -46,7 +46,7 @@ def main():
         command = list(map(str, command))
         log = args.output / f"{name}.log"
         with log.open("w") as output:
-            process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT)
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT)
         process.log_path = log
         processes.append(process)
         commands.append({"name": name, "command": command})
@@ -273,7 +273,7 @@ def main():
                 device_button.click()
                 assert not any("/channels" in item["url"] for item in result["requests"])
                 fixture = args.output / "fixture.h264"
-                subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+                subprocess.run([args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
                     "-t", "5", "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency", "-g", "25", "-bf", "0",
                     "-bsf:v", "h264_metadata=aud=insert", "-an", "-f", "h264", str(fixture)], check=True)
                 simulator = start_simulator("simulator")
@@ -706,10 +706,10 @@ def main():
                     mark("deleted device REGISTER is rejected with 403")
 
                     audio_fixture = args.output / "audio-video.mkv"
-                    subprocess.run([args.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+                    subprocess.run([args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
                         "-f", "lavfi", "-i", "sine=frequency=1000:sample_rate=48000", "-t", "8", "-c:v", "libx264", "-preset", "ultrafast",
                         "-tune", "zerolatency", "-g", "25", "-bf", "0", "-c:a", "aac", "-ac", "2", str(audio_fixture)], check=True)
-                    launch("audio-publisher", [args.ffmpeg, "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", audio_fixture,
+                    launch("audio-publisher", [args.ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-re", "-i", audio_fixture,
                         "-c", "copy", "-f", "flv", f"rtmp://127.0.0.1:{base}/live/ui-audio"])
                     wait_for_stream("127.0.0.1", base+2, "live/ui-audio")
                     page.locator("#tab-sources").click()

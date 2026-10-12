@@ -86,7 +86,7 @@ class Run:
         self.sequence += 1
         path = self.output / f"{self.sequence:04d}-{label}.log"
         log = self.stack.enter_context(path.open("w"))
-        process = subprocess.Popen([str(item) for item in command], stdin=stdin, env=env, stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen([str(item) for item in command], stdin=subprocess.DEVNULL if stdin is None else stdin, env=env, stdout=log, stderr=subprocess.STDOUT)
         process.log_path = path
         self.stack.callback(stop_process, process)
         self.records.append({"label": label, "command": [str(item) for item in command], "log": path.name})

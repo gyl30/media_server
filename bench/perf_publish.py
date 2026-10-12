@@ -60,7 +60,7 @@ def main():
     def launch(name, command):
         log = (args.output / f"{name}.log").open("w")
         logs.append(log)
-        process = subprocess.Popen([str(item) for item in command], stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen([str(item) for item in command], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         publishers.append(process)
         return process
 
@@ -86,7 +86,7 @@ def main():
                             source["publisher_pid"] = publisher.pid
                         urls.clear()
                 else:
-                    command = [args.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-threads", 1, "-re", "-stream_loop", -1,
+                    command = [args.ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", 1, "-re", "-stream_loop", -1,
                                "-i", args.fixture, "-c", "copy"]
                     if args.input == "rtmp":
                         command += ["-f", "flv", published["rtmp_url"]]
@@ -116,7 +116,7 @@ def main():
                                "--warmup", 0, "--duration", 1, "--ramp-per-second", args.ramp_per_second]
                     log = (args.output / f"probe-{generation}-{offset}-{attempt}.log").open("w")
                     logs.append(log)
-                    probe = subprocess.Popen([str(item) for item in command], stdout=log, stderr=subprocess.STDOUT)
+                    probe = subprocess.Popen([str(item) for item in command], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
                     try:
                         code = probe.wait(timeout=8)
                     finally:
