@@ -2,6 +2,7 @@
 """Offline regression tests for capacity failure evidence and profiler collection."""
 
 import importlib.util
+import ast
 import json
 import os
 import pathlib
@@ -40,6 +41,21 @@ class EvidencePrivacy(unittest.TestCase):
 
 
 class CapacityRunner(unittest.TestCase):
+    def test_counts_stop_at_environment_or_client_boundary(self):
+        from unittest.mock import patch
+        import perf_capacity
+        for boundary in ("RESOURCE_BUDGET", "CLIENT_RESOURCE", "UPSTREAM_FAILED", "RUNNER_FAILED", "PROCESS_IDENTITY"):
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as folder:
+                output = pathlib.Path(folder) / "capacity"
+                result = {"status": "BLOCKED", "boundary": boundary, "exit_code": 1}
+                argv = ["perf_capacity", "--output", str(output), "--counts", "1,2,4"]
+                with patch.object(sys, "argv", argv), patch.object(perf_capacity, "run_round", return_value=result) as execute, patch.object(perf_capacity.signal, "signal"):
+                    self.assertEqual(perf_capacity.main(), 1)
+                self.assertEqual(execute.call_count, 1)
+                summary = json.loads((output / "result.json").read_text())
+                self.assertEqual((summary["status"], summary["reason"]), ("INCONCLUSIVE", boundary))
+                self.assertEqual(len(summary["rounds"]), 1)
+
     def test_contradictory_boundary_is_not_capacity_evidence(self):
         for state, boundary, code in (("FAIL", "HEALTHY", 1), ("PASS", "SERVER_UNSTABLE", 0),
                                       ("BOGUS", "HEALTHY", 0), ("FAIL", "SERVER_UNSTABLE", 0)):
@@ -213,6 +229,19 @@ class NegativeScenarioValidation(unittest.TestCase):
 
 
 class MeasurementEvidence(unittest.TestCase):
+    def test_negative_udp_aggregate_is_not_a_server_failure(self):
+        source = (BENCH / "perf_run.py").read_text()
+        lines = source.splitlines()
+        guards = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.If) and
+                  ((lines[node.lineno - 1].strip().startswith("if any(") and "server_evidence" in lines[node.lineno - 1]) or
+                   (lines[node.lineno - 1].strip().startswith('if result.get("server_evidence"') and "< 0" in lines[node.lineno - 1]))]
+        block = "\n".join(textwrap.dedent("\n".join(lines[node.lineno - 1:node.end_lineno])) for node in sorted(guards, key=lambda node: node.lineno))
+        for drops, status, boundary in ((-3, "INCONCLUSIVE", "UNCONFIRMED"), (3, "FAIL", "SERVER_UNSTABLE"), (0, "PASS", "HEALTHY")):
+            result = {"status": "PASS", "capacity_boundary": "HEALTHY", "server_evidence": {"queue_full": 0, "udp_drops": drops}}
+            exec(block, {"result": result})
+            self.assertEqual((result["status"], result["capacity_boundary"]), (status, boundary))
+            self.assertEqual(result["server_evidence"]["udp_drops"], drops)
+
     def test_requested_window_cannot_replace_actual_window(self):
         source = (BENCH / "perf_run.py").read_text()
         block = "            for group in result[\"groups\"]:" + source.split("            for group in result[\"groups\"]:", 1)[1].split('            result["status"] = "PASS"', 1)[0]
@@ -227,6 +256,65 @@ class MeasurementEvidence(unittest.TestCase):
             exec(textwrap.dedent(block), namespace)
             self.assertEqual(namespace["success"], healthy)
             self.assertGreaterEqual(group["window"]["coverage"], 0)
+
+
+class ProcessAndPreparationGuards(unittest.TestCase):
+    def test_snapshot_identifies_controlled_process(self):
+        from fanout_support import proc_snapshot
+        snapshot = proc_snapshot(os.getpid())
+        self.assertIn("identity", snapshot)
+        self.assertGreater(snapshot["identity"]["starttick"], 0)
+        self.assertTrue(pathlib.Path(snapshot["identity"]["exe"]).samefile(sys.executable))
+        self.assertTrue(snapshot["identity"]["netns"].startswith("net:["))
+
+    def test_wrong_existing_pid_is_blocked_before_probes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = pathlib.Path(folder) / "run"
+            finished = subprocess.run([sys.executable, str(BENCH / "perf_run.py"), "--output", str(output), "--input", "existing",
+                "--sources-file", "/does-not-exist", "--signaling-url", "http://127.0.0.1:1", "--server-pid", str(os.getpid()),
+                "--server-bin", "/bin/true", "--control-token", "fixture", "--client-cpus", str(min(os.sched_getaffinity(0)))],
+                capture_output=True, text=True, timeout=5, env={**os.environ, "MEDIA_SERVER_BENCH_HEAD": "offline-guard-fixture"})
+            self.assertTrue((output / "result.json").exists(), finished.stderr)
+            result = json.loads((output / "result.json").read_text())
+            self.assertEqual((result["status"], result["capacity_boundary"]), ("BLOCKED", "PROCESS_IDENTITY"))
+            self.assertIn("executable does not match", result["errors"][0]["message"])
+            self.assertEqual(result["processes"], [])
+            self.assertNotEqual(finished.returncode, 0)
+
+    def test_resource_budget_applies_before_fixture_or_launch(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = pathlib.Path(folder) / "run"
+            finished = subprocess.run([sys.executable, str(BENCH / "perf_run.py"), "--output", str(output), "--fixture", "/does-not-exist",
+                "--min-free-memory-mib", "999999999999", "--client-cpus", str(min(os.sched_getaffinity(0)))],
+                capture_output=True, text=True, timeout=5, env={**os.environ, "MEDIA_SERVER_BENCH_HEAD": "offline-guard-fixture"})
+            self.assertTrue((output / "result.json").exists(), finished.stderr)
+            result = json.loads((output / "result.json").read_text())
+            self.assertEqual((result["status"], result["capacity_boundary"]), ("BLOCKED", "RESOURCE_BUDGET"))
+            self.assertEqual(result["budget_samples"][0]["phase"], "preparation")
+            self.assertEqual(result["processes"], [])
+            self.assertNotEqual(finished.returncode, 0)
+
+    def test_changed_identity_cannot_be_sampled_as_original(self):
+        source = (BENCH / "perf_run.py").read_text()
+        block = "    def check_identity" + source.split("    def check_identity", 1)[1].split("    def check_budget", 1)[0]
+        expected = {"starttick": 1, "exe": "/fixture/server", "netns": "net:[1]"}
+        for field, changed in (("starttick", 2), ("exe", "/fixture/other"), ("netns", "net:[2]")):
+            actual = {**expected, field: changed}
+            namespace = {"proc_identity": lambda pid: actual, "result": {}, "processes": [],
+                         "process_startticks": {123: 1}, "process_identities": {123: expected}}
+            exec(textwrap.dedent(block), namespace)
+            with self.assertRaisesRegex(RuntimeError, "identity changed"):
+                namespace["check_identity"]("server", 123)
+            self.assertEqual((namespace["result"]["status"], namespace["result"]["capacity_boundary"]), ("BLOCKED", "PROCESS_IDENTITY"))
+
+    def test_listener_wait_checks_guard_before_connecting(self):
+        from fanout_support import wait_for_listener
+        from unittest.mock import Mock, patch
+        guard = Mock(side_effect=RuntimeError("resource budget"))
+        with patch("fanout_support.socket.create_connection") as connect:
+            with self.assertRaisesRegex(RuntimeError, "resource budget"):
+                wait_for_listener("127.0.0.1", 1, check=guard)
+        connect.assert_not_called()
 
 
 class ProfileDriver(unittest.TestCase):

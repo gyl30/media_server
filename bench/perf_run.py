@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fanout_support import benchmark_head, parse_phase, proc_snapshot, stop_process, wait_for_listener
+from fanout_support import benchmark_head, parse_phase, proc_identity, proc_snapshot, stop_process, wait_for_listener
 
 
 OUTPUTS = ("rtmp", "rtsp", "flv", "hls", "whep", "gb_udp", "gb_tcp_active", "gb_tcp_passive")
@@ -87,7 +87,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new run directory, never overwritten")
     parser.add_argument("--input", choices=INPUTS, default="rtmp")
-    parser.add_argument("--outputs", default="rtmp:1", help="rtmp:10,rtsp:10,flv:10,hls:10,whep:10,gb_udp:10 or none (publish-only probes)")
+    parser.add_argument("--outputs", default="rtmp:1", help="rtmp:10,rtsp:10,flv:10,hls:10,whep:10,gb_udp:10 or none (PARTIAL publish-only: continuous FLV viewer per source)")
     parser.add_argument("--sources", type=int, default=1)
     parser.add_argument("--sources-file", type=Path, help="existing sources JSON: [{stream_id, play_body:{push_device_id|source_id|live_id:...}}]")
     parser.add_argument("--signaling-url", help="real signaling /api/play issuer; required for existing input")
@@ -158,6 +158,10 @@ def run(args):
     upstream_pairs = []
     logs = []
     server = upstream = None
+    process_startticks = {}
+    process_identities = {}
+    external_processes = []
+    next_budget_check = 0
     control_token = args.control_token or secrets.token_hex(32)
     control = f"http://{args.host}:{args.http_port}"
     script_dir = Path(__file__).resolve().parent
@@ -165,7 +169,54 @@ def run(args):
     preparation_started = time.monotonic()
     timeout = args.ready_timeout + math.ceil(sum(args.counts.values()) / args.ramp_per_second)
 
+    def check_identity(name, pid, identity=None):
+        try:
+            identity = identity if identity is not None else proc_identity(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            category = next((category for _, process, _, category in processes if process.pid == pid), None)
+            if category == "client" or (category == "publisher" and result.get("fault_evidence", {}).get("completed_monotonic_ns")):
+                raise
+            result["status"] = "INCONCLUSIVE" if name == "server" and category is None else "FAIL"
+            result["capacity_boundary"] = "UPSTREAM_FAILED" if category == "publisher" or "publisher" in name else "SERVER_UNSTABLE" if name == "server" and category == "server" else "UNCONFIRMED"
+            raise RuntimeError(f"{name} PID {pid} exited before sampling")
+        if ((pid in process_startticks and identity["starttick"] != process_startticks[pid]) or
+                (pid in process_identities and identity != process_identities[pid])):
+            result["status"] = "BLOCKED"
+            result["capacity_boundary"] = "PROCESS_IDENTITY"
+            raise RuntimeError(f"{name} PID {pid} identity changed; sampling another process is forbidden")
+        return identity
+
+    def check_budget(force=False, phase="preparation", server_pid=None):
+        nonlocal next_budget_check
+        now = time.monotonic()
+        if not force and now < next_budget_check:
+            return
+        next_budget_check = now + 1
+        for name, pid in external_processes:
+            check_identity(name, pid)
+        for name, process, _, category in processes:
+            if category in ("server", "publisher", "client") and process.poll() is None:
+                check_identity(name, process.pid)
+        if not (args.min_free_memory_mib or args.min_free_disk_mib or args.max_server_pss_mib):
+            return
+        memory = next(int(line.split()[1]) for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
+        disk = shutil.disk_usage(args.output).free
+        pid = server_pid or (server.pid if server else args.server_pid)
+        pss = None
+        if args.max_server_pss_mib and pid is not None:
+            check_identity("server", pid)
+            pss = next(int(line.split()[1]) for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines() if line.startswith("Pss:"))
+        sample = {"phase": phase, "monotonic_ns": time.monotonic_ns(), "memory_available_kib": memory,
+                  "disk_available_bytes": disk, "server_pss_kib": pss}
+        result.setdefault("budget_samples", []).append(sample)
+        if (memory < args.min_free_memory_mib * 1024 or disk < args.min_free_disk_mib * 1024 * 1024 or
+                (pss is not None and pss > args.max_server_pss_mib * 1024)):
+            result["status"] = "BLOCKED"
+            result["capacity_boundary"] = "RESOURCE_BUDGET"
+            raise RuntimeError("operator-defined resource budget reached before or during measurement")
+
     def launch(name, command, cpus, category):
+        check_budget(force=True)
         command = [str(item) for item in command]
         if shutil.which(command[0]) is None:
             raise FileNotFoundError(f"CLIENT_STARTUP: executable missing: {command[0]}")
@@ -173,6 +224,8 @@ def run(args):
         logs.append(log)
         process = subprocess.Popen(["taskset", "-c", cpus, *command], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
         processes.append((name, process, command, category))
+        process_startticks[process.pid] = proc_identity(process.pid)["starttick"]
+        check_budget(force=True, server_pid=process.pid if name == "server" else None)
         return process
 
     def receiver_list(base):
@@ -182,7 +235,8 @@ def run(args):
         process = launch(name, [args.server_bin, "--threads", args.workers, "--bind-address", host, "--webrtc-address", host,
                                "--rtmp-port", ports[0], "--rtsp-port", ports[1], "--http-port", ports[2],
                                "--control-token", control_token, "--signaling-url", verifier], args.server_cpus if name == "server" else args.client_cpus, "server" if name == "server" else "publisher")
-        wait_for_listener(host, ports[2])
+        wait_for_listener(host, ports[2], check=lambda: check_budget(server_pid=process.pid if name == "server" else None))
+        process_identities[process.pid] = check_identity(name, process.pid)
         return process
 
     def ffmpeg_source(name, source, transport, host, ports):
@@ -228,13 +282,24 @@ def run(args):
             deadline = time.monotonic() + args.ready_timeout
             attempt = 0
             while time.monotonic() < deadline:
+                check_budget()
                 path = args.output / f"{name}-{attempt}.credentials"
                 path.write_text("\n".join(urlsplit(play_value(item, "flv", stub, host, ports)).path.lstrip("/") for item in source_group) + "\n")
                 command = [args.client_dir / "http_flv_fanout", "--play-paths-file", path, "--media-host", host or args.host,
                            "--media-port", (ports or (args.rtmp_port, args.rtsp_port, args.http_port))[2], "--viewers", len(source_group), "--ramp-per-second", args.ramp_per_second,
                            "--warmup", 0, "--duration", 1, "--ready-timeout", 5]
                 process = launch(f"{name}-{attempt}", command, args.client_cpus, "probe")
-                if process.wait(timeout=8) == 0:
+                probe_deadline = time.monotonic() + 8
+                while process.poll() is None:
+                    check_budget()
+                    remaining = probe_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(command, 8)
+                    try:
+                        process.wait(timeout=min(1, remaining))
+                    except subprocess.TimeoutExpired:
+                        pass
+                if process.returncode == 0:
                     return
                 attempt += 1
                 time.sleep(0.1)
@@ -244,6 +309,15 @@ def run(args):
 
     owned = args.input != "existing"
     try:
+        if not owned:
+            identity = proc_identity(args.server_pid)
+            if not Path(f"/proc/{args.server_pid}/exe").samefile(args.server_bin.resolve()):
+                result["status"] = "BLOCKED"
+                result["capacity_boundary"] = "PROCESS_IDENTITY"
+                raise RuntimeError("existing server-pid executable does not match --server-bin")
+            process_identities[args.server_pid] = identity
+            external_processes.append(("server", args.server_pid))
+        check_budget(force=True)
         subprocess.run(["taskset", "-pc", args.client_cpus, str(os.getpid())], check=True, capture_output=True)
         if owned:
             try:
@@ -329,19 +403,33 @@ def run(args):
                     raise ValueError("sources-file must contain exactly the distinct requested sources")
                 source_ids = [source["stream_id"] for source in sources]
                 server_pid = args.server_pid
+                for source in sources:
+                    if "publisher_pid" not in source:
+                        continue
+                    pid = source["publisher_pid"]
+                    if "publisher_starttick" not in source:
+                        raise ValueError("sources-file publisher_pid requires publisher_starttick; regenerate it with perf_publish")
+                    process_startticks[pid] = source["publisher_starttick"]
+                    process_identities[pid] = check_identity(f"external-publisher-{pid}", pid)
+                    if (f"external-publisher-{pid}", pid) not in external_processes:
+                        external_processes.append((f"external-publisher-{pid}", pid))
                 for offset in range(0, len(sources), args.group_size):
                     probe(sources[offset:offset + args.group_size], f"source-ready-{offset}", None)
             result["source_ids"] = source_ids
             result["baseline"] = proc_snapshot(server_pid)
+            process_identities[server_pid] = check_identity("server", server_pid)
+            result["server_identity"] = process_identities[server_pid]
             if set(result["baseline"]["cpu_affinity"]) & os.sched_getaffinity(0):
                 raise ValueError("server and client CPU affinity overlap")
-            # publish-only 仍保持每个源的双轨探针，探针开销属于客户端，独立采样。
+            # PARTIAL publish-only 仍保持每个源的持续双轨 FLV 客户端，独立采样。
             counts = args.counts or {"flv": args.sources}
             next_client_start = time.monotonic()
             for protocol, count in counts.items():
                 for offset in range(0, count, args.group_size):
                     size = min(args.group_size, count - offset)
-                    time.sleep(max(0, next_client_start - time.monotonic()))
+                    while time.monotonic() < next_client_start:
+                        check_budget()
+                        time.sleep(min(1, max(0, next_client_start - time.monotonic())))
                     group_name = f"{protocol}-{offset}"
                     credentials = args.output / f"{group_name}.credentials"
                     common = ["--viewers", size, "--warmup", args.warmup, "--duration", args.duration,
@@ -374,6 +462,7 @@ def run(args):
                     next_client_start = time.monotonic() + size / args.ramp_per_second
             deadline = time.monotonic() + timeout
             while True:
+                check_budget()
                 if any(process.poll() is not None for _, process, _ in clients):
                     raise RuntimeError("client exited before all media_ready; inspect group logs")
                 if all("phase=media_ready " in (args.output / f"{name}.log").read_text() for name, _, _ in clients):
@@ -381,6 +470,10 @@ def run(args):
                 if time.monotonic() > deadline:
                     raise TimeoutError("all-viewer readiness timed out")
                 time.sleep(0.05)
+            for name, process, _, category in processes:
+                if category in ("server", "publisher", "client") and process.poll() is None:
+                    process_identities[process.pid] = check_identity(name, process.pid)
+            result["process_identities"] = {str(pid): identity for pid, identity in process_identities.items()}
             result["preparation_seconds"] = time.monotonic() - preparation_started
             start_ns = time.monotonic_ns() + (args.warmup + 1) * 1000000000
             temporary = barrier.with_suffix(".tmp")
@@ -388,7 +481,9 @@ def run(args):
             temporary.replace(barrier)
             deadline_ns = start_ns + args.duration * 1000000000
             result["requested_window"] = {"start_monotonic_ns": start_ns, "end_monotonic_ns": deadline_ns}
-            time.sleep(max(0, (start_ns - time.monotonic_ns()) / 1e9))
+            while time.monotonic_ns() < start_ns:
+                check_budget(phase="warmup")
+                time.sleep(min(1, max(0, (start_ns - time.monotonic_ns()) / 1e9)))
             server_log_path = args.output / "server.log" if owned else args.server_log
             server_log_offset = server_log_path.stat().st_size if server_log_path else 0
             monitored = [("server", server_pid), ("runner", os.getpid())] + [(name, process.pid) for name, process, _, category in processes if category in ("publisher", "client")]
@@ -400,7 +495,9 @@ def run(args):
                 snapshots = {}
                 for name, pid in monitored:
                     try:
+                        check_identity(name, pid)
                         snapshots[name] = proc_snapshot(pid)
+                        check_identity(name, pid, snapshots[name]["identity"])
                     except (FileNotFoundError, ProcessLookupError):
                         snapshots[name] = {"exited": True, "monotonic_ns": time.monotonic_ns()}
                 result["samples"].append(snapshots)
@@ -409,11 +506,7 @@ def run(args):
                           "disk_available_bytes": shutil.disk_usage(args.output).free,
                           "psi": {kind: Path(f"/proc/pressure/{kind}").read_text() for kind in ("cpu", "memory", "io")}}
                 result.setdefault("system_samples", []).append(system)
-                if (memory < args.min_free_memory_mib * 1024 or system["disk_available_bytes"] < args.min_free_disk_mib * 1024 * 1024 or
-                        (args.max_server_pss_mib and snapshots["server"].get("pss_kib", 0) > args.max_server_pss_mib * 1024)):
-                    result["status"] = "BLOCKED"
-                    result["capacity_boundary"] = "RESOURCE_BUDGET"
-                    raise RuntimeError("operator-defined resource budget reached")
+                check_budget(force=True, phase="measurement")
                 if args.fault == "source_stop" and not stopped_source and time.monotonic_ns() >= start_ns + args.duration * 500000000:
                     result["fault_evidence"] = {"kind": "source_stop", "requested_monotonic_ns": time.monotonic_ns(), "media_ready_groups": len(clients)}
                     for process in publishers:
@@ -431,7 +524,9 @@ def run(args):
             final = {}
             for name, pid in monitored:
                 try:
+                    check_identity(name, pid)
                     final[name] = proc_snapshot(pid)
+                    check_identity(name, pid, final[name]["identity"])
                 except (FileNotFoundError, ProcessLookupError):
                     final[name] = {"exited": True, "monotonic_ns": time.monotonic_ns()}
             result["samples"].append(final)
@@ -476,9 +571,14 @@ def run(args):
             server_samples = [sample["server"] for sample in result["samples"] if not sample["server"].get("exited")]
             if len(server_samples) >= 2:
                 result.setdefault("server_evidence", {})["udp_drops"] = server_samples[-1]["udp_drops"] - server_samples[0]["udp_drops"]
-            if any(result.get("server_evidence", {}).values()):
+            if any(value > 0 for value in result.get("server_evidence", {}).values()):
                 result["status"] = "FAIL"
                 result["capacity_boundary"] = "SERVER_UNSTABLE"
+            if result.get("server_evidence", {}).get("udp_drops", 0) < 0:
+                result["server_evidence"]["udp_drops_interpretation"] = "socket aggregate decreased; historical drops are not recoverable"
+                if result["capacity_boundary"] == "HEALTHY":
+                    result["status"] = "INCONCLUSIVE"
+                    result["capacity_boundary"] = "UNCONFIRMED"
             group_by_name = {group["name"]: group for group in result["groups"]}
             for name, pid in monitored:
                 samples = [sample[name] for sample in result["samples"] if name in sample and not sample[name].get("exited")]
@@ -506,7 +606,7 @@ def run(args):
             if stub is not None:
                 result["verification_calls"] = stub.count()
     except (OSError, subprocess.SubprocessError, TimeoutError, RuntimeError, ValueError, KeyboardInterrupt) as error:
-        if result["status"] not in ("UNSUPPORTED", "BLOCKED"):
+        if result["status"] not in ("UNSUPPORTED", "BLOCKED", "INCONCLUSIVE"):
             result["status"] = "BLOCKED" if isinstance(error, OSError) else "FAIL"
         result.setdefault("capacity_boundary", "UNCONFIRMED")
         result["errors"].append({"type": type(error).__name__, "message": str(error), "monotonic_ns": time.monotonic_ns()})
@@ -572,7 +672,7 @@ def run(args):
         if result["cleanup"].get("errors") or result["cleanup"].get("remaining_owned_receivers"):
             result["status"] = "FAIL"
             result["capacity_boundary"] = "CLEANUP_FAILED"
-        result["processes"] = [{"name": name, "pid": process.pid, "exit_code": process.returncode, "command": redacted_command(command)} for name, process, command, _ in processes]
+        result["processes"] = [{"name": name, "pid": process.pid, "starttick": process_startticks.get(process.pid), "exit_code": process.returncode, "command": redacted_command(command)} for name, process, command, _ in processes]
         (args.output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"status": result["status"], "result": str(args.output / "result.json"), "capacity_boundary": result.get("capacity_boundary")}))
     return 0 if result["status"] == "PASS" else 1

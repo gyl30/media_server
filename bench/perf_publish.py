@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fanout_support import stop_process
+from fanout_support import proc_identity, stop_process
 from perf_run import request, sha256
 
 
@@ -129,6 +129,8 @@ def main():
                         raise TimeoutError("source group did not produce both tracks")
                     attempt += 1
                     time.sleep(0.1)
+            for source in sources:
+                source["publisher_starttick"] = proc_identity(source["publisher_pid"])["starttick"]
             temporary = args.output / "sources.tmp"
             temporary.write_text(json.dumps(sources, indent=2) + "\n")
             temporary.replace(args.output / "sources.json")

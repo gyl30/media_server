@@ -167,10 +167,15 @@ def main():
             result = {"status": "NOT_RUN", "counts": [{"viewers": count, "outputs": split_load(count, protocols)} for count in counts],
                       "step": args.step, "granularity": args.granularity}
         elif args.counts:
+            reason = None
             for count in counts:
-                if execute(count) == "CANCELLED":
+                boundary = execute(count)
+                if boundary not in ("HEALTHY", "SERVER_UNSTABLE"):
+                    reason = boundary
                     break
             result = {"status": "PASS" if all(item["status"] == "PASS" for item in rounds) else "INCONCLUSIVE", "rounds": rounds}
+            if reason is not None:
+                result.update(status="INCONCLUSIVE", reason=reason)
         else:
             result = search(execute, args.start, args.step, args.granularity, args.maximum, args.healthy_repeats, args.failed_repeats)
             result["rounds"] = rounds

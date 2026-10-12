@@ -11,7 +11,7 @@
 
 支持的输入：`rtmp, rtsp_tcp, rtsp_udp, rtsp_pull, whip, gb_udp, gb_tcp_active, gb_tcp_passive, existing`。
 
-支持的输出：`rtmp, rtsp, flv, hls, whep, gb_udp, gb_tcp_active, gb_tcp_passive`。`--outputs none` 仍启动每个源的 FLV 双轨观测客户端，**不是严格零 viewer 的 publish-only**；探针开销独立保留，不能隐藏。
+支持的输出：`rtmp, rtsp, flv, hls, whep, gb_udp, gb_tcp_active, gb_tcp_passive`。`--outputs none` 是 **PARTIAL publish-only**：每个源仍有一个 FLV 双轨客户端持续运行整个稳态窗口，**不是严格零 viewer，也不是只运行一次的首媒体探针**。其客户端和服务端输出开销必须保留，不能当作纯发布成本。
 
 ## CLI
 
@@ -19,7 +19,7 @@
 |---|---|
 | `--output` | 必填，新目录；已有目录拒绝覆盖 |
 | `--input` / `--outputs` / `--sources` | `rtmp` / `rtmp:1` / `1`；输出使用逗号分隔 `协议:数量`，不可重复 |
-| `--sources-file` | existing 的 JSON：`[{"stream_id":"...","play_body":{"push_device_id":"..."}}]`；也支持现有 `source_id` 或 `live_id` 来源 |
+| `--sources-file` | existing 的 JSON：`[{"stream_id":"...","play_body":{"push_device_id":"..."}}]`；也支持现有 `source_id` 或 `live_id` 来源；含 `publisher_pid` 时必须提供 `publisher_starttick`，由新版 perf_publish ready 后生成 |
 | `--signaling-url` / `--server-pid` / `--control-token` | existing 必填，后两者为已有服务 PID 和控制凭据；自管模式不填外部来源字段 |
 | `--server-log` | existing 服务日志，仅观察，不修改 |
 | `--server-bin` / `--client-dir` | `build/media_server` / `build` |
@@ -32,7 +32,7 @@
 | `--duration` / `--warmup` | `30` / `5` 秒 |
 | `--ready-timeout` / `--progress-interval` | `60` / `5` 秒；HLS 固定使用 6 秒进展区间，duration 至少 6 秒 |
 | `--ramp-per-second` / `--group-size` | `50` / `256`；group-size 是每个客户端进程的最大 viewer 数，不是服务端并发限制 |
-| `--min-free-memory-mib` / `--min-free-disk-mib` / `--max-server-pss-mib` | 均 `0`，表示采样但不限制；Pi 正式执行须明确设置安全预算 |
+| `--min-free-memory-mib` / `--min-free-disk-mib` / `--max-server-pss-mib` | 均 `0`，表示不限制；非零预算在启动、ready、warmup 和稳态阶段检查，准备期每秒检查；Pi 正式执行须明确设置安全预算 |
 | `--fault` | `none`；支持 `invalid_token, expired_token, replayed_token, source_stop`，不是容量输入 |
 
 输入为拉流或 GB 时，还启动上游实例，监听协议端口为相应主端口加 100，绑定 client-address。应一并核对这些端口。UDP 媒体端口池仍遵循现有 P acquire/release、bind 冲突直接失败，不由本工具修改。
@@ -55,6 +55,8 @@ python3 bench/perf_run.py \
 
 existing 每个 viewer 都调用 `/api/play` 取得独立凭据；返回 stream_id 必须与 sources-file 相同，变化即停止测量，不隐式改换源。
 
+existing 模式的 `--server-bin` 必须指向当前 DUT 实际可执行文件，而不是任意占位路径。准备探针之前比对 `/proc/PID/exe`，固定 starttick、exe 和 network namespace；采样继续核对同一身份。错误 PID、PID 复用、exec 或 namespace 改变记 `BLOCKED/PROCESS_IDENTITY`，不作为服务器容量失败。外部 DUT 消失记 `INCONCLUSIVE/UNCONFIRMED`；外部发布者消失记 `UPSTREAM_FAILED`。自管进程先保存启动 tick，媒体 ready 后再固定 exec 完成后的完整身份。
+
 ## ready、窗口与 PASS
 
 1. 发布源通过 FLV 双轨媒体探针；仅 registry 存在不算 source ready。
@@ -69,6 +71,8 @@ H.264/AAC 消息、RTP 双轨或独立 HLS 分片进展不等于真实音视频�
 ## 输出与清理
 
 新目录保存 `result.json`、server/publisher/client/probe 日志、凭据文件、共同 barrier，以及协议子客户端结果。资源采样包含实际单调时刻、CPU、RSS/PSS、FD、线程、UDP/TCP 队列和 namespace 网络计数。
+
+非零预算的 `budget_samples` 保存准备、warmup、measurement 的实际检查时刻、可用 RAM/磁盘和 DUT PSS。超限立即停止本轮，不继续创建 viewer。UDP drop 端点聚合负差可能源于 socket 关闭，原负差保留并记不确定，不会被当作 `SERVER_UNSTABLE`，也不会静默归零。
 
 SIGTERM/SIGINT 请求有界清理并保存失败结果。仅清理本轮 Popen 对象、自管 receiver/sender；existing 的目标 PID 仅采样。清理结果必须检查 `all_owned_processes_reaped`、`remaining_owned_receivers`、`errors`，不能只看主程序退出。
 

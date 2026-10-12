@@ -51,6 +51,7 @@ python3 bench/perf_capacity.py \
 - 根 `result.json` 每轮更新 checkpoint，完成后写最终搜索/固定档位汇总。运行中的 checkpoint 为 NOT_RUN，不等于成功。
 - 缺失/损坏 JSON、未知状态、退出码矛盾、FAIL 却宣称 HEALTHY 或 PASS 却宣称 SERVER_UNSTABLE 均记 `INCONCLUSIVE/RUNNER_FAILED`。
 - SIGTERM/SIGINT 保存取消证据及已完成轮次，停止自有进程组。取消不是服务端容量失败。
+- 固定 `--counts` 也执行安全停止：只有 HEALTHY 或明确 SERVER_UNSTABLE 轮次允许继续后续预先指定档位；RESOURCE_BUDGET、CLIENT_RESOURCE、UPSTREAM_FAILED、PROCESS_IDENTITY、RUNNER_FAILED 等均立即结束，保留已完成轮次及 `reason`，返回 INCONCLUSIVE。SERVER_UNSTABLE 后继续仅用于操作员明确批准的独立超载诊断，不能由此放宽健康判据。
 - 达到 maximum 仍无 F 时返回 `INCONCLUSIVE/NO_FAILURE_BOUNDARY`，健康轮次只能提供已验证容量下界，不是软件最大值。
 - 输出的 `overload_diagnostic_counts` 只是候选计划，不会自动加压，不保证可安全执行。
 

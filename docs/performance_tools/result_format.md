@@ -28,6 +28,8 @@
 | `groups` | 实际客户端组、requested、exit_code、measurement、first_media、log、first_errors、failure_category |
 | `groups[].window` | 实际客户端起止、实际秒数、起止偏差、请求窗口重叠覆盖；固定required_coverage=0.99 |
 | `samples`、`system_samples` | 带真实单调时刻的进程与主机资源快照，采样有耗时，不能假设恰好1Hz |
+| `server_identity`、`process_identities`、`samples.*.identity` | 从 `/proc` 固定和复核的 starttick、exe、netns；身份改变拒绝采样替代进程，归类 BLOCKED/PROCESS_IDENTITY |
+| `budget_samples` | 非零操作员预算下的 preparation/warmup/measurement 检查点，含实际单调时刻、memory_available_kib、disk_available_bytes、server_pss_kib；准备期节流至每秒，超限立即 RESOURCE_BUDGET |
 | `process_metrics` | CPU/RSS/PSS/FD/线程区间聚合；保留方法、实际分母和thread_sample_window |
 | `server_evidence` | 从测量窗口新增日志及采样提取queue-full、发送缓冲错误、UDP drops；缺日志不等于日志错误数已测为0 |
 | `fault_evidence` | source_stop的`requested_monotonic_ns`/`completed_monotonic_ns`、ready组数、publisher PID与退出结果；实际完成必须发生在测量窗口内，无此证据不能说已执行有效故障 |
@@ -37,6 +39,10 @@
 `groups[].measurement`保留协议原始字段，不能凭字段名称假设单位一致。Native TCP/FLV是有效音视频消息计数，WHEP是解密后的RTP双轨计数，GB是PS/PES进展，HLS是独立新分片进展。收到字节、握手完成、SDP201、轨道存在均不能独立替代媒体进展；这些native证据也不能代替Chrome/FFmpeg真实解码。
 
 失败发生在建立期时没有完整measurement/window，必须保留缺失事实。被取消或缩短的窗口不能补成请求时长。容量驱动根result是搜索/复验的汇总，子result仍是原始证据；不得覆盖失败轮。
+
+`server_evidence.udp_drops` 是当前存活 socket 累积计数的端点差，而非不会回退的全历史计数。socket 关闭可导致负差：保留负值及 `udp_drops_interpretation`，无独立服务器错误证据时记 INCONCLUSIVE/UNCONFIRMED；不能将负差算作服务器失稳，也不能截断为0并声称没有丢包。namespace 级网络计数不能自动归因给 DUT。
+
+`--outputs none` 的结果仍包含整个测量窗口运行的每源 FLV 双轨客户端：这是 PARTIAL publish-only，不是零输出纯发布测量。其 CPU、网络、授权和清理成本均不能从结果中隐去。
 
 ## 单位与统计对象
 

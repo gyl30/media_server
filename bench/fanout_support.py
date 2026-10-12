@@ -26,7 +26,14 @@ def proc_status(pid, tid=None):
     return values
 
 
+def proc_identity(pid):
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()
+    return {"starttick": int(fields[19]), "exe": str(Path(f"/proc/{pid}/exe").readlink()),
+            "netns": str(Path(f"/proc/{pid}/ns/net").readlink())}
+
+
 def proc_snapshot(pid):
+    identity = proc_identity(pid)
     tasks = {}
     for task in Path(f"/proc/{pid}/task").iterdir():
         try:
@@ -84,7 +91,10 @@ def proc_snapshot(pid):
     status = proc_status(pid)
     if "VmRSS" not in status:
         raise ProcessLookupError(pid)
+    if proc_identity(pid) != identity:
+        raise RuntimeError(f"process identity changed while sampling PID {pid}")
     return {
+        "identity": identity,
         "monotonic_ns": time.monotonic_ns(),
         "cpu_affinity": sorted(os.sched_getaffinity(pid)),
         "cpu": proc_cpu(pid),
@@ -110,8 +120,10 @@ def thread_rates(before, after, field, elapsed):
     }
 
 
-def wait_for_listener(host, port):
+def wait_for_listener(host, port, check=None):
     for _ in range(100):
+        if check is not None:
+            check()
         try:
             with socket.create_connection((host, port), timeout=0.2):
                 return
