@@ -97,10 +97,7 @@ void gb28181_tcp_receiver_session::run(std::optional<boost::asio::ip::tcp::endpo
     }
     if (error)
     {
-        if (error != boost::asio::error::operation_aborted)
-        {
-            spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_id(), error.message());
-        }
+        spdlog::warn("gb28181 tcp establishment failed stream {} error {}", receiver_.stream_id(), error.message());
         shutdown();
         return;
     }

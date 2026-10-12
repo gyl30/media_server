@@ -61,17 +61,14 @@ void gb28181_tcp_sender_session::run(std::optional<boost::asio::ip::tcp::endpoin
         listener_.reset();
     }
 
-    if (yield.cancelled() != boost::asio::cancellation_type::none)
+    if (yield.cancelled() != boost::asio::cancellation_type::none || !stream_)
     {
         shutdown();
         return;
     }
     if (error)
     {
-        if (error != boost::asio::error::operation_aborted)
-        {
-            spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->stream_id(), sender_id_, error.message());
-        }
+        spdlog::warn("gb28181 tcp sender establishment failed stream {} sender {} error {}", stream_->stream_id(), sender_id_, error.message());
         shutdown();
         return;
     }

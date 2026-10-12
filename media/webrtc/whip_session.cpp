@@ -58,10 +58,7 @@ bool whip_session::startup(const webrtc_media_offer& transport_offer,
             {
                 return;
             }
-            if (error != boost::asio::error::operation_aborted)
-            {
-                spdlog::debug("webrtc udp send failed session {} error {}", self->id_, error.message());
-            }
+            spdlog::debug("webrtc udp send failed session {} error {}", self->id_, error.message());
             self->shutdown();
         });
     dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
@@ -128,10 +125,7 @@ void whip_session::run_udp(boost::asio::yield_context yield)
         const auto bytes = udp_transport_->read(buffer, endpoint, yield, read_error);
         if (read_error)
         {
-            if (read_error != boost::asio::error::operation_aborted)
-            {
-                spdlog::debug("webrtc udp receive failed session {} error {}", id_, read_error.message());
-            }
+            spdlog::debug("webrtc udp receive failed session {} error {}", id_, read_error.message());
             break;
         }
         handle_packet(std::span<const std::uint8_t>{buffer.data(), bytes}, endpoint);

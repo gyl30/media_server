@@ -346,7 +346,7 @@ if(BUILD_TESTING)
 
     add_executable(gb_tcp_lifecycle_tests tests/gb_tcp_lifecycle.cpp)
     target_link_libraries(gb_tcp_lifecycle_tests PRIVATE media_core media_server_link_options)
-    foreach(scenario receiver_queued_read sender_connected sender_refused)
+    foreach(scenario receiver_queued_read sender_connected sender_refused sender_pending_accept)
         add_test(NAME gb_tcp_${scenario} COMMAND gb_tcp_lifecycle_tests ${scenario})
         set_tests_properties(gb_tcp_${scenario} PROPERTIES TIMEOUT 10)
     endforeach()

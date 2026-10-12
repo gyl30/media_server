@@ -91,6 +91,30 @@ void receiver_queued_read()
     std::cout << "GB TCP receiver queued RTP read and repeated parent shutdown: PASS\n";
 }
 
+void sender_pending_accept_shutdown()
+{
+    worker_context worker;
+    const auto address = boost::asio::ip::address_v4::loopback();
+    auto source = std::make_shared<media_stream>("verify/gb-tcp-pending-accept", worker);
+    require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = {}}}),
+            "TCP sender source tracks rejected");
+    auto sender = std::make_shared<gb28181_tcp_sender_session>(worker, source, "pending-accept");
+    require(session_registry::instance().add_sender_session(source->stream_id(), "pending-accept", sender), "TCP sender registration failed");
+    require(sender->startup(address, 0, 96, 1), "passive TCP sender startup failed");
+    require(worker.io().poll() != 0, "TCP sender accept was not initiated");
+
+    const std::weak_ptr<gb28181_tcp_sender_session> lifetime = sender;
+    sender->shutdown();
+    sender->shutdown();
+    sender.reset();
+    worker.io().poll();
+    worker.request_stop();
+    worker.io().run_for(3s);
+    require(worker.io().stopped() && lifetime.expired(), "cancelled accept retained TCP sender or asynchronous work");
+    require(!session_registry::instance().take_sender_session(source->stream_id(), "pending-accept"), "cancelled accept retained registry ownership");
+    std::cout << "GB TCP sender pending accept and repeated shutdown: PASS\n";
+}
+
 void sender_establishment_shutdown(bool refused)
 {
     worker_context worker;
@@ -161,6 +185,10 @@ int main(int argc, char* argv[])
         if (scenario == "receiver_queued_read")
         {
             receiver_queued_read();
+        }
+        else if (scenario == "sender_pending_accept")
+        {
+            sender_pending_accept_shutdown();
         }
         else
         {

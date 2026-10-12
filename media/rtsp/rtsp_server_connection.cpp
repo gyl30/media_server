@@ -120,10 +120,7 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
         const auto bytes = transport->read(buffer, yield, error);
         if (error)
         {
-            if (yield.cancelled() == boost::asio::cancellation_type::none)
-            {
-                spdlog::debug("rtsp read failed: {}", error.message());
-            }
+            spdlog::debug("rtsp read failed: {}", error.message());
             shutdown();
             return;
         }
