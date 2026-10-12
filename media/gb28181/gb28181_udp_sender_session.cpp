@@ -81,7 +81,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
             {
                 return;
             }
-            if (!self->stream_ || error == boost::asio::error::operation_aborted)
+            if (!self->stream_)
             {
                 return;
             }
@@ -91,7 +91,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     rtcp_transport_->set_write_callback(
         [self](boost::system::error_code error, std::size_t)
         {
-            if (!self->stream_ || error == boost::asio::error::operation_aborted)
+            if (!self->stream_)
             {
                 return;
             }
