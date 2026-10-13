@@ -1,36 +1,48 @@
-# Prerequisites
-*.d
+# CMake build directories and generated build metadata
+/build/
+/build_*/
+/build-*/
+/cmake-build-*/
+/Testing/
+/compile_commands.json
 
-# Compiled Object files
-*.slo
-*.lo
+# Compiler and linker outputs
+*.d
 *.o
 *.obj
-
-# Precompiled Headers
+*.lo
+*.slo
 *.gch
 *.pch
-
-# Fortran module files
-*.mod *.smod
-
-# Executables
+*.mod
+*.smod
 *.exe
 *.out
-build
-build_fuzz
-build_coverage
-compile_commands.json
-.cache
-Testing/
-*.info
-.idea
-.ccls-cache
-.vscode
-.tasks
+*.a
+*.so
+*.so.*
+
+# Editor, language server, and local caches
+.idea/
+.vscode/
+.cache/
+.ccls-cache/
+.tasks/
 __pycache__/
 *.pyc
+
+# Temporary files and test diagnostics
+/tmp/
 .tmp-*/
-all
-1
-tmp/
+*.info
+*.gcda
+*.gcno
+*.profraw
+*.profdata
+/perf.data*
+/core
+/core.[0-9]*
+
+# Local measurement results: retained outside version control
+/docs/performance_reports/
+/docs/verification_results/
