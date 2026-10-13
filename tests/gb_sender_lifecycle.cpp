@@ -256,6 +256,63 @@ void worker_stop_posts_parent_and_child_cleanup()
     media_port_pool::instance().release(*returned);
     std::cout << "GB UDP worker stop posts parent/child cleanup and releases callback ownership: PASS\n";
 }
+
+void udp_media_with_rtcp_accounting()
+{
+    fixture live;
+    const auto address = boost::asio::ip::address_v4::loopback();
+    udp::socket rtp_client(live.sender_worker.io(), {address, 0});
+    udp::socket rtcp_client(live.sender_worker.io(), {address, 0});
+    auto session = std::make_shared<gb28181_udp_sender_session>(
+        live.sender_worker, live.source, "media", rtp_client.local_endpoint(), rtcp_client.local_endpoint());
+    on_owner(live.sender_worker,
+             [&]()
+             {
+                 require(session_registry::instance().add_sender_session(live.source->stream_id(), "media", session), "sender registration failed");
+                 require(session->startup(address, 96, 5), "UDP sender startup failed");
+             });
+    live.source_worker.io().poll();
+    live.sender_worker.io().poll();
+    on_owner(live.source_worker,
+             [&]()
+             {
+                 for (std::int64_t index = 0; index < 3; ++index)
+                 {
+                     live.source->publish(
+                         {.track = 1, .dts_ns = index * 33'333'333, .pts_ns = index * 33'333'333, .key_frame = true, .payload = live.payload});
+                 }
+             });
+    live.sender_worker.io().run_for(20ms);
+    rtp_client.non_blocking(true);
+    std::array<std::uint8_t, 2048> buffer{};
+    udp::endpoint peer;
+    boost::system::error_code error;
+    unsigned packets{};
+    std::uint16_t previous_sequence{};
+    for (;;)
+    {
+        const auto bytes = rtp_client.receive_from(boost::asio::buffer(buffer), peer, 0, error);
+        if (error == boost::asio::error::would_block || error == boost::asio::error::try_again)
+        {
+            break;
+        }
+        require(!error && bytes > 12 && buffer[0] == 0x80 && (buffer[1] & 0x7f) == 96, "UDP RTP datagram corrupted");
+        require(buffer[8] == 0 && buffer[9] == 0 && buffer[10] == 0 && buffer[11] == 5, "UDP RTP SSRC changed");
+        const auto sequence = static_cast<std::uint16_t>((buffer[2] << 8) | buffer[3]);
+        require(packets == 0 || sequence == static_cast<std::uint16_t>(previous_sequence + 1U), "UDP RTP sequence gap");
+        previous_sequence = sequence;
+        ++packets;
+    }
+    require(packets >= 3, "queued UDP media did not arrive with RTCP enabled");
+    require(session_registry::instance().take_sender_session(live.source->stream_id(), "media") == session,
+            "RTP accounting terminated an active sender");
+    const std::weak_ptr<gb28181_udp_sender_session> lifetime = session;
+    session->shutdown();
+    session.reset();
+    live.sender_worker.io().run_for(5s);
+    require(lifetime.expired(), "RTP/RTCP callbacks retained the closed sender");
+    std::cout << "GB UDP media ownership and RTCP accounting: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -267,6 +324,7 @@ int main()
         queued_frames_after_shutdown();
         parent_shutdown_before_sender_drain();
         worker_stop_posts_parent_and_child_cleanup();
+        udp_media_with_rtcp_accounting();
         return 0;
     }
     catch (const std::exception& error)

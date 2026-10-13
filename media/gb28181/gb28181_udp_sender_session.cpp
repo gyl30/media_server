@@ -162,12 +162,14 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
     {
         return;
     }
-    if (!rtp_transport_->write(std::span<const std::uint8_t>{packet}, remote_rtp_endpoint_))
+    const std::span<const std::uint8_t> packet_data{packet};
+    if (!rtp_transport_->write(std::move(packet), remote_rtp_endpoint_))
     {
         spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);
         return;
     }
-    if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
+    // transport 持有 packet，发送 completion 不会在 write 内执行。
+    if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet_data.data(), static_cast<int>(packet_data.size())) != 0)
     {
         sender_->shutdown();
         shutdown();
