@@ -68,12 +68,18 @@ void admission(bool publishing, const std::string& scenario)
     const auto mid = std::string("0");
     const bool aac_source = scenario == "replacement_aac";
     auto offer = std::string("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE ") + mid + "\r\n" +
-        (publishing ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n" : aac_source ? "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" : "m=audio 9 UDP/TLS/RTP/SAVPF 8\r\n") +
-        "c=IN IP4 0.0.0.0\r\na=mid:" + mid + "\r\na=rtcp-mux\r\na=setup:actpass\r\n"
-        "a=ice-ufrag:test-remote\r\na=ice-pwd:test-remote-password\r\na=fingerprint:sha-256 " + certificate->sha256_fingerprint() + "\r\n"
-        "a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n" +
-        (publishing ? "a=sendonly\r\na=rtpmap:102 H264/90000\r\na=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n" :
-                      aac_source ? "a=recvonly\r\na=rtpmap:111 opus/48000/2\r\n" : "a=recvonly\r\na=rtpmap:8 PCMA/8000\r\n");
+                 (publishing   ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n"
+                  : aac_source ? "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+                               : "m=audio 9 UDP/TLS/RTP/SAVPF 8\r\n") +
+                 "c=IN IP4 0.0.0.0\r\na=mid:" + mid +
+                 "\r\na=rtcp-mux\r\na=setup:actpass\r\n"
+                 "a=ice-ufrag:test-remote\r\na=ice-pwd:test-remote-password\r\na=fingerprint:sha-256 " +
+                 certificate->sha256_fingerprint() +
+                 "\r\n"
+                 "a=extmap:1 urn:ietf:params:rtp-hdrext:sdes:mid\r\n" +
+                 (publishing   ? "a=sendonly\r\na=rtpmap:102 H264/90000\r\na=fmtp:102 packetization-mode=1;profile-level-id=42e01f\r\n"
+                  : aac_source ? "a=recvonly\r\na=rtpmap:111 opus/48000/2\r\n"
+                               : "a=recvonly\r\na=rtpmap:8 PCMA/8000\r\n");
     if (scenario == "unsupported_offer")
     {
         const auto direction = publishing ? "a=sendonly" : "a=recvonly";
@@ -116,7 +122,9 @@ void admission(bool publishing, const std::string& scenario)
         offer.erase(offer.find(extension), extension.size());
     }
     auto source = std::make_shared<media_stream>(stream_id, worker);
-    auto track = media_track{.id = 1, .kind = media_kind::audio, .codec = aac_source ? codec_id::aac : codec_id::g711a,
+    auto track = media_track{.id = 1,
+                             .kind = media_kind::audio,
+                             .codec = aac_source ? codec_id::aac : codec_id::g711a,
                              .clock_rate = aac_source ? 48'000U : 8'000U,
                              .channel_count = static_cast<std::uint16_t>(aac_source ? 2 : 1),
                              .codec_config = aac_source ? std::vector<std::uint8_t>{0x11, 0x90} : std::vector<std::uint8_t>{}};
@@ -139,218 +147,244 @@ void admission(bool publishing, const std::string& scenario)
             worker.request_stop();
         }
     };
-    boost::asio::spawn(worker.io(), [&](boost::asio::yield_context yield)
-    {
-        for (;;)
+    boost::asio::spawn(
+        worker.io(),
+        [&](boost::asio::yield_context yield)
         {
-            tcp::socket socket(worker.io());
-            boost::system::error_code error;
-            listener.async_accept(socket, yield[error]);
-            if (error == boost::asio::error::operation_aborted)
+            for (;;)
             {
-                return;
-            }
-            require(!error, "verification accept failed");
-            boost::beast::flat_buffer buffer;
-            http::request<http::string_body> request;
-            http::async_read(socket, buffer, request, yield[error]);
-            require(!error && request.target() == "/internal/verify", "invalid verification request");
-            ++verify_requests;
-            require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
-                    "WHIP registered before authorization completed");
-            const auto body = boost::json::parse(request.body()).as_object();
-            require(body.at("token").as_string() == token && body.at("stream_id").as_string() == stream_id &&
-                    body.at("operation").as_string() == (publishing ? "publish" : "play"), "verification identity changed");
-            if (verify_requests == 1)
-            {
-                std::vector<std::uint16_t> available_ports;
-                while (const auto port = media_port_pool::instance().acquire())
+                tcp::socket socket(worker.io());
+                boost::system::error_code error;
+                listener.async_accept(socket, yield[error]);
+                if (error == boost::asio::error::operation_aborted)
                 {
-                    available_ports.push_back(*port);
+                    return;
                 }
-                require(available_ports.size() == (scenario == "rejected_exhausted" ? 0U : 16U),
-                        "media port allocated before authorization");
-                for (auto port = available_ports.rbegin(); port != available_ports.rend(); ++port)
+                require(!error, "verification accept failed");
+                boost::beast::flat_buffer buffer;
+                http::request<http::string_body> request;
+                http::async_read(socket, buffer, request, yield[error]);
+                require(!error && request.target() == "/internal/verify", "invalid verification request");
+                ++verify_requests;
+                require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
+                        "WHIP registered before authorization completed");
+                const auto body = boost::json::parse(request.body()).as_object();
+                require(body.at("token").as_string() == token && body.at("stream_id").as_string() == stream_id &&
+                            body.at("operation").as_string() == (publishing ? "publish" : "play"),
+                        "verification identity changed");
+                if (verify_requests == 1)
                 {
-                    media_port_pool::instance().release(*port);
-                }
-            }
-            const bool authorized = scenario != "rejected" && scenario != "rejected_exhausted" && pending_token.has_value();
-            if (authorized)
-            {
-                pending_token.reset();
-                if (scenario == "closed_http")
-                {
-                    http_socket.close();
-                }
-                if (scenario == "port_exhausted")
-                {
+                    std::vector<std::uint16_t> available_ports;
                     while (const auto port = media_port_pool::instance().acquire())
                     {
-                        reserved_ports.push_back(*port);
+                        available_ports.push_back(*port);
+                    }
+                    require(available_ports.size() == (scenario == "rejected_exhausted" ? 0U : 16U), "media port allocated before authorization");
+                    for (auto port = available_ports.rbegin(); port != available_ports.rend(); ++port)
+                    {
+                        media_port_pool::instance().release(*port);
                     }
                 }
-                if (scenario == "transport_failure")
+                const bool authorized = scenario != "rejected" && scenario != "rejected_exhausted" && pending_token.has_value();
+                if (authorized)
                 {
-                    occupied_port.open(boost::asio::ip::udp::v4());
-                    occupied_port.bind({boost::asio::ip::make_address("127.0.0.1"), 54'000});
+                    pending_token.reset();
+                    if (scenario == "closed_http")
+                    {
+                        http_socket.close();
+                    }
+                    if (scenario == "port_exhausted")
+                    {
+                        while (const auto port = media_port_pool::instance().acquire())
+                        {
+                            reserved_ports.push_back(*port);
+                        }
+                    }
+                    if (scenario == "transport_failure")
+                    {
+                        occupied_port.open(boost::asio::ip::udp::v4());
+                        occupied_port.bind({boost::asio::ip::make_address("127.0.0.1"), 54'000});
+                    }
+                    if (scenario == "startup_failure")
+                    {
+                        fail_ssl_context = true;
+                    }
+                    if (scenario == "replacement" || scenario == "replacement_aac")
+                    {
+                        stream_registry::instance().remove(*source);
+                        source->end();
+                        replacement = std::make_shared<media_stream>(stream_id, worker);
+                        require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
+                    }
                 }
-                if (scenario == "startup_failure")
-                {
-                    fail_ssl_context = true;
-                }
-                if (scenario == "replacement" || scenario == "replacement_aac")
-                {
-                    stream_registry::instance().remove(*source);
-                    source->end();
-                    replacement = std::make_shared<media_stream>(stream_id, worker);
-                    require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
-                }
+                http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
+                response.prepare_payload();
+                http::async_write(socket, response, yield[error]);
+                require(!error, "verification response failed");
             }
-            http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
-            response.prepare_payload();
-            http::async_write(socket, response, yield[error]);
-            require(!error, "verification response failed");
-        }
-    }, completed);
-    boost::asio::spawn(worker.io(), [&](boost::asio::yield_context yield)
-    {
-        std::string path = publishing ? "/publish/whip/" + stream_id : "/play/whep/" + stream_id + "/" + token;
-        if (scenario == "invalid_path")
+        },
+        completed);
+    boost::asio::spawn(
+        worker.io(),
+        [&](boost::asio::yield_context yield)
         {
-            path += "/extra";
-        }
-        if (scenario == "query")
-        {
-            path += "?token=extra";
-        }
-        if (scenario == "normalized_path")
-        {
-            path.insert(publishing ? std::string("/publish/whip/").size() : std::string("/play/whep/").size(), "./");
-        }
-        if (scenario == "encoded_path")
-        {
-            path.replace(path.find(stream_id), 1, "%61");
-        }
-        if (scenario == "reserved_path")
-        {
-            path = publishing ? "/publish/whip/session/a/b" : "/play/whep/session/a/b";
-        }
-        http::request<http::string_body> request(http::verb::post, path, 11);
-        request.set(http::field::content_type, "application/sdp");
-        request.body() = scenario == "invalid_offer" ? "not an SDP" : offer;
-        const auto target = ada::parse<ada::url_aggregator>("http://localhost" + path);
-        require(static_cast<bool>(target), "invalid test target");
-        const auto response = publishing ? handle_whip_request(request, worker, *target, application_config, http_socket, yield) :
-                                           handle_whep_request(request, worker, *target, application_config, http_socket, yield);
-        http::status expected = http::status::created;
-        if (scenario == "invalid_path" || scenario == "reserved_path") expected = http::status::not_found;
-        if (scenario == "query" || scenario == "invalid_offer" || scenario == "normalized_path" || scenario == "encoded_path") expected = http::status::bad_request;
-        if (scenario == "unsupported_offer" || scenario == "missing_ice" || scenario == "invalid_fingerprint" ||
-            scenario == "missing_bundle" || scenario == "invalid_transport" || scenario == "missing_mid_extension")
-        {
-            expected = http::status::bad_request;
-        }
-        if (scenario == "missing_source") expected = http::status::conflict;
-        if (scenario == "codec_mismatch") expected = http::status::bad_request;
-        if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure") expected = http::status::internal_server_error;
-        if (scenario == "rejected" || scenario == "rejected_exhausted" || scenario == "closed_http") expected = http::status::forbidden;
-        if (response.result() != expected)
-        {
-            throw std::runtime_error(scenario + " admission response " + std::to_string(response.result_int()) +
-                                     " expected " + std::to_string(static_cast<unsigned>(expected)));
-        }
-        const bool precheck_failed = scenario == "invalid_path" || scenario == "query" || scenario == "invalid_offer" ||
-            scenario == "normalized_path" || scenario == "encoded_path" || scenario == "reserved_path" ||
-            scenario == "missing_source" || scenario == "unsupported_offer" ||
-            scenario == "missing_ice" || scenario == "invalid_fingerprint" || scenario == "missing_bundle" ||
-            scenario == "invalid_transport" || scenario == "missing_mid_extension";
-        require(verify_requests == (precheck_failed ? 0U : 1U), "precheck consumed authorization or verification missing");
-        require(pending_token.has_value() == (precheck_failed || scenario == "rejected" || scenario == "rejected_exhausted"),
-                "token consumption differs from signaling authorization");
-        if (scenario == "startup_failure")
-        {
-            require(!fail_ssl_context && failed_ssl_contexts == failed_contexts_before + 1U,
-                    "session startup failure was not exercised");
-        }
-        if (expected == http::status::created)
-        {
-            const auto location = response[http::field::location];
-            const std::string session_id(location.substr(location.find_last_of('/') + 1));
-            created_session_id = session_id;
-            const std::string resource_path(location);
-            const auto resource_target = ada::parse<ada::url_aggregator>("http://localhost" + resource_path);
-            if (scenario == "establishment_timeout")
+            std::string path = publishing ? "/publish/whip/" + stream_id : "/play/whep/" + stream_id + "/" + token;
+            if (scenario == "invalid_path")
             {
-                boost::asio::steady_timer timeout(worker.io());
-                timeout.expires_after(16s);
-                timeout.async_wait(yield);
-                http::request<http::string_body> inspect(publishing ? http::verb::delete_ : http::verb::get, resource_path, 11);
-                const auto expired = publishing ? handle_whip_request(inspect, worker, *resource_target, application_config, http_socket, yield) :
-                                                 handle_whep_request(inspect, worker, *resource_target, application_config, http_socket, yield);
-                if (expired.result() != http::status::not_found)
+                path += "/extra";
+            }
+            if (scenario == "query")
+            {
+                path += "?token=extra";
+            }
+            if (scenario == "normalized_path")
+            {
+                path.insert(publishing ? std::string("/publish/whip/").size() : std::string("/play/whep/").size(), "./");
+            }
+            if (scenario == "encoded_path")
+            {
+                path.replace(path.find(stream_id), 1, "%61");
+            }
+            if (scenario == "reserved_path")
+            {
+                path = publishing ? "/publish/whip/session/a/b" : "/play/whep/session/a/b";
+            }
+            http::request<http::string_body> request(http::verb::post, path, 11);
+            request.set(http::field::content_type, "application/sdp");
+            request.body() = scenario == "invalid_offer" ? "not an SDP" : offer;
+            const auto target = ada::parse<ada::url_aggregator>("http://localhost" + path);
+            require(static_cast<bool>(target), "invalid test target");
+            const auto response = publishing ? handle_whip_request(request, worker, *target, application_config, http_socket, yield)
+                                             : handle_whep_request(request, worker, *target, application_config, http_socket, yield);
+            http::status expected = http::status::created;
+            if (scenario == "invalid_path" || scenario == "reserved_path")
+            {
+                expected = http::status::not_found;
+            }
+            if (scenario == "query" || scenario == "invalid_offer" || scenario == "normalized_path" || scenario == "encoded_path")
+            {
+                expected = http::status::bad_request;
+            }
+            if (scenario == "unsupported_offer" || scenario == "missing_ice" || scenario == "invalid_fingerprint" || scenario == "missing_bundle" ||
+                scenario == "invalid_transport" || scenario == "missing_mid_extension")
+            {
+                expected = http::status::bad_request;
+            }
+            if (scenario == "missing_source")
+            {
+                expected = http::status::conflict;
+            }
+            if (scenario == "codec_mismatch")
+            {
+                expected = http::status::bad_request;
+            }
+            if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure")
+            {
+                expected = http::status::internal_server_error;
+            }
+            if (scenario == "rejected" || scenario == "rejected_exhausted" || scenario == "closed_http")
+            {
+                expected = http::status::forbidden;
+            }
+            if (response.result() != expected)
+            {
+                throw std::runtime_error(scenario + " admission response " + std::to_string(response.result_int()) + " expected " +
+                                         std::to_string(static_cast<unsigned>(expected)));
+            }
+            const bool precheck_failed = scenario == "invalid_path" || scenario == "query" || scenario == "invalid_offer" ||
+                                         scenario == "normalized_path" || scenario == "encoded_path" || scenario == "reserved_path" ||
+                                         scenario == "missing_source" || scenario == "unsupported_offer" || scenario == "missing_ice" ||
+                                         scenario == "invalid_fingerprint" || scenario == "missing_bundle" || scenario == "invalid_transport" ||
+                                         scenario == "missing_mid_extension";
+            require(verify_requests == (precheck_failed ? 0U : 1U), "precheck consumed authorization or verification missing");
+            require(pending_token.has_value() == (precheck_failed || scenario == "rejected" || scenario == "rejected_exhausted"),
+                    "token consumption differs from signaling authorization");
+            if (scenario == "startup_failure")
+            {
+                require(!fail_ssl_context && failed_ssl_contexts == failed_contexts_before + 1U, "session startup failure was not exercised");
+            }
+            if (expected == http::status::created)
+            {
+                const auto location = response[http::field::location];
+                const std::string session_id(location.substr(location.find_last_of('/') + 1));
+                created_session_id = session_id;
+                const std::string resource_path(location);
+                const auto resource_target = ada::parse<ada::url_aggregator>("http://localhost" + resource_path);
+                if (scenario == "establishment_timeout")
                 {
-                    throw std::runtime_error("unestablished session survived establishment timeout: resource status " +
-                                             std::to_string(expired.result_int()) + " expected 404");
+                    boost::asio::steady_timer timeout(worker.io());
+                    timeout.expires_after(16s);
+                    timeout.async_wait(yield);
+                    http::request<http::string_body> inspect(publishing ? http::verb::delete_ : http::verb::get, resource_path, 11);
+                    const auto expired = publishing ? handle_whip_request(inspect, worker, *resource_target, application_config, http_socket, yield)
+                                                    : handle_whep_request(inspect, worker, *resource_target, application_config, http_socket, yield);
+                    if (expired.result() != http::status::not_found)
+                    {
+                        throw std::runtime_error("unestablished session survived establishment timeout: resource status " +
+                                                 std::to_string(expired.result_int()) + " expected 404");
+                    }
+                    require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
+                            "unestablished WHIP retained receiver registration");
                 }
-                require(!publishing || !session_registry::instance().find_receiver_session(stream_id),
-                        "unestablished WHIP retained receiver registration");
-            }
-            else if (publishing)
-            {
-                require(session_registry::instance().find_receiver_session(stream_id) != nullptr, "verified WHIP not registered");
-                http::request<http::string_body> remove(http::verb::delete_, resource_path, 11);
-                require(handle_whip_request(remove, worker, *resource_target, application_config, http_socket, yield).result() == http::status::no_content,
-                        "WHIP resource DELETE failed");
-            }
-            else
-            {
-                if (scenario == "replacement" || scenario == "replacement_aac")
+                else if (publishing)
                 {
-                    // 源终止通过 owner executor 关闭 socket，等整个 executor drain 后检查释放。
+                    require(session_registry::instance().find_receiver_session(stream_id) != nullptr, "verified WHIP not registered");
+                    http::request<http::string_body> remove(http::verb::delete_, resource_path, 11);
+                    require(handle_whip_request(remove, worker, *resource_target, application_config, http_socket, yield).result() ==
+                                http::status::no_content,
+                            "WHIP resource DELETE failed");
                 }
                 else
                 {
-                    require(whep::contains(session_id), "WHEP resource not active");
-                    for (const auto method : {http::verb::get, http::verb::head})
+                    if (scenario == "replacement" || scenario == "replacement_aac")
                     {
-                        http::request<http::string_body> inspect(method, resource_path, 11);
-                        require(handle_whep_request(inspect, worker, *resource_target, application_config, http_socket, yield).result() == http::status::no_content,
-                                "WHEP resource inspection failed");
+                        // 源终止通过 owner executor 关闭 socket，等整个 executor drain 后检查释放。
                     }
-                    http::request<http::string_body> remove(http::verb::delete_, resource_path, 11);
-                    require(handle_whep_request(remove, worker, *resource_target, application_config, http_socket, yield).result() == http::status::no_content,
-                            "WHEP resource DELETE failed");
+                    else
+                    {
+                        require(whep::contains(session_id), "WHEP resource not active");
+                        for (const auto method : {http::verb::get, http::verb::head})
+                        {
+                            http::request<http::string_body> inspect(method, resource_path, 11);
+                            require(handle_whep_request(inspect, worker, *resource_target, application_config, http_socket, yield).result() ==
+                                        http::status::no_content,
+                                    "WHEP resource inspection failed");
+                        }
+                        http::request<http::string_body> remove(http::verb::delete_, resource_path, 11);
+                        require(handle_whep_request(remove, worker, *resource_target, application_config, http_socket, yield).result() ==
+                                    http::status::no_content,
+                                "WHEP resource DELETE failed");
+                    }
                 }
+                require(verify_requests == 1U, "session resource unexpectedly reverified authorization");
             }
-            require(verify_requests == 1U, "session resource unexpectedly reverified authorization");
-        }
-        require(!publishing || expected == http::status::created || !session_registry::instance().find_receiver_session(stream_id),
-                "unauthorized WHIP became registered");
-        for (auto port = reserved_ports.rbegin(); port != reserved_ports.rend(); ++port)
-        {
-            media_port_pool::instance().release(*port);
-        }
-        reserved_ports.clear();
-        if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure" ||
-            scenario == "codec_mismatch" || scenario == "closed_http")
-        {
-            if (occupied_port.is_open())
+            require(!publishing || expected == http::status::created || !session_registry::instance().find_receiver_session(stream_id),
+                    "unauthorized WHIP became registered");
+            for (auto port = reserved_ports.rbegin(); port != reserved_ports.rend(); ++port)
             {
-                occupied_port.close();
+                media_port_pool::instance().release(*port);
             }
-            if (!http_socket.is_open())
+            reserved_ports.clear();
+            if (scenario == "transport_failure" || scenario == "port_exhausted" || scenario == "startup_failure" || scenario == "codec_mismatch" ||
+                scenario == "closed_http")
             {
-                http_socket.open(tcp::v4());
+                if (occupied_port.is_open())
+                {
+                    occupied_port.close();
+                }
+                if (!http_socket.is_open())
+                {
+                    http_socket.open(tcp::v4());
+                }
+                const auto replay = publishing ? handle_whip_request(request, worker, *target, application_config, http_socket, yield)
+                                               : handle_whep_request(request, worker, *target, application_config, http_socket, yield);
+                require(replay.result() == http::status::forbidden && verify_requests == 2U && !pending_token,
+                        "post-authorization failure restored token or admitted replay");
             }
-            const auto replay = publishing ? handle_whip_request(request, worker, *target, application_config, http_socket, yield) :
-                                             handle_whep_request(request, worker, *target, application_config, http_socket, yield);
-            require(replay.result() == http::status::forbidden && verify_requests == 2U && !pending_token,
-                    "post-authorization failure restored token or admitted replay");
-        }
-        listener.close();
-        worker.request_stop();
-    }, completed);
+            listener.close();
+            worker.request_stop();
+        },
+        completed);
     worker.io().run_for(scenario == "establishment_timeout" ? 18s : 5s);
     if (failure)
     {
@@ -362,8 +396,14 @@ void admission(bool publishing, const std::string& scenario)
     {
         require(!whep::contains(created_session_id), "WHEP switched to replacement source after verification");
     }
-    if (source_present) stream_registry::instance().remove(*source);
-    if (replacement) stream_registry::instance().remove(*replacement);
+    if (source_present)
+    {
+        stream_registry::instance().remove(*source);
+    }
+    if (replacement)
+    {
+        stream_registry::instance().remove(*replacement);
+    }
     std::vector<std::uint16_t> available_ports;
     while (const auto port = media_port_pool::instance().acquire())
     {
@@ -416,11 +456,38 @@ int main(int argc, char** argv)
             return 0;
         }
         require(argc == 1, "unexpected test argument");
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "missing_source", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "missing_bundle", "invalid_transport", "missing_mid_extension", "transport_failure", "port_exhausted", "startup_failure", "codec_mismatch", "rejected", "rejected_exhausted", "closed_http", "accepted", "replacement", "replacement_aac", "establishment_timeout"})
+        for (const auto& scenario : {"invalid_path",
+                                     "query",
+                                     "normalized_path",
+                                     "encoded_path",
+                                     "reserved_path",
+                                     "missing_source",
+                                     "invalid_offer",
+                                     "unsupported_offer",
+                                     "missing_ice",
+                                     "invalid_fingerprint",
+                                     "missing_bundle",
+                                     "invalid_transport",
+                                     "missing_mid_extension",
+                                     "transport_failure",
+                                     "port_exhausted",
+                                     "startup_failure",
+                                     "codec_mismatch",
+                                     "rejected",
+                                     "rejected_exhausted",
+                                     "closed_http",
+                                     "accepted",
+                                     "replacement",
+                                     "replacement_aac",
+                                     "establishment_timeout"})
         {
             admission(false, scenario);
         }
-        for (const auto& scenario : {"invalid_path", "query", "normalized_path", "encoded_path", "reserved_path", "invalid_offer", "unsupported_offer", "missing_ice", "invalid_fingerprint", "missing_bundle", "invalid_transport", "missing_mid_extension", "transport_failure", "port_exhausted", "startup_failure", "codec_mismatch", "rejected", "rejected_exhausted", "closed_http", "accepted", "establishment_timeout"})
+        for (const auto& scenario :
+             {"invalid_path",      "query",          "normalized_path",      "encoded_path",   "reserved_path",     "invalid_offer",
+              "unsupported_offer", "missing_ice",    "invalid_fingerprint",  "missing_bundle", "invalid_transport", "missing_mid_extension",
+              "transport_failure", "port_exhausted", "startup_failure",      "codec_mismatch", "rejected",          "rejected_exhausted",
+              "closed_http",       "accepted",       "establishment_timeout"})
         {
             admission(true, scenario);
         }

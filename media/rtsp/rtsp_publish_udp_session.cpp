@@ -35,10 +35,7 @@ rtsp_publish_udp_session::rtsp_publish_udp_session(worker_context& worker,
 {
 }
 
-bool rtsp_publish_udp_session::startup(const std::string& session_id)
-{
-    return media_.startup(session_id);
-}
+bool rtsp_publish_udp_session::startup(const std::string& session_id) { return media_.startup(session_id); }
 
 void rtsp_publish_udp_session::run_rtp(std::size_t track_index, boost::asio::yield_context yield)
 {

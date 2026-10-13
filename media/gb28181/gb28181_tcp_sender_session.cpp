@@ -21,9 +21,8 @@ gb28181_tcp_sender_session::gb28181_tcp_sender_session(worker_context& worker, s
 void gb28181_tcp_sender_session::startup(boost::asio::ip::tcp::endpoint remote_endpoint, std::uint8_t payload_type, std::uint32_t ssrc)
 {
     const auto self = shared_from_this();
-    worker_.spawn(
-        [self, remote_endpoint = std::move(remote_endpoint), payload_type, ssrc](boost::asio::yield_context yield) mutable
-        { self->run(std::move(remote_endpoint), payload_type, ssrc, yield); });
+    worker_.spawn([self, remote_endpoint = std::move(remote_endpoint), payload_type, ssrc](boost::asio::yield_context yield) mutable
+                  { self->run(std::move(remote_endpoint), payload_type, ssrc, yield); });
 }
 
 bool gb28181_tcp_sender_session::startup(boost::asio::ip::address bind_address,

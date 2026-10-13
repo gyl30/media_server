@@ -38,7 +38,6 @@ struct media_track
 
     // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig。
     std::vector<std::uint8_t> codec_config;
-
 };
 
 struct media_frame

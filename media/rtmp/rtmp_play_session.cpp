@@ -15,15 +15,16 @@ rtmp_play_session::rtmp_play_session(worker_context& worker,
     : worker_(worker),
       stream_(std::move(stream)),
       packet_handler_(std::move(packet_handler)),
-      muxer_([this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-             {
-                 if (initial_packets_)
-                 {
-                     initial_packets_->push_back(packet{type, {data.begin(), data.end()}, timestamp});
-                     return 0;
-                 }
-                 return packet_handler_(type, data, timestamp);
-             }),
+      muxer_(
+          [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+          {
+              if (initial_packets_)
+              {
+                  initial_packets_->push_back(packet{type, {data.begin(), data.end()}, timestamp});
+                  return 0;
+              }
+              return packet_handler_(type, data, timestamp);
+          }),
       end_handler_(std::move(handle_source_end))
 {
 }

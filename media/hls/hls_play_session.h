@@ -18,15 +18,13 @@ class hls_segmenter;
 class hls_play_session final : public std::enable_shared_from_this<hls_play_session>
 {
    public:
-    [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker,
-                                                                  std::shared_ptr<hls_segmenter> segmenter);
+    [[nodiscard]] static std::shared_ptr<hls_play_session> create(worker_context& worker, std::shared_ptr<hls_segmenter> segmenter);
     [[nodiscard]] static std::shared_ptr<hls_play_session> find(std::string_view secret);
     [[nodiscard]] const std::string& secret() const noexcept { return secret_; }
     [[nodiscard]] const std::shared_ptr<hls_segmenter>& segmenter() const noexcept { return segmenter_; }
 
    private:
-    hls_play_session(
-        worker_context& worker, std::string secret, std::shared_ptr<hls_segmenter> segmenter);
+    hls_play_session(worker_context& worker, std::string secret, std::shared_ptr<hls_segmenter> segmenter);
 
     void wait_for_inactivity();
     void handle_inactivity(const boost::system::error_code& error);

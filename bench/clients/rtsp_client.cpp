@@ -19,7 +19,10 @@ extern "C"
 namespace media_server::bench
 {
 
-rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path) : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path) {}
+rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path)
+    : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path)
+{
+}
 
 rtsp_client::~rtsp_client()
 {

@@ -175,8 +175,8 @@ class media_fanout final
                 throw std::runtime_error("unknown argument " + std::string(argument));
             }
         }
-        if (config.stream_name.empty() == config.play_paths_file.empty() || config.viewers == 0U || config.duration.count() <= 0 || config.warmup.count() < 0 ||
-            config.ramp_per_second == 0U || config.ready_timeout.count() <= 0 || config.progress_interval.count() <= 0)
+        if (config.stream_name.empty() == config.play_paths_file.empty() || config.viewers == 0U || config.duration.count() <= 0 ||
+            config.warmup.count() < 0 || config.ramp_per_second == 0U || config.ready_timeout.count() <= 0 || config.progress_interval.count() <= 0)
         {
             throw std::runtime_error("exactly one of stream-name or play-paths-file, viewers, positive duration and ramp-per-second are required");
         }
@@ -214,9 +214,8 @@ class media_fanout final
 
     static std::uint64_t unix_now_ns()
     {
-        return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                              std::chrono::system_clock::now().time_since_epoch())
-                                              .count());
+        return static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     }
 
     static void abort_ready_viewers(run_state& state)
@@ -250,79 +249,86 @@ class media_fanout final
         if (!state.pre_measurement_abort && state.ready_count == state.config.viewers)
         {
             std::cout << "phase=media_ready ready=" << state.ready_count << std::endl;
-            boost::asio::co_spawn(state.io,
-                media_server::bench::wait_measurement_start(state.io, state.config.start_file, state.config.warmup,
-                                                           state.config.ready_timeout),
+            boost::asio::co_spawn(
+                state.io,
+                media_server::bench::wait_measurement_start(state.io, state.config.start_file, state.config.warmup, state.config.ready_timeout),
                 [&state](std::exception_ptr error, std::chrono::steady_clock::time_point start)
-            {
-                if (error)
                 {
-                    try
+                    if (error)
                     {
-                        std::rethrow_exception(error);
-                    }
-                    catch (const std::exception& failure)
-                    {
-                        record_failure(state, "measurement_barrier", 0);
-                        abort_before_measurement(state, 0, "measurement_barrier", failure.what());
-                    }
-                    return;
-                }
-                if (state.pre_measurement_abort)
-                {
-                    return;
-                }
-                for (std::size_t index = 0; index < state.clients.size(); ++index)
-                {
-                    state.media_before[index] = media_server::bench::sample_media(*state.clients[index]);
-                }
-                state.measurement_started = true;
-                state.measurement_deadline = start + state.config.duration;
-                state.result.measurement_start_monotonic_ns = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-                state.result.measurement_start_unix_ns = unix_now_ns();
-                state.result.measurement_cpu_start = std::clock();
-                auto deadline = std::make_shared<boost::asio::steady_timer>(state.io);
-                deadline->expires_at(state.measurement_deadline);
-                deadline->async_wait([&state, deadline](const boost::system::error_code& deadline_error) {
-                    if (!deadline_error)
-                    {
-                        for (std::size_t index = 0; index < state.clients.size(); ++index)
+                        try
                         {
-                            state.media_after[index] = media_server::bench::sample_media(*state.clients[index]);
+                            std::rethrow_exception(error);
                         }
-                        state.measurement_finished = true;
-                        state.result.measurement_cpu_end = std::clock();
-                        state.result.measurement_end_monotonic_ns = static_cast<std::uint64_t>(
-                            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
-                        state.result.measurement_end_unix_ns = unix_now_ns();
-                        abort_ready_viewers(state);
+                        catch (const std::exception& failure)
+                        {
+                            record_failure(state, "measurement_barrier", 0);
+                            abort_before_measurement(state, 0, "measurement_barrier", failure.what());
+                        }
+                        return;
                     }
+                    if (state.pre_measurement_abort)
+                    {
+                        return;
+                    }
+                    for (std::size_t index = 0; index < state.clients.size(); ++index)
+                    {
+                        state.media_before[index] = media_server::bench::sample_media(*state.clients[index]);
+                    }
+                    state.measurement_started = true;
+                    state.measurement_deadline = start + state.config.duration;
+                    state.result.measurement_start_monotonic_ns = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+                    state.result.measurement_start_unix_ns = unix_now_ns();
+                    state.result.measurement_cpu_start = std::clock();
+                    auto deadline = std::make_shared<boost::asio::steady_timer>(state.io);
+                    deadline->expires_at(state.measurement_deadline);
+                    deadline->async_wait(
+                        [&state, deadline](const boost::system::error_code& deadline_error)
+                        {
+                            if (!deadline_error)
+                            {
+                                for (std::size_t index = 0; index < state.clients.size(); ++index)
+                                {
+                                    state.media_after[index] = media_server::bench::sample_media(*state.clients[index]);
+                                }
+                                state.measurement_finished = true;
+                                state.result.measurement_cpu_end = std::clock();
+                                state.result.measurement_end_monotonic_ns = static_cast<std::uint64_t>(
+                                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+                                state.result.measurement_end_unix_ns = unix_now_ns();
+                                abort_ready_viewers(state);
+                            }
+                        });
+                    state.result.measurement_end_unix_ns =
+                        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                                       std::chrono::system_clock::now().time_since_epoch() + state.config.duration)
+                                                       .count());
+                    std::cout << "phase=measurement_start unix_ns=" << state.result.measurement_start_unix_ns
+                              << " monotonic_ns=" << state.result.measurement_start_monotonic_ns << std::endl;
                 });
-                state.result.measurement_end_unix_ns = static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch() + state.config.duration)
-                        .count());
-                std::cout << "phase=measurement_start unix_ns=" << state.result.measurement_start_unix_ns
-                          << " monotonic_ns=" << state.result.measurement_start_monotonic_ns << std::endl;
-            });
         }
     }
 
     static boost::asio::awaitable<void> run_viewer(std::shared_ptr<run_state> state, std::size_t index)
     {
         const auto started = std::chrono::steady_clock::now();
-        auto client = std::make_shared<Client>(state->io, (state->config.play_paths.empty() ? state->config.stream_name : state->config.play_paths[index]));
+        auto client =
+            std::make_shared<Client>(state->io, (state->config.play_paths.empty() ? state->config.stream_name : state->config.play_paths[index]));
         state->clients[index] = client;
         auto timed_out = std::make_shared<bool>(false);
         boost::asio::steady_timer ready_timer(state->io);
         ready_timer.expires_after(state->config.ready_timeout);
-        ready_timer.async_wait([client, timed_out](const boost::system::error_code& error) {
-            if (!error)
+        ready_timer.async_wait(
+            [client, timed_out](const boost::system::error_code& error)
             {
-                *timed_out = true;
-                client->cancel();
-            }
-        });
+                if (!error)
+                {
+                    *timed_out = true;
+                    client->cancel();
+                }
+            });
         auto play_error = co_await client->play(state->config.media_host, state->config.media_port, !state->config.video_only);
         ready_timer.cancel();
         if (*timed_out)
@@ -332,8 +338,8 @@ class media_fanout final
         if (play_error)
         {
             const auto phase = play_error == boost::system::errc::permission_denied ? "authorization"
-                : client->handshake_complete() ? (play_error == boost::asio::error::timed_out ? "first_media_timeout" : "first_media")
-                : "connect_or_handshake";
+                               : client->handshake_complete() ? (play_error == boost::asio::error::timed_out ? "first_media_timeout" : "first_media")
+                                                              : "connect_or_handshake";
             record_failure(*state, phase, index);
             abort_before_measurement(*state, index, phase, error_text(play_error));
         }
@@ -358,9 +364,14 @@ class media_fanout final
                 if (!measurement_snapshot_taken && state->measurement_started)
                 {
                     measurement_snapshot_taken = true;
-                    boost::asio::co_spawn(state->io, media_server::bench::watch_media(
-                        client, progress_timer, progress, !state->config.video_only, state->config.progress_interval,
-                        state->measurement_deadline), boost::asio::detached);
+                    boost::asio::co_spawn(state->io,
+                                          media_server::bench::watch_media(client,
+                                                                           progress_timer,
+                                                                           progress,
+                                                                           !state->config.video_only,
+                                                                           state->config.progress_interval,
+                                                                           state->measurement_deadline),
+                                          boost::asio::detached);
                 }
                 if (measurement_snapshot_taken && std::chrono::steady_clock::now() >= state->measurement_deadline)
                 {
@@ -403,7 +414,8 @@ class media_fanout final
                     record_failure(*state, "runtime", index);
                     record_runtime_failure(*state, consume_error);
                 }
-                else if (!measurement_snapshot_taken || progress->stalled || after.video_bytes == before.video_bytes || after.video_messages == before.video_messages ||
+                else if (!measurement_snapshot_taken || progress->stalled || after.video_bytes == before.video_bytes ||
+                         after.video_messages == before.video_messages ||
                          (!state->config.video_only && after.audio_messages == before.audio_messages))
                 {
                     record_failure(*state, "non_progressing_media", index);
@@ -468,8 +480,8 @@ class media_fanout final
     static void print_results(const run_state& state)
     {
         const auto& result = state.result;
-        std::cout << "phase=measurement requested=" << state.config.viewers << " connected=" << result.connected
-                  << " ready=" << result.ready << " progressing=" << result.progressing << " failed=" << result.failures
+        std::cout << "phase=measurement requested=" << state.config.viewers << " connected=" << result.connected << " ready=" << result.ready
+                  << " progressing=" << result.progressing << " failed=" << result.failures
                   << " pre_measurement_failures=" << result.pre_measurement_failures << " trigger_failures=" << result.trigger_failures
                   << " pre_measurement_abort_viewers=" << result.pre_measurement_abort_viewers
                   << " collateral_aborted_viewers=" << result.collateral_aborted_viewers << " runtime_failures=" << result.runtime_failures
@@ -492,8 +504,9 @@ class media_fanout final
                   << " measurement_end_monotonic_ns=" << result.measurement_end_monotonic_ns
                   << " measurement_end_unix_ns=" << result.measurement_end_unix_ns << " measurement_started=" << (state.measurement_started ? 1 : 0)
                   << " client_cpu_cores="
-                  << (state.measurement_started ? static_cast<double>((state.measurement_finished ? result.measurement_cpu_end : std::clock()) - result.measurement_cpu_start) /
-                                                        static_cast<double>(CLOCKS_PER_SEC) / static_cast<double>(state.config.duration.count())
+                  << (state.measurement_started ? static_cast<double>((state.measurement_finished ? result.measurement_cpu_end : std::clock()) -
+                                                                      result.measurement_cpu_start) /
+                                                      static_cast<double>(CLOCKS_PER_SEC) / static_cast<double>(state.config.duration.count())
                                                 : 0.0)
                   << " trigger_viewer=" << state.trigger_viewer << " trigger_unix_ns=" << result.trigger_unix_ns << '\n';
         std::cout << "trigger_failure_phase=" << result.trigger_failure_phase << '\n';

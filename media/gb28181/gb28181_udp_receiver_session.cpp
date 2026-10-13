@@ -25,7 +25,8 @@ gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worke
                                                            std::string stream_id,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
-    : worker_(worker), receiver_(worker_, std::move(stream_id), payload_type, ssrc),
+    : worker_(worker),
+      receiver_(worker_, std::move(stream_id), payload_type, ssrc),
       rtp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_transport_(std::make_shared<udp_transport>(worker_.io())),
       rtcp_timer_(worker_.io()),
@@ -82,8 +83,7 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
                           shutdown();
                       });
 
-    spdlog::info(
-        "gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_id(), *local_port_, *local_port_ + 1U);
+    spdlog::info("gb28181 udp session started stream {} rtp_port {} rtcp_port {}", receiver_.stream_id(), *local_port_, *local_port_ + 1U);
     return local_port_;
 }
 

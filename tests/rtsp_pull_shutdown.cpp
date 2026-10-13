@@ -55,63 +55,68 @@ void close_during_resolve(bool replace)
     tcp::acceptor upstream(worker.io(), {address, 0});
     const auto port = upstream.local_endpoint().port();
     const std::string stream_id = "verify/rtsp-resolve-shutdown";
-    auto receiver = std::make_shared<rtsp_pull_session>(
-        worker, rtsp_pull_config{.stream_id = stream_id,
-                                 .url = "rtsp://" + std::string(test_host) + ":" + std::to_string(port) + "/source",
-                                 .host = std::string(test_host),
-                                 .port = port,
-                                 .username = {},
-                                 .password = {}});
+    auto receiver =
+        std::make_shared<rtsp_pull_session>(worker,
+                                            rtsp_pull_config{.stream_id = stream_id,
+                                                             .url = "rtsp://" + std::string(test_host) + ":" + std::to_string(port) + "/source",
+                                                             .host = std::string(test_host),
+                                                             .port = port,
+                                                             .username = {},
+                                                             .password = {}});
     const std::weak_ptr<rtsp_pull_session> lifetime = receiver;
     std::shared_ptr<rtsp_pull_session> replacement;
     std::shared_ptr<tcp::socket> peer;
     bool connected{};
     bool described{};
     std::string request;
-    boost::scope::scope_exit cleanup([&]()
-    {
+    boost::scope::scope_exit cleanup(
+        [&]()
         {
-            std::scoped_lock lock(resolve_mutex);
-            release_resolve = true;
-        }
-        resolve_event.notify_all();
-        boost::system::error_code error;
-        upstream.close(error);
-        if (peer)
+            {
+                std::scoped_lock lock(resolve_mutex);
+                release_resolve = true;
+            }
+            resolve_event.notify_all();
+            boost::system::error_code error;
+            upstream.close(error);
+            if (peer)
+            {
+                peer->close(error);
+            }
+            if (const auto remaining = lifetime.lock())
+            {
+                remaining->shutdown();
+            }
+            if (replacement)
+            {
+                session_registry::instance().remove_receiver_session(stream_id, *replacement);
+                replacement->shutdown();
+                replacement.reset();
+            }
+            receiver.reset();
+            worker.request_stop();
+            worker.io().restart();
+            worker.io().run_for(1s);
+        });
+    upstream.async_accept(
+        [&](boost::system::error_code error, tcp::socket socket)
         {
-            peer->close(error);
-        }
-        if (const auto remaining = lifetime.lock())
-        {
-            remaining->shutdown();
-        }
-        if (replacement)
-        {
-            session_registry::instance().remove_receiver_session(stream_id, *replacement);
-            replacement->shutdown();
-            replacement.reset();
-        }
-        receiver.reset();
-        worker.request_stop();
-        worker.io().restart();
-        worker.io().run_for(1s);
-    });
-    upstream.async_accept([&](boost::system::error_code error, tcp::socket socket)
-    {
-        if (error)
-        {
-            return;
-        }
-        connected = true;
-        peer = std::make_shared<tcp::socket>(std::move(socket));
-        boost::asio::async_read_until(*peer, boost::asio::dynamic_buffer(request, 8192), "\r\n\r\n",
-                                     [&](boost::system::error_code read_error, std::size_t)
-                                     {
-                                         described = !read_error && request.starts_with("DESCRIBE ");
-                                         boost::system::error_code close_error;
-                                         peer->close(close_error);
-                                     });
-    });
+            if (error)
+            {
+                return;
+            }
+            connected = true;
+            peer = std::make_shared<tcp::socket>(std::move(socket));
+            boost::asio::async_read_until(*peer,
+                                          boost::asio::dynamic_buffer(request, 8192),
+                                          "\r\n\r\n",
+                                          [&](boost::system::error_code read_error, std::size_t)
+                                          {
+                                              described = !read_error && request.starts_with("DESCRIBE ");
+                                              boost::system::error_code close_error;
+                                              peer->close(close_error);
+                                          });
+        });
     require(session_registry::instance().add_receiver_session(stream_id, receiver), "pull shutdown registration failed");
     boost::asio::post(worker.io(), [receiver]() { receiver->startup(); });
     worker.io().poll();
@@ -124,19 +129,18 @@ void close_during_resolve(bool replace)
     auto cleanup_barrier = cleaned.get_future();
     boost::asio::post(worker.io(), [&]() { cleaned.set_value(); });
     worker.io().poll();
-    require(cleanup_barrier.wait_for(0s) == std::future_status::ready &&
-                !session_registry::instance().find_receiver_session(stream_id),
+    require(cleanup_barrier.wait_for(0s) == std::future_status::ready && !session_registry::instance().find_receiver_session(stream_id),
             "pull safe_shutdown did not run before resolver release");
     receiver.reset();
     if (replace)
     {
-        replacement = std::make_shared<rtsp_pull_session>(
-            worker, rtsp_pull_config{.stream_id = stream_id,
-                                     .url = "rtsp://127.0.0.1:" + std::to_string(port) + "/replacement",
-                                     .host = "127.0.0.1",
-                                     .port = port,
-                                     .username = {},
-                                     .password = {}});
+        replacement = std::make_shared<rtsp_pull_session>(worker,
+                                                          rtsp_pull_config{.stream_id = stream_id,
+                                                                           .url = "rtsp://127.0.0.1:" + std::to_string(port) + "/replacement",
+                                                                           .host = "127.0.0.1",
+                                                                           .port = port,
+                                                                           .username = {},
+                                                                           .password = {}});
         require(session_registry::instance().add_receiver_session(stream_id, replacement), "replacement pull registration failed");
     }
     {
@@ -178,27 +182,29 @@ void close_during_play(bool late_response)
     bool received{};
     boost::system::error_code peer_error;
     std::string request;
-    boost::scope::scope_exit cleanup([&]()
-    {
-        if (auto remaining = session_registry::instance().take_receiver_session(stream_id))
+    boost::scope::scope_exit cleanup(
+        [&]()
         {
-            remaining->shutdown();
-        }
-        receiver.reset();
-        boost::system::error_code error;
-        peer.close(error);
-        upstream.close(error);
-        peer_io.restart();
-        peer_io.poll();
-        worker.request_stop();
-        worker.io().restart();
-        worker.io().run_for(1s);
-    });
-    upstream.async_accept(peer, [&](boost::system::error_code error)
-    {
-        peer_error = error;
-        accepted = true;
-    });
+            if (auto remaining = session_registry::instance().take_receiver_session(stream_id))
+            {
+                remaining->shutdown();
+            }
+            receiver.reset();
+            boost::system::error_code error;
+            peer.close(error);
+            upstream.close(error);
+            peer_io.restart();
+            peer_io.poll();
+            worker.request_stop();
+            worker.io().restart();
+            worker.io().run_for(1s);
+        });
+    upstream.async_accept(peer,
+                          [&](boost::system::error_code error)
+                          {
+                              peer_error = error;
+                              accepted = true;
+                          });
     require(session_registry::instance().add_receiver_session(stream_id, receiver), "PLAY pull registration failed");
     boost::asio::post(worker.io(), [receiver]() { receiver->startup(); });
     const auto deadline = std::chrono::steady_clock::now() + 3s;
@@ -216,12 +222,14 @@ void close_during_play(bool late_response)
     {
         received = false;
         peer_io.restart();
-        boost::asio::async_read_until(peer, boost::asio::dynamic_buffer(request, 8192), "\r\n\r\n",
-                                     [&](boost::system::error_code error, std::size_t)
-                                     {
-                                         peer_error = error;
-                                         received = true;
-                                     });
+        boost::asio::async_read_until(peer,
+                                      boost::asio::dynamic_buffer(request, 8192),
+                                      "\r\n\r\n",
+                                      [&](boost::system::error_code error, std::size_t)
+                                      {
+                                          peer_error = error;
+                                          received = true;
+                                      });
         while (!received)
         {
             require(std::chrono::steady_clock::now() < deadline, "RTSP negotiation timed out");
@@ -236,8 +244,8 @@ void close_during_play(bool late_response)
         std::string response = "RTSP/1.0 200 OK\r\n" + request.substr(cseq_begin, cseq_end - cseq_begin) + "\r\n";
         if (method == "DESCRIBE")
         {
-            response += "Content-Type: application/sdp\r\nContent-Base: " + url +
-                        "/\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
+            response +=
+                "Content-Type: application/sdp\r\nContent-Base: " + url + "/\r\nContent-Length: " + std::to_string(sdp.size()) + "\r\n\r\n" + sdp;
         }
         else if (method == "SETUP")
         {
@@ -257,8 +265,7 @@ void close_during_play(bool late_response)
         if (!late_response)
         {
             worker.io().poll();
-            require(session_registry::instance().find_receiver_session(stream_id) == receiver,
-                    "normal PLAY response terminated the receiver");
+            require(session_registry::instance().find_receiver_session(stream_id) == receiver, "normal PLAY response terminated the receiver");
         }
         // 与控制删除路径相同：移出注册表并投递父关闭，已可读的 PLAY 响应仍等待 owner 处理。
         auto detached = session_registry::instance().take_receiver_session(stream_id);

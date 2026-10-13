@@ -18,10 +18,7 @@ namespace media_server
 {
 
 http_flv_session::http_flv_session(worker_context& worker, boost::beast::tcp_stream stream, request_type request, const config& application_config)
-    : worker_(worker),
-      stream_(std::move(stream)),
-      request_(std::move(request)),
-      config_(application_config)
+    : worker_(worker), stream_(std::move(stream)), request_(std::move(request)), config_(application_config)
 {
 }
 
@@ -110,9 +107,8 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "flv writer unavailable\n", yield);
         return;
     }
-    muxer_.emplace(
-        [this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-        { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); });
+    muxer_.emplace([this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
+                   { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); });
     for (const auto& track : media_stream->tracks())
     {
         if (track.kind == media_kind::video)

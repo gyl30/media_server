@@ -157,9 +157,6 @@ void session_registry::shutdown_all()
     }
 }
 
-bool session_registry::empty(const session_entry& entry)
-{
-    return !entry.receiver && entry.sender_sessions.empty();
-}
+bool session_registry::empty(const session_entry& entry) { return !entry.receiver && entry.sender_sessions.empty(); }
 
 }    // namespace media_server

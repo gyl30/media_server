@@ -25,8 +25,10 @@ constexpr auto ice_activity_timeout = std::chrono::seconds{30};
 
 }    // namespace
 
-whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream> stream,
-                           std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
+whep_session::whep_session(worker_context& worker,
+                           std::shared_ptr<media_stream> stream,
+                           std::shared_ptr<udp_transport> transport,
+                           webrtc_answer_config config)
     : worker_(worker),
       stream_(std::move(stream)),
       udp_transport_(std::move(transport)),
@@ -40,8 +42,7 @@ whep_session::whep_session(worker_context& worker, std::shared_ptr<media_stream>
 {
 }
 
-bool whep_session::startup(const webrtc_media_offer& transport_offer,
-                           const webrtc_answer& answer, const dtls_certificate& certificate)
+bool whep_session::startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate)
 {
     const auto self = shared_from_this();
     udp_transport_->set_write_callback(
@@ -87,22 +88,20 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer,
         stream_ = audio_egress_->output_stream();
     }
 
-    packetizer_ = std::make_unique<webrtc_packetizer>(
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
-        [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
-    if (!packetizer_->startup(
-        stream_->tracks(),
-        webrtc_packetizer_config{
-            .video_codec = answer.video_codec.value_or(codec_id::h264),
-            .audio_codec = audio_egress_ ? codec_id::opus : answer.audio_codec.value_or(codec_id::aac),
-            .video_payload_type = answer.video_payload_type.value_or(-1),
-            .audio_payload_type = answer.audio_payload_type.value_or(-1),
-            .video_mid = answer.video_mid.value_or(""),
-            .audio_mid = answer.audio_mid.value_or(""),
-            .video_mid_extension_id = answer.video_mid_extension_id.value_or(-1),
-            .audio_mid_extension_id = answer.audio_mid_extension_id.value_or(-1),
-            .rtcp_cname = id_,
-        }))
+    packetizer_ = std::make_unique<webrtc_packetizer>([self](std::span<const std::uint8_t> packet) { return self->send_rtp(packet); },
+                                                      [self](std::span<const std::uint8_t> packet) { return self->send_rtcp(packet); });
+    if (!packetizer_->startup(stream_->tracks(),
+                              webrtc_packetizer_config{
+                                  .video_codec = answer.video_codec.value_or(codec_id::h264),
+                                  .audio_codec = audio_egress_ ? codec_id::opus : answer.audio_codec.value_or(codec_id::aac),
+                                  .video_payload_type = answer.video_payload_type.value_or(-1),
+                                  .audio_payload_type = answer.audio_payload_type.value_or(-1),
+                                  .video_mid = answer.video_mid.value_or(""),
+                                  .audio_mid = answer.audio_mid.value_or(""),
+                                  .video_mid_extension_id = answer.video_mid_extension_id.value_or(-1),
+                                  .audio_mid_extension_id = answer.audio_mid_extension_id.value_or(-1),
+                                  .rtcp_cname = id_,
+                              }))
     {
         return false;
     }

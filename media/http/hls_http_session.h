@@ -32,11 +32,8 @@ class hls_http_session final : public std::enable_shared_from_this<hls_http_sess
    private:
     void handle_request(boost::asio::yield_context yield);
     void send_redirect(std::string location);
-    void send_text_response(boost::beast::http::status status,
-                            std::string_view content_type,
-                            std::string body,
-                            bool keep_alive,
-                            std::string_view allow = {});
+    void send_text_response(
+        boost::beast::http::status status, std::string_view content_type, std::string body, bool keep_alive, std::string_view allow = {});
     void send_binary_response(boost::beast::http::status status,
                               std::string_view content_type,
                               std::shared_ptr<const std::vector<std::uint8_t>> body,

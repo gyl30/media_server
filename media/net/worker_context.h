@@ -101,12 +101,7 @@ class worker_context final
             std::move(function),
             boost::asio::bind_cancellation_slot(
                 task_iterator->cancellation.slot(),
-                boost::asio::bind_executor(
-                    io_.get_executor(),
-                    [this, task_iterator](std::exception_ptr)
-                    {
-                        tasks_.erase(task_iterator);
-                    })));
+                boost::asio::bind_executor(io_.get_executor(), [this, task_iterator](std::exception_ptr) { tasks_.erase(task_iterator); })));
     }
 
     void unsubscribe_shutdown(shutdown_callback_list::iterator iterator);

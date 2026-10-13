@@ -29,11 +29,8 @@ namespace
 constexpr std::chrono::seconds accept_retry_interval{3};
 
 template <typename StartSession>
-bool start_tcp_listener(worker_pool& workers,
-                        boost::asio::ip::address bind_address,
-                        std::uint16_t port,
-                        StartSession start_session,
-                        boost::system::error_code& error)
+bool start_tcp_listener(
+    worker_pool& workers, boost::asio::ip::address bind_address, std::uint16_t port, StartSession start_session, boost::system::error_code& error)
 {
     auto& listener_worker = workers.next();
     auto listener = std::make_shared<tcp_listener>(listener_worker.io());

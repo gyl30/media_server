@@ -13,11 +13,8 @@ namespace
 
 constexpr int whep_retry_after_seconds = 1;
 
-whep_http_string_response make_string_response(const whep_http_request& request,
-                                               boost::beast::http::status status,
-                                               std::string_view content_type,
-                                               std::string body,
-                                               std::string_view allow = {})
+whep_http_string_response make_string_response(
+    const whep_http_request& request, boost::beast::http::status status, std::string_view content_type, std::string body, std::string_view allow = {})
 {
     whep_http_string_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
@@ -71,14 +68,13 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
     return make_empty_response(request, boost::beast::http::status::no_content);
 }
 
-whep_http_string_response handle_whep_post(
-    const whep_http_request& request,
-    worker_context& worker,
-    std::string_view stream_id,
-    std::string_view token,
-    const config& application_config,
-    const boost::asio::ip::tcp::socket& socket,
-    boost::asio::yield_context yield)
+whep_http_string_response handle_whep_post(const whep_http_request& request,
+                                           worker_context& worker,
+                                           std::string_view stream_id,
+                                           std::string_view token,
+                                           const config& application_config,
+                                           const boost::asio::ip::tcp::socket& socket,
+                                           boost::asio::yield_context yield)
 {
     auto stream = stream_registry::instance().find(stream_id);
     if (!stream)
@@ -165,7 +161,8 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
         const auto content_type = request[boost::beast::http::field::content_type];
         if (!boost::beast::iequals(content_type, "application/sdp"))
         {
-            return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+            return make_string_response(
+                request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
         return handle_whep_post(request, worker, first, second, application_config, socket, yield);
     }

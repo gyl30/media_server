@@ -32,9 +32,7 @@ void tcp_listener::startup(const boost::asio::ip::address& bind_address, std::ui
     }
 }
 
-void tcp_listener::accept(boost::asio::ip::tcp::socket& socket,
-                          boost::asio::yield_context& yield,
-                          boost::system::error_code& error)
+void tcp_listener::accept(boost::asio::ip::tcp::socket& socket, boost::asio::yield_context& yield, boost::system::error_code& error)
 {
     error.clear();
     acceptor_.async_accept(socket, yield[error]);

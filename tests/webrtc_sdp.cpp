@@ -54,7 +54,11 @@ void check(const negotiation_case& item)
     track.codec = codec_id::h264;
     track.clock_rate = 90'000;
     // SDP selection reads the SPS profile/constraint/level bytes, not encoded media.
-    track.codec_config = {0, 0, 0, 1, 0x67,
+    track.codec_config = {0,
+                          0,
+                          0,
+                          1,
+                          0x67,
                           static_cast<std::uint8_t>(item.source_profile_level >> 16U),
                           static_cast<std::uint8_t>(item.source_profile_level >> 8U),
                           static_cast<std::uint8_t>(item.source_profile_level)};
@@ -77,8 +81,8 @@ void check(const negotiation_case& item)
     }
     else
     {
-        if (!answer || answer->video_codec != codec_id::h264 || answer->video_payload_type != item.payload_type ||
-            answer->video_mid != "0" || answer->transport_mid != "0" ||
+        if (!answer || answer->video_codec != codec_id::h264 || answer->video_payload_type != item.payload_type || answer->video_mid != "0" ||
+            answer->transport_mid != "0" ||
             answer->sdp.find(std::string("profile-level-id=") + item.expected_profile_level + "\r\n") == std::string::npos)
         {
             throw std::runtime_error(std::string(item.name) + ": missing answer or source profile/level changed");
@@ -108,15 +112,15 @@ void check_opus(const opus_case& item)
     media.mid_extension_id = 4;
     media.formats = {"111"};
     media.payload_types = {111};
-    media.codecs = {webrtc_codec_offer{.payload_type = 111, .encoding_name = "opus", .clock_rate = 48'000, .channel_count = 2,
-                                       .format_parameters = item.format_parameters}};
+    media.codecs = {webrtc_codec_offer{
+        .payload_type = 111, .encoding_name = "opus", .clock_rate = 48'000, .channel_count = 2, .format_parameters = item.format_parameters}};
 
     webrtc_offer offer;
     offer.bundle_mids = {"0"};
     offer.media = {media};
 
-    const media_track track{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000,
-                            .channel_count = item.source_channels, .codec_config = {}};
+    const media_track track{
+        .id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = item.source_channels, .codec_config = {}};
     webrtc_answer_config config;
     config.address = boost::asio::ip::make_address("127.0.0.1");
     config.port = 49000;
@@ -133,7 +137,7 @@ void check_opus(const opus_case& item)
     }
     std::cout << item.name << ": PASS\n";
 }
-}
+}    // namespace
 
 int main()
 {

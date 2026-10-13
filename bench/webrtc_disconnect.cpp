@@ -15,7 +15,7 @@ int main(int argc, char** argv)
     boost::asio::io_context io;
     auto context = media_server::bench::webrtc_client_context::create();
     const auto direction = std::string(argv[1]) == "publish" ? media_server::bench::webrtc_client_direction::publish
-                                                           : media_server::bench::webrtc_client_direction::play;
+                                                             : media_server::bench::webrtc_client_direction::play;
     std::cout << context->make_offer(direction) << "phase=offer_ready" << std::endl;
     const std::string answer{std::istreambuf_iterator<char>(std::cin), {}};
     auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(io, context, boost::asio::ip::address_v4::any());

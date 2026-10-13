@@ -114,8 +114,8 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
     }
     const bool started = config.transport == gb28181_transport::tcp_active
-        ? session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port})
-        : session->startup(std::move(bind_address), config.listen_port);
+                             ? session->startup(boost::asio::ip::tcp::endpoint{std::move(config.remote_address), config.remote_port})
+                             : session->startup(std::move(bind_address), config.listen_port);
     if (!started)
     {
         session->shutdown();
@@ -144,12 +144,11 @@ gb28181_http_response handle_sender_create(const gb28181_http_request& request,
         {
             remote_rtcp_endpoint.emplace(config.remote_address, *config.remote_rtcp_port);
         }
-        auto session = std::make_shared<gb28181_udp_sender_session>(
-            worker,
-            stream,
-            sender_id,
-            boost::asio::ip::udp::endpoint{config.remote_address, config.remote_rtp_port},
-            std::move(remote_rtcp_endpoint));
+        auto session = std::make_shared<gb28181_udp_sender_session>(worker,
+                                                                    stream,
+                                                                    sender_id,
+                                                                    boost::asio::ip::udp::endpoint{config.remote_address, config.remote_rtp_port},
+                                                                    std::move(remote_rtcp_endpoint));
         if (!session_registry::instance().add_sender_session(stream_id, sender_id, session))
         {
             session->shutdown();

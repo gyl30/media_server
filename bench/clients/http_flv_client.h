@@ -37,8 +37,7 @@ class http_flv_client final
 
    private:
     boost::asio::awaitable<boost::system::error_code> read_exact(std::span<std::uint8_t> data);
-    static int media_callback(void* param, int codec, const void* data, std::size_t bytes,
-                              std::uint32_t pts, std::uint32_t dts, int flags);
+    static int media_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;

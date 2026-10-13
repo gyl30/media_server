@@ -27,12 +27,10 @@ class worker_context;
 class whip_session final : public session, public std::enable_shared_from_this<whip_session>
 {
    public:
-    whip_session(worker_context& worker, std::string stream_id,
-                 std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
+    whip_session(worker_context& worker, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
 
    public:
-    [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer,
-                               const webrtc_answer& answer, const dtls_certificate& certificate);
+    [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate);
     void shutdown() override;
 
    public:

@@ -77,8 +77,8 @@ struct ps_sink final : mpeg_ps_sink
     void on_ps_frame(const mpeg_ps_frame& frame) override
     {
         const auto& payload = frame.payload;
-        records->valid_payloads = records->valid_payloads && payload && payload->size() >= 4 &&
-                                  (*payload)[0] == 0 && (*payload)[1] == 0 && (*payload)[2] == 1 && (*payload)[3] == 0xba;
+        records->valid_payloads = records->valid_payloads && payload && payload->size() >= 4 && (*payload)[0] == 0 && (*payload)[1] == 0 &&
+                                  (*payload)[2] == 1 && (*payload)[3] == 0xba;
         records->frame(frame.pts_ns, payload);
     }
     void on_end() override { records->end(); }
@@ -95,18 +95,19 @@ struct fixture
     explicit fixture(worker_context& owner)
     {
         const std::vector<std::uint8_t> config{
-            0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f, 0x97, 0x01, 0x6e, 0x40,
-            0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80,
+            0, 0, 0, 1, 0x67, 0x42, 0xc0, 0x1f, 0xda, 0x01, 0xe0, 0x08, 0x9f, 0x97, 0x01, 0x6e, 0x40, 0, 0, 0, 1, 0x68, 0xce, 0x3c, 0x80,
         };
         auto key = config;
         key.insert(key.end(), {0, 0, 0, 1, 0x65});
         key.resize(160, 0x55);
         payload = std::make_shared<const std::vector<std::uint8_t>>(std::move(key));
-        on_owner(owner, [&]()
+        on_owner(owner,
+                 [&]()
                  {
                      source = std::make_shared<media_stream>("verify/fanout", owner);
-                     require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
-                                                 .clock_rate = 90000, .codec_config = config}}), "fanout tracks rejected");
+                     require(source->set_tracks(
+                                 {{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90000, .codec_config = config}}),
+                             "fanout tracks rejected");
                      if constexpr (Ps)
                      {
                          output = source->ps_output();
@@ -155,7 +156,8 @@ void inline_delivery_and_validation()
     fixture<Ps> live(owner);
     auto sink = std::make_shared<typename fixture<Ps>::sink_type>(owner);
     auto late = std::make_shared<typename fixture<Ps>::sink_type>(owner);
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.add(sink);
                  live.publish(1);
@@ -194,7 +196,8 @@ void grouped_delivery_and_end()
         sinks.push_back(std::make_shared<typename fixture<Ps>::sink_type>(*worker));
         live.add(sinks.back());
     }
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.publish(1);
                  live.publish(2);
@@ -215,8 +218,8 @@ void grouped_delivery_and_end()
         require(sink->records->events == std::vector<std::int64_t>{1, 2, 3, -1}, "frame/end ordering changed");
         require(sink->records->valid_payloads, "invalid PS frame in cross-worker delivery");
     }
-    require(sinks[0]->records->payloads == sinks[1]->records->payloads &&
-            sinks[1]->records->payloads == sinks[2]->records->payloads, "group fanout copied payload bytes");
+    require(sinks[0]->records->payloads == sinks[1]->records->payloads && sinks[1]->records->payloads == sinks[2]->records->payloads,
+            "group fanout copied payload bytes");
 }
 
 template <bool Ps>
@@ -239,7 +242,8 @@ void expired_and_removed_sinks()
     auto survivor = std::make_shared<typename fixture<Ps>::sink_type>(target);
     const auto removed_records = removed->records;
     const std::weak_ptr<typename fixture<Ps>::sink_type> removed_weak = removed;
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.add(removed);
                  live.add(survivor);
@@ -270,7 +274,8 @@ void remove_after_snapshot()
     std::promise<void> release;
     blocker->records->entered = &entered;
     blocker->records->release = release.get_future().share();
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.add(blocker);
                  live.add(removed);
@@ -280,7 +285,8 @@ void remove_after_snapshot()
     try
     {
         require(entered_future.wait_for(5s) == std::future_status::ready, "snapshot callback did not start");
-        on_owner(owner, [&]()
+        on_owner(owner,
+                 [&]()
                  {
                      live.remove(removed.get());
                      live.end();
@@ -310,7 +316,8 @@ void boundary_and_overflow()
         worker_context target;
         fixture<Ps> live(owner);
         auto sink = std::make_shared<typename fixture<Ps>::sink_type>(target);
-        on_owner(owner, [&]()
+        on_owner(owner,
+                 [&]()
                  {
                      live.add(sink);
                      for (std::int64_t frame = 1; frame <= 2500; ++frame)
@@ -335,7 +342,8 @@ void boundary_and_overflow()
     auto slow_sink = std::make_shared<typename fixture<Ps>::sink_type>(slow);
     auto fast_sink = std::make_shared<typename fixture<Ps>::sink_type>(fast);
     auto other_sink = std::make_shared<typename fixture<Ps>::sink_type>(other);
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.add(slow_sink);
                  live.add(fast_sink);
@@ -348,7 +356,8 @@ void boundary_and_overflow()
     }
     require(slow.io().poll() == 1, "overflow changed scheduled drain count");
     require(slow_sink->records->events == std::vector<std::int64_t>{-1}, "overflow did not clear pending and end group");
-    on_owner(owner, [&]()
+    on_owner(owner,
+             [&]()
              {
                  live.publish(2503);
                  live.end();

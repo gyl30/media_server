@@ -258,8 +258,7 @@ int rtsp_publish_session::on_record(rtsp_server_t* server, std::string_view, std
     return -1;
 }
 
-int rtsp_publish_session::on_tcp_setup(
-    rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport)
+int rtsp_publish_session::on_tcp_setup(rtsp_server_t* server, std::size_t track_index, const rtsp_header_transport_t& transport)
 {
     if (tcp_track_states_[track_index].rtp_channel >= 0)
     {

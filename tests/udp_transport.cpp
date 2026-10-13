@@ -78,32 +78,37 @@ void serialization_and_endpoints()
     require(!error, "UDP connect failed");
     std::size_t completions{};
     std::size_t received{};
-    sender->set_write_callback([&](boost::system::error_code result, std::size_t bytes)
-                              {
-                                  require(!result && bytes == 21U + completions, "completion order/size corrupted");
-                                  ++completions;
-                              });
+    sender->set_write_callback(
+        [&](boost::system::error_code result, std::size_t bytes)
+        {
+            require(!result && bytes == 21U + completions, "completion order/size corrupted");
+            ++completions;
+        });
     for (std::size_t peer = 0; peer < receivers.size(); ++peer)
     {
-        boost::asio::spawn(io, [&, peer](boost::asio::yield_context yield)
-                          {
-                              std::array<std::uint8_t, 128> buffer{};
-                              udp::endpoint remote;
-                              for (std::size_t sequence = peer; sequence < 40; sequence += 2)
-                              {
-                                  boost::system::error_code read_error;
-                                  const auto bytes = receivers[peer]->read(buffer, remote, yield, read_error);
-                                  require(!read_error && remote == origin, "datagram endpoint changed");
-                                  require(bytes == 21U + sequence, "datagram split/merged/reordered");
-                                  for (std::size_t index = 0; index < bytes; ++index)
-                                  {
-                                      require(buffer[index] == sequence, "datagram buffer corrupted");
-                                  }
-                                  ++received;
-                              }
-                          }, rethrow);
+        boost::asio::spawn(
+            io,
+            [&, peer](boost::asio::yield_context yield)
+            {
+                std::array<std::uint8_t, 128> buffer{};
+                udp::endpoint remote;
+                for (std::size_t sequence = peer; sequence < 40; sequence += 2)
+                {
+                    boost::system::error_code read_error;
+                    const auto bytes = receivers[peer]->read(buffer, remote, yield, read_error);
+                    require(!read_error && remote == origin, "datagram endpoint changed");
+                    require(bytes == 21U + sequence, "datagram split/merged/reordered");
+                    for (std::size_t index = 0; index < bytes; ++index)
+                    {
+                        require(buffer[index] == sequence, "datagram buffer corrupted");
+                    }
+                    ++received;
+                }
+            },
+            rethrow);
     }
-    boost::asio::post(io, [&]()
+    boost::asio::post(io,
+                      [&]()
                       {
                           for (std::size_t sequence = 0; sequence < 40; ++sequence)
                           {
@@ -139,7 +144,8 @@ void in_flight_shutdown()
         std::size_t completions{};
         sender->set_write_callback([&, callback_owner](boost::system::error_code, std::size_t) { ++completions; });
         callback_owner.reset();
-        boost::asio::post(io, [&]()
+        boost::asio::post(io,
+                          [&]()
                           {
                               for (std::uint8_t sequence = 0; sequence < 3; ++sequence)
                               {
@@ -183,36 +189,41 @@ void overflow_and_reentrant_write()
     std::size_t completed{};
     std::size_t rejections{};
     std::size_t received{};
-    sender->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
-                              {
-                                  require(!error && bytes == (completed < 32 ? 32'768U : 257U), "overflow damaged existing queue");
-                                  ++completed;
-                                  if (completed == 32)
-                                  {
-                                      require(sender->write(std::vector<std::uint8_t>(257, 32), endpoint), "overflow stopped writer");
-                                  }
-                                  if (completed == 33)
-                                  {
-                                      sender->shutdown();
-                                  }
-                              });
-    boost::asio::spawn(io, [&](boost::asio::yield_context yield)
-                      {
-                          std::array<std::uint8_t, 65'536> buffer{};
-                          udp::endpoint remote;
-                          for (std::uint8_t sequence = 0; sequence < 33; ++sequence)
-                          {
-                              boost::system::error_code error;
-                              const auto bytes = receiver->read(buffer, remote, yield, error);
-                              require(!error && bytes == (sequence < 32 ? 32'768U : 257U), "overflow lost accepted datagram");
-                              for (std::size_t index = 0; index < bytes; ++index)
-                              {
-                                  require(buffer[index] == sequence, "overflow corrupted packet/order");
-                              }
-                              ++received;
-                          }
-                      }, rethrow);
-    boost::asio::post(io, [&]()
+    sender->set_write_callback(
+        [&](boost::system::error_code error, std::size_t bytes)
+        {
+            require(!error && bytes == (completed < 32 ? 32'768U : 257U), "overflow damaged existing queue");
+            ++completed;
+            if (completed == 32)
+            {
+                require(sender->write(std::vector<std::uint8_t>(257, 32), endpoint), "overflow stopped writer");
+            }
+            if (completed == 33)
+            {
+                sender->shutdown();
+            }
+        });
+    boost::asio::spawn(
+        io,
+        [&](boost::asio::yield_context yield)
+        {
+            std::array<std::uint8_t, 65'536> buffer{};
+            udp::endpoint remote;
+            for (std::uint8_t sequence = 0; sequence < 33; ++sequence)
+            {
+                boost::system::error_code error;
+                const auto bytes = receiver->read(buffer, remote, yield, error);
+                require(!error && bytes == (sequence < 32 ? 32'768U : 257U), "overflow lost accepted datagram");
+                for (std::size_t index = 0; index < bytes; ++index)
+                {
+                    require(buffer[index] == sequence, "overflow corrupted packet/order");
+                }
+                ++received;
+            }
+        },
+        rethrow);
+    boost::asio::post(io,
+                      [&]()
                       {
                           for (std::uint8_t sequence = 0; sequence < 32; ++sequence)
                           {
@@ -240,25 +251,28 @@ void socket_error_and_reconstruction()
     const std::weak_ptr<int> callback_lifetime = callback_owner;
     std::size_t errors{};
     bool owner_closed{};
-    sender->set_write_callback([&, callback_owner](boost::system::error_code error, std::size_t bytes)
+    sender->set_write_callback(
+        [&, callback_owner](boost::system::error_code error, std::size_t bytes)
+        {
+            require(error == boost::asio::error::message_size && bytes == 0, "real send error not propagated");
+            ++errors;
+            require(address(sender).port() != 0, "send error closed socket before owner shutdown");
+            require(sender->write(std::vector<std::uint8_t>{3}, endpoint), "send error made transport terminal before owner shutdown");
+            // 上层稍后关闭；失败包仍在队首，因此新包也不能开始发送。
+            boost::asio::post(io,
+                              [&]()
                               {
-                                  require(error == boost::asio::error::message_size && bytes == 0, "real send error not propagated");
-                                  ++errors;
-                                  require(address(sender).port() != 0, "send error closed socket before owner shutdown");
-                                  require(sender->write(std::vector<std::uint8_t>{3}, endpoint), "send error made transport terminal before owner shutdown");
-                                  // 上层稍后关闭；失败包仍在队首，因此新包也不能开始发送。
-                                  boost::asio::post(io, [&]()
-                                                    {
-                                                        require(errors == 1 && !callback_lifetime.expired(), "send error cleared callback before owner shutdown");
-                                                        sender->shutdown();
-                                                        require(callback_lifetime.expired(), "owner shutdown retained write callback");
-                                                        require(!sender->write(std::vector<std::uint8_t>{4}, endpoint), "write after owner shutdown accepted");
-                                                        sender.reset();
-                                                        owner_closed = true;
-                                                    });
+                                  require(errors == 1 && !callback_lifetime.expired(), "send error cleared callback before owner shutdown");
+                                  sender->shutdown();
+                                  require(callback_lifetime.expired(), "owner shutdown retained write callback");
+                                  require(!sender->write(std::vector<std::uint8_t>{4}, endpoint), "write after owner shutdown accepted");
+                                  sender.reset();
+                                  owner_closed = true;
                               });
+        });
     callback_owner.reset();
-    boost::asio::post(io, [&]()
+    boost::asio::post(io,
+                      [&]()
                       {
                           require(sender->write(std::vector<std::uint8_t>(65'508, 1), endpoint), "socket-error packet not admitted");
                           require(sender->write(std::vector<std::uint8_t>{2}, endpoint), "socket-error pending packet not admitted");
@@ -279,7 +293,8 @@ void socket_error_and_reconstruction()
     std::weak_ptr<udp_transport> replacement_lifetime;
     std::size_t old_completions{};
     std::size_t completions{};
-    boost::asio::post(io, [&]()
+    boost::asio::post(io,
+                      [&]()
                       {
                           sender->set_write_callback([&](boost::system::error_code, std::size_t) { ++old_completions; });
                           require(sender->write(std::vector<std::uint8_t>(1024, 3), endpoint), "old datagram not admitted");
@@ -290,15 +305,15 @@ void socket_error_and_reconstruction()
                           require(!old_lifetime.expired(), "old transport released before in-flight completion");
                           replacement = bound(io);
                           replacement_lifetime = replacement;
-                          replacement->set_write_callback([&](boost::system::error_code result, std::size_t bytes)
-                                                          {
-                                                              require(!result && bytes == 17, "old completion affected replacement transport");
-                                                              ++completions;
-                                                              replacement->shutdown();
-                                                              require(!replacement->write(std::vector<std::uint8_t>{7}, endpoint),
-                                                                      "closed replacement accepted write");
-                                                              replacement.reset();
-                                                          });
+                          replacement->set_write_callback(
+                              [&](boost::system::error_code result, std::size_t bytes)
+                              {
+                                  require(!result && bytes == 17, "old completion affected replacement transport");
+                                  ++completions;
+                                  replacement->shutdown();
+                                  require(!replacement->write(std::vector<std::uint8_t>{7}, endpoint), "closed replacement accepted write");
+                                  replacement.reset();
+                              });
                           require(replacement->write(std::vector<std::uint8_t>(17, 4), endpoint), "replacement enqueue rejected");
                       });
     drain(io);
@@ -342,14 +357,16 @@ void gb_session_error_policies()
         const auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(logs);
         logger->sinks().push_back(sink);
         logger->set_level(spdlog::level::debug);
-        boost::scope::scope_exit restore_logger([&]()
-                                               {
-                                                   logger->sinks().pop_back();
-                                                   logger->set_level(previous_level);
-                                               });
+        boost::scope::scope_exit restore_logger(
+            [&]()
+            {
+                logger->sinks().pop_back();
+                logger->set_level(previous_level);
+            });
         auto stream = std::make_shared<media_stream>(overflow ? "verify/overflow" : "verify/error", worker);
-        require(stream->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
-                                     .clock_rate = 90'000, .channel_count = 0, .codec_config = {}}}), "GB test tracks failed");
+        require(stream->set_tracks(
+                    {{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .channel_count = 0, .codec_config = {}}}),
+                "GB test tracks failed");
         auto endpoint = address(receiver);
         if (!overflow)
         {
@@ -358,61 +375,69 @@ void gb_session_error_policies()
         auto sender = std::make_shared<gb28181_udp_sender_session>(worker, stream, "sender", endpoint, std::nullopt);
         const std::weak_ptr<gb28181_udp_sender_session> lifetime = sender;
         boost::asio::steady_timer publish(worker.io()), check(worker.io()), finish(worker.io());
-        boost::asio::spawn(worker.io(), [&](boost::asio::yield_context yield)
-                          {
-                              std::array<std::uint8_t, 2048> buffer{};
-                              udp::endpoint remote;
-                              for (;;)
-                              {
-                                  boost::system::error_code error;
-                                  receiver->read(buffer, remote, yield, error);
-                                  if (error)
-                                  {
-                                      require(error == boost::asio::error::operation_aborted, "GB receive failed");
-                                      return;
-                                  }
-                                  ++received;
-                              }
-                          }, rethrow);
-        boost::asio::post(worker.io(), [&]()
-                          {
-                              require(sender->startup(loopback, 96, 1234), "GB sender startup failed");
-                              require(session_registry::instance().add_sender_session(stream->stream_id(), "sender", sender),
-                                      "GB sender registry failed");
-                              publish.expires_after(10ms);
-                              publish.async_wait([&](boost::system::error_code error)
-                                                 {
-                                                     require(!error, "GB publish timer cancelled");
-                                                     stream->publish({.track = 1, .key_frame = true, .payload = std::make_shared<const std::vector<std::uint8_t>>(
-                                                                                      overflow ? 2'097'152U : 160U, 0xd5)});
-                                                 });
-                              check.expires_after(200ms);
-                              check.async_wait([&](boost::system::error_code error)
-                                               {
-                                                   require(!error, "GB check timer cancelled");
-                                                   const auto registered = session_registry::instance().take_sender_session(stream->stream_id(), "sender");
-                                                   require(overflow ? registered == sender : !registered, "GB overflow/socket-error shutdown policy changed");
-                                                   before_recovery = received;
-                                                   if (overflow)
-                                                   {
-                                                       require(logs.str().find("udp write queue full") != std::string::npos, "GB overflow was not exercised");
-                                                       stream->publish({.track = 1, .pts_ns = 20'000'000,
-                                                                        .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5)});
-                                                   }
-                                               });
-                              finish.expires_after(250ms);
-                              finish.async_wait([&](boost::system::error_code error)
-                                                {
-                                                    require(!error, "GB finish timer cancelled");
-                                                    require(!overflow || received > before_recovery, "GB stopped media after overflow");
-                                                    sender->shutdown();
-                                                    sender->shutdown();
-                                                    sender.reset();
-                                                    receiver->shutdown();
-                                                    stream->end();
-                                                    worker.request_stop();
-                                                });
-                          });
+        boost::asio::spawn(
+            worker.io(),
+            [&](boost::asio::yield_context yield)
+            {
+                std::array<std::uint8_t, 2048> buffer{};
+                udp::endpoint remote;
+                for (;;)
+                {
+                    boost::system::error_code error;
+                    receiver->read(buffer, remote, yield, error);
+                    if (error)
+                    {
+                        require(error == boost::asio::error::operation_aborted, "GB receive failed");
+                        return;
+                    }
+                    ++received;
+                }
+            },
+            rethrow);
+        boost::asio::post(
+            worker.io(),
+            [&]()
+            {
+                require(sender->startup(loopback, 96, 1234), "GB sender startup failed");
+                require(session_registry::instance().add_sender_session(stream->stream_id(), "sender", sender), "GB sender registry failed");
+                publish.expires_after(10ms);
+                publish.async_wait(
+                    [&](boost::system::error_code error)
+                    {
+                        require(!error, "GB publish timer cancelled");
+                        stream->publish({.track = 1,
+                                         .key_frame = true,
+                                         .payload = std::make_shared<const std::vector<std::uint8_t>>(overflow ? 2'097'152U : 160U, 0xd5)});
+                    });
+                check.expires_after(200ms);
+                check.async_wait(
+                    [&](boost::system::error_code error)
+                    {
+                        require(!error, "GB check timer cancelled");
+                        const auto registered = session_registry::instance().take_sender_session(stream->stream_id(), "sender");
+                        require(overflow ? registered == sender : !registered, "GB overflow/socket-error shutdown policy changed");
+                        before_recovery = received;
+                        if (overflow)
+                        {
+                            require(logs.str().find("udp write queue full") != std::string::npos, "GB overflow was not exercised");
+                            stream->publish(
+                                {.track = 1, .pts_ns = 20'000'000, .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5)});
+                        }
+                    });
+                finish.expires_after(250ms);
+                finish.async_wait(
+                    [&](boost::system::error_code error)
+                    {
+                        require(!error, "GB finish timer cancelled");
+                        require(!overflow || received > before_recovery, "GB stopped media after overflow");
+                        sender->shutdown();
+                        sender->shutdown();
+                        sender.reset();
+                        receiver->shutdown();
+                        stream->end();
+                        worker.request_stop();
+                    });
+            });
         drain(worker.io());
         require(lifetime.expired(), "GB sender retained after shutdown");
         const auto text = logs.str();

@@ -50,23 +50,24 @@ void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
 
 void startup(worker_context& worker)
 {
-    worker.spawn([](boost::asio::yield_context yield)
-                 {
-                     boost::asio::steady_timer timer(yield.get_executor());
-                     for (;;)
-                     {
-                         timer.expires_after(std::chrono::seconds(1));
-                         boost::system::error_code error;
-                         timer.async_wait(yield[error]);
-                         if (error || yield.cancelled() != boost::asio::cancellation_type::none)
-                         {
-                             return;
-                         }
-                         auto& current = runtime();
-                         std::scoped_lock lock(current.mutex);
-                         remove_expired_segmenters(std::chrono::steady_clock::now());
-                     }
-                 });
+    worker.spawn(
+        [](boost::asio::yield_context yield)
+        {
+            boost::asio::steady_timer timer(yield.get_executor());
+            for (;;)
+            {
+                timer.expires_after(std::chrono::seconds(1));
+                boost::system::error_code error;
+                timer.async_wait(yield[error]);
+                if (error || yield.cancelled() != boost::asio::cancellation_type::none)
+                {
+                    return;
+                }
+                auto& current = runtime();
+                std::scoped_lock lock(current.mutex);
+                remove_expired_segmenters(std::chrono::steady_clock::now());
+            }
+        });
 }
 
 std::shared_ptr<hls_segmenter> get_or_create(const std::shared_ptr<media_stream>& stream)

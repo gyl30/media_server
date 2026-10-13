@@ -31,9 +31,7 @@ bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 
 }    // namespace
 
 webrtc_packetizer::webrtc_packetizer(packet_handler rtp_handler, packet_handler rtcp_handler)
-    : rtp_handler_(std::move(rtp_handler)),
-      rtcp_handler_(std::move(rtcp_handler)),
-      muxer_(rtsp_muxer_create(&webrtc_packetizer::on_packet, this))
+    : rtp_handler_(std::move(rtp_handler)), rtcp_handler_(std::move(rtcp_handler)), muxer_(rtsp_muxer_create(&webrtc_packetizer::on_packet, this))
 {
 }
 
@@ -99,15 +97,15 @@ bool webrtc_packetizer::startup(std::span<const media_track> tracks, const webrt
         }
 
         const auto payload_index = rtsp_muxer_add_payload(muxer_,
-                                                         "RTP/AVP",
-                                                         static_cast<int>(track.clock_rate),
-                                                         payload_type,
-                                                         encoding,
-                                                         0,
-                                                         0,
-                                                         0,
-                                                         codec_config.data(),
-                                                         static_cast<int>(codec_config.size()));
+                                                          "RTP/AVP",
+                                                          static_cast<int>(track.clock_rate),
+                                                          payload_type,
+                                                          encoding,
+                                                          0,
+                                                          0,
+                                                          0,
+                                                          codec_config.data(),
+                                                          static_cast<int>(codec_config.size()));
         if (payload_index < 0)
         {
             spdlog::error("webrtc add payload failed codec {}", to_string(track.codec));
@@ -119,8 +117,7 @@ bool webrtc_packetizer::startup(std::span<const media_track> tracks, const webrt
             spdlog::error("webrtc rtcp sender info failed payload {} result {}", payload_index, rtcp_result);
             return false;
         }
-        const auto media_index =
-            rtsp_muxer_add_media(muxer_, payload_index, rtp_codec, codec_config.data(), static_cast<int>(codec_config.size()));
+        const auto media_index = rtsp_muxer_add_media(muxer_, payload_index, rtp_codec, codec_config.data(), static_cast<int>(codec_config.size()));
         if (media_index < 0)
         {
             spdlog::error("webrtc add media failed codec {}", to_string(track.codec));

@@ -77,7 +77,8 @@ auto on(worker_context& worker, Function function)
     using result = std::invoke_result_t<Function>;
     std::promise<result> promise;
     auto future = promise.get_future();
-    boost::asio::post(worker.io(), [function = std::move(function), promise = std::move(promise)]() mutable
+    boost::asio::post(worker.io(),
+                      [function = std::move(function), promise = std::move(promise)]() mutable
                       {
                           try
                           {
@@ -145,49 +146,54 @@ void rtsp_sender_clock(workers& context)
         static_cast<std::string*>(param)->assign(static_cast<const char*>(data), bytes);
         return 0;
     };
-    std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(
-        rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, &reply), &rtsp_server_destroy);
+    std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, &reply),
+                                                                          &rtsp_server_destroy);
     require(server != nullptr, "RTSP server creation failed");
     auto source = std::make_shared<media_stream>("verify/sender-clock", context.source);
     std::vector<std::pair<std::uint64_t, std::uint32_t>> reports;
     auto player = std::make_shared<rtsp_play_session>(context.source,
-        source, source->stream_id(), boost::asio::ip::make_address("127.0.0.1"),
-        [&](std::vector<std::uint8_t> packet)
+                                                      source,
+                                                      source->stream_id(),
+                                                      boost::asio::ip::make_address("127.0.0.1"),
+                                                      [&](std::vector<std::uint8_t> packet)
+                                                      {
+                                                          if (packet[1] == 1)
+                                                          {
+                                                              require(packet.size() >= 32 && packet[5] == 200, "missing RTCP sender report");
+                                                              reports.emplace_back(boost::endian::load_big_u64(packet.data() + 12),
+                                                                                   boost::endian::load_big_u32(packet.data() + 20));
+                                                          }
+                                                      });
+    boost::scope::scope_exit cleanup(
+        [&]()
         {
-            if (packet[1] == 1)
-            {
-                require(packet.size() >= 32 && packet[5] == 200, "missing RTCP sender report");
-                reports.emplace_back(boost::endian::load_big_u64(packet.data() + 12),
-                                     boost::endian::load_big_u32(packet.data() + 20));
-            }
+            on(context.source,
+               [&]()
+               {
+                   player->shutdown();
+                   stream_registry::instance().remove(*source);
+                   source->end();
+               });
+            on(context.source, []() {});
         });
-    boost::scope::scope_exit cleanup([&]()
-    {
-        on(context.source, [&]()
-        {
-            player->shutdown();
-            stream_registry::instance().remove(*source);
-            source->end();
-        });
-        on(context.source, []() {});
-    });
-    on(context.source, [&]()
-    {
-        require(source->set_tracks({{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
-                                     .clock_rate = 8'000, .channel_count = 1, .codec_config = {}}}), "RTSP clock tracks failed");
-        require(stream_registry::instance().add(source), "RTSP clock registration failed");
-        require(player->prepare_presentation() == 0, "RTSP clock presentation failed");
-        rtsp_header_transport_t transport{};
-        require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=0-1", &transport) == 0, "RTSP transport parse failed");
-        require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/sender-clock/trackID=1", {}, &transport, 1) == 0,
-                "RTSP clock SETUP failed");
-        const auto begin = reply.find("Session: ");
-        require(begin != std::string::npos, "RTSP SETUP omitted session");
-        const auto end = reply.find_first_of(";\r\n", begin + 9);
-        const auto session = reply.substr(begin + 9, end - begin - 9);
-        require(player->on_play(server.get(), "rtsp://127.0.0.1/verify/sender-clock", session, nullptr, nullptr) == 0,
-                "RTSP clock PLAY failed");
-    });
+    on(context.source,
+       [&]()
+       {
+           require(source->set_tracks(
+                       {{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a, .clock_rate = 8'000, .channel_count = 1, .codec_config = {}}}),
+                   "RTSP clock tracks failed");
+           require(stream_registry::instance().add(source), "RTSP clock registration failed");
+           require(player->prepare_presentation() == 0, "RTSP clock presentation failed");
+           rtsp_header_transport_t transport{};
+           require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=0-1", &transport) == 0, "RTSP transport parse failed");
+           require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/sender-clock/trackID=1", {}, &transport, 1) == 0,
+                   "RTSP clock SETUP failed");
+           const auto begin = reply.find("Session: ");
+           require(begin != std::string::npos, "RTSP SETUP omitted session");
+           const auto end = reply.find_first_of(";\r\n", begin + 9);
+           const auto session = reply.substr(begin + 9, end - begin - 9);
+           require(player->on_play(server.get(), "rtsp://127.0.0.1/verify/sender-clock", session, nullptr, nullptr) == 0, "RTSP clock PLAY failed");
+       });
     auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5);
     for (int frame = 0; frame < 3; ++frame)
     {
@@ -195,11 +201,12 @@ void rtsp_sender_clock(workers& context)
         {
             std::this_thread::sleep_for(4s);
         }
-        on(context.source, [&]()
-        {
-            const auto pts = milliseconds_to_ns(frame * 20);
-            source->publish({.track = 1, .dts_ns = pts, .pts_ns = pts, .payload = payload});
-        });
+        on(context.source,
+           [&]()
+           {
+               const auto pts = milliseconds_to_ns(frame * 20);
+               source->publish({.track = 1, .dts_ns = pts, .pts_ns = pts, .payload = payload});
+           });
     }
     require(reports.size() == 3, "RTSP clock test did not span three report intervals");
     for (const auto& [ntp, rtp] : reports)
@@ -218,23 +225,28 @@ void ordered_generations_and_churn(workers& context)
     const auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5);
     for (int generation = 0; generation < 20; ++generation)
     {
-        auto source = on(context.source, [&]()
-                         {
-                             auto stream = std::make_shared<media_stream>("verify/generation", context.source);
-                             require(stream->set_tracks({{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
-                                                          .clock_rate = 8000, .channel_count = 1, .codec_config = {}}}), "initial tracks rejected");
-                             require(registry.add(stream), "generation not registered");
-                             if (previous)
-                             {
-                                 registry.remove(*previous);
-                                 require(registry.find(stream->stream_id()) == stream, "old cleanup removed new generation");
-                             }
-                             return stream;
-                         });
+        auto source = on(
+            context.source,
+            [&]()
+            {
+                auto stream = std::make_shared<media_stream>("verify/generation", context.source);
+                require(
+                    stream->set_tracks(
+                        {{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a, .clock_rate = 8000, .channel_count = 1, .codec_config = {}}}),
+                    "initial tracks rejected");
+                require(registry.add(stream), "generation not registered");
+                if (previous)
+                {
+                    registry.remove(*previous);
+                    require(registry.find(stream->stream_id()) == stream, "old cleanup removed new generation");
+                }
+                return stream;
+            });
         previous.reset();
         auto sink = std::make_shared<recording_sink>(context.viewer);
         auto ended = sink->ended.get_future();
-        on(context.source, [&]()
+        on(context.source,
+           [&]()
            {
                source->add_sink(sink);
                for (int frame = 0; frame < 20; ++frame)
@@ -260,22 +272,27 @@ void ordered_generations_and_churn(workers& context)
     require(old.expired(), "ended source retained after last owner left");
     require(!registry.find("verify/generation"), "ended generation remains registered");
 
-    auto source = on(context.source, [&]()
-                     {
-                         auto stream = std::make_shared<media_stream>("verify/churn", context.source);
-                         require(stream->set_tracks({{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a,
-                                                      .clock_rate = 8000, .channel_count = 1, .codec_config = {}}}), "churn tracks rejected");
-                         return stream;
-                     });
+    auto source = on(
+        context.source,
+        [&]()
+        {
+            auto stream = std::make_shared<media_stream>("verify/churn", context.source);
+            require(stream->set_tracks(
+                        {{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a, .clock_rate = 8000, .channel_count = 1, .codec_config = {}}}),
+                    "churn tracks rejected");
+            return stream;
+        });
     for (int iteration = 0; iteration < 300; ++iteration)
     {
         auto sink = std::make_shared<recording_sink>(context.viewer);
-        on(context.source, [&]()
+        on(context.source,
+           [&]()
            {
                source->add_sink(sink);
                source->publish({.track = 1, .pts_ns = 20'000'000, .payload = payload});
            });
-        on(context.viewer, [&]()
+        on(context.viewer,
+           [&]()
            {
                require(sink->frames.size() == 1, "new subscription did not receive media");
                sink->closed = true;
@@ -299,14 +316,19 @@ void derived_generation_lifetimes(workers& context)
     std::shared_ptr<whep_audio_egress> previous_audio;
     for (int generation = 0; generation < 20; ++generation)
     {
-        on(context.source, [&]()
+        on(context.source,
+           [&]()
            {
                auto source = std::make_shared<media_stream>("verify/derived", context.source);
                sources.emplace_back(source);
-               require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
-                                            .clock_rate = 90000, .codec_config = {}},
-                                           {.id = 2, .kind = media_kind::audio, .codec = codec_id::aac,
-                                            .clock_rate = 48000, .channel_count = 2, .codec_config = {0x11, 0x90}}}), "derived tracks rejected");
+               require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90000, .codec_config = {}},
+                                           {.id = 2,
+                                            .kind = media_kind::audio,
+                                            .codec = codec_id::aac,
+                                            .clock_rate = 48000,
+                                            .channel_count = 2,
+                                            .codec_config = {0x11, 0x90}}}),
+                       "derived tracks rejected");
                require(stream_registry::instance().add(source), "derived generation not registered");
                auto ps = source->ps_output();
                require(ps && source->ps_output() == ps && ps != previous_ps, "PS shared across wrong generation");
@@ -329,7 +351,8 @@ void derived_generation_lifetimes(workers& context)
                release_whep_audio_egress(audio);
            });
     }
-    on(context.source, [&]()
+    on(context.source,
+       [&]()
        {
            hls::shutdown();
            previous_hls.reset();
@@ -426,29 +449,32 @@ struct shutdown_parent final : std::enable_shared_from_this<shutdown_parent>
     void startup()
     {
         const auto self = shared_from_this();
-        transport->set_write_callback([self](boost::system::error_code error, std::size_t)
-                                      {
-                                          if (error)
-                                          {
-                                              self->shutdown();
-                                          }
-                                      });
-        subscription = owner.subscribe_shutdown([self]()
-                                                {
-                                                    self->record.subscribed = true;
-                                                    self->shutdown();
-                                                    self->shutdown();
-                                                });
+        transport->set_write_callback(
+            [self](boost::system::error_code error, std::size_t)
+            {
+                if (error)
+                {
+                    self->shutdown();
+                }
+            });
+        subscription = owner.subscribe_shutdown(
+            [self]()
+            {
+                self->record.subscribed = true;
+                self->shutdown();
+                self->shutdown();
+            });
         require(static_cast<bool>(subscription), "worker stop subscription rejected");
-        owner.spawn([self, child = transport](boost::asio::yield_context yield)
-                    {
-                        std::array<std::uint8_t, 1> buffer{};
-                        boost::system::error_code error;
-                        self->record.read_started = true;
-                        child->read(buffer, yield, error);
-                        self->record.read_cancelled = error == boost::asio::error::operation_aborted;
-                        self->shutdown();
-                    });
+        owner.spawn(
+            [self, child = transport](boost::asio::yield_context yield)
+            {
+                std::array<std::uint8_t, 1> buffer{};
+                boost::system::error_code error;
+                self->record.read_started = true;
+                child->read(buffer, yield, error);
+                self->record.read_cancelled = error == boost::asio::error::operation_aborted;
+                self->shutdown();
+            });
     }
 
     void shutdown()
@@ -494,17 +520,19 @@ void worker_stop_drains_parent_and_child()
     const std::weak_ptr<tcp_transport> child_lifetime = child;
     auto parent = std::make_shared<shutdown_parent>(worker, std::move(child), record);
     const std::weak_ptr<shutdown_parent> parent_lifetime = parent;
-    boost::scope::scope_exit cleanup([&]()
-    {
-        if (const auto remaining = parent_lifetime.lock())
+    boost::scope::scope_exit cleanup(
+        [&]()
         {
-            remaining->shutdown();
-        }
-        worker.request_stop();
-        worker.io().restart();
-        worker.io().run_for(1s);
-    });
-    boost::asio::post(worker.io(), [parent, &worker]()
+            if (const auto remaining = parent_lifetime.lock())
+            {
+                remaining->shutdown();
+            }
+            worker.request_stop();
+            worker.io().restart();
+            worker.io().run_for(1s);
+        });
+    boost::asio::post(worker.io(),
+                      [parent, &worker]()
                       {
                           parent->startup();
                           worker.request_stop();

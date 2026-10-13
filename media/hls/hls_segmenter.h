@@ -69,7 +69,6 @@ class hls_segmenter final : public media_sink, public std::enable_shared_from_th
     bool waiting_for_key_frame_{};
     bool has_video_{};
     std::shared_ptr<media_stream> source_;
-
 };
 
 }    // namespace media_server

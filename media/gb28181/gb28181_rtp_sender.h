@@ -20,10 +20,7 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
     using end_handler = std::function<void()>;
 
-    gb28181_rtp_sender(worker_context& worker,
-                       std::shared_ptr<media_stream> stream,
-                       packet_handler on_packet,
-                       end_handler handle_source_end);
+    gb28181_rtp_sender(worker_context& worker, std::shared_ptr<media_stream> stream, packet_handler on_packet, end_handler handle_source_end);
 
    public:
     [[nodiscard]] bool startup(std::uint8_t payload_type, std::uint32_t ssrc);

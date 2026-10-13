@@ -16,9 +16,7 @@ extern "C"
 
 namespace media_server
 {
-mpeg_ps_output::mpeg_ps_output(worker_context& worker) : worker_(worker), muxer_(nullptr, &ps_muxer_destroy), dispatcher_(worker)
-{
-}
+mpeg_ps_output::mpeg_ps_output(worker_context& worker) : worker_(worker), muxer_(nullptr, &ps_muxer_destroy), dispatcher_(worker) {}
 
 worker_context& mpeg_ps_output::worker() noexcept { return worker_; }
 
@@ -114,8 +112,13 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
         return;
     }
     const auto pts = ns_to_90khz(frame.pts_ns);
-    if (ps_muxer_input(muxer_.get(), id, frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0, pts, ns_to_90khz(frame.dts_ns),
-                       frame.payload->data(), frame.payload->size()) < 0)
+    if (ps_muxer_input(muxer_.get(),
+                       id,
+                       frame.key_frame ? MPEG_FLAG_IDR_FRAME : 0,
+                       pts,
+                       ns_to_90khz(frame.dts_ns),
+                       frame.payload->data(),
+                       frame.payload->size()) < 0)
     {
         spdlog::error("mpeg ps muxer input failed stream {} track {}", source_->stream_id(), frame.track);
         finish();
@@ -139,8 +142,8 @@ void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink)
         return;
     }
     auto* target = &sink->worker();
-    boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink = std::move(sink), target]() mutable
-                          { self->add_sink_owner(std::move(sink), *target); });
+    boost::asio::dispatch(worker_.io(),
+                          [self = shared_from_this(), sink = std::move(sink), target]() mutable { self->add_sink_owner(std::move(sink), *target); });
 }
 
 void mpeg_ps_output::add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)

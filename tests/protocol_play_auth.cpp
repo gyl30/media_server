@@ -76,7 +76,8 @@ std::string take_rtsp_response(tcp::socket& socket, boost::asio::streambuf& buff
     boost::system::error_code error;
     const auto header_bytes = boost::asio::async_read_until(socket, buffer, "\r\n\r\n", yield[error]);
     require(!error, "RTSP response read failed");
-    std::string headers(boost::asio::buffers_begin(buffer.data()), boost::asio::buffers_begin(buffer.data()) + static_cast<std::ptrdiff_t>(header_bytes));
+    std::string headers(boost::asio::buffers_begin(buffer.data()),
+                        boost::asio::buffers_begin(buffer.data()) + static_cast<std::ptrdiff_t>(header_bytes));
     buffer.consume(header_bytes);
     std::size_t body_bytes{};
     if (const auto position = headers.find("Content-Length: "); position != std::string::npos)
@@ -226,10 +227,8 @@ void admission(bool rtmp, const std::string& scenario)
         });
     const auto audio_frame = [](std::int64_t timestamp_ns)
     {
-        return media_frame{.track = 1,
-                           .dts_ns = timestamp_ns,
-                           .pts_ns = timestamp_ns,
-                           .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5)};
+        return media_frame{
+            .track = 1, .dts_ns = timestamp_ns, .pts_ns = timestamp_ns, .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5)};
     };
     const auto publish = [&](media_frame frame)
     {
@@ -246,8 +245,7 @@ void admission(bool rtmp, const std::string& scenario)
         take_rtsp_response(socket, response, yield);
         const auto url = "rtsp://127.0.0.1:" + std::to_string(media_port) + "/" + stream_id + "/" + token;
         boost::system::error_code error;
-        const auto setup_request =
-            "SETUP " + url + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
+        const auto setup_request = "SETUP " + url + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
         boost::asio::async_write(socket, boost::asio::buffer(setup_request), yield[error]);
         require(!error, "RTSP SETUP write failed");
         const auto setup = take_rtsp_response(socket, response, yield);
@@ -551,8 +549,7 @@ void admission(bool rtmp, const std::string& scenario)
     }
     require(observed.live == 0, "play mux remained after shutdown");
     require(invalid_context_sends == 0, "late media used a destroyed RTMP context");
-    require(observed.destroyed == (accepted || scenario == "replacement" || scenario == "no_tracks" ? 1U : 0U),
-            "play mux cleanup count changed");
+    require(observed.destroyed == (accepted || scenario == "replacement" || scenario == "no_tracks" ? 1U : 0U), "play mux cleanup count changed");
     for (const auto& owner : released_owners)
     {
         require(owner.expired(), "play connection retained after shutdown");
@@ -574,9 +571,11 @@ extern "C" void __wrap_rtmp_server_destroy(rtmp_server_t* server)
     __real_rtmp_server_destroy(server);
     if (auto source = std::exchange(late_frame_source, {}))
     {
-        boost::asio::post(source->worker().io(), [source, completion = late_frame_completion]()
+        boost::asio::post(source->worker().io(),
+                          [source, completion = late_frame_completion]()
                           {
-                              source->publish({.track = 1, .pts_ns = 20'000'000,
+                              source->publish({.track = 1,
+                                               .pts_ns = 20'000'000,
                                                .payload = std::make_shared<const std::vector<std::uint8_t>>(
                                                    std::initializer_list<std::uint8_t>{0xf8, 0xff, 0xfe})});
                               completion->cancel();

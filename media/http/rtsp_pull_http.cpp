@@ -110,8 +110,7 @@ std::optional<rtsp_pull_config> parse_create_config(std::string_view body)
     auto url = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !url ||
-        !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
+    if (!stream_id || !url || !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
         (object->if_contains("password") != nullptr && username.empty()))
     {
         return std::nullopt;

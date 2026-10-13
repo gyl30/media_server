@@ -196,9 +196,8 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (config.stream_prefix.empty() || config.sources == 0U || config.ramp_per_second == 0U ||
-        config.io_threads == 0U || config.io_threads > 64U || config.frames_per_second == 0U || config.duration.count() <= 0 ||
-        config.warmup.count() < 0)
+    if (config.stream_prefix.empty() || config.sources == 0U || config.ramp_per_second == 0U || config.io_threads == 0U || config.io_threads > 64U ||
+        config.frames_per_second == 0U || config.duration.count() <= 0 || config.warmup.count() < 0)
     {
         throw std::runtime_error("stream-prefix, sources, ramp-per-second, io-threads, fps and positive duration are required");
     }
@@ -969,11 +968,11 @@ int main(int argc, char** argv)
         }
         const auto ramp_elapsed = std::chrono::duration<double>(clock_type::now() - ramp_started).count();
         const auto established_sample = sample_process();
-        std::cout << "phase=established requested=" << config.sources
-                  << " connected=" << results->connected.load() << " ready=" << results->ready.load()
-                  << " establishment_failures=" << results->establishment_failures.load() << " ramp_seconds=" << ramp_elapsed
-                  << " generator_cpu_seconds=" << established_sample.cpu_seconds << " generator_rss_kib=" << established_sample.rss_kib
-                  << " generator_pss_kib=" << established_sample.pss_kib << " generator_fds=" << established_sample.fds << '\n';
+        std::cout << "phase=established requested=" << config.sources << " connected=" << results->connected.load()
+                  << " ready=" << results->ready.load() << " establishment_failures=" << results->establishment_failures.load()
+                  << " ramp_seconds=" << ramp_elapsed << " generator_cpu_seconds=" << established_sample.cpu_seconds
+                  << " generator_rss_kib=" << established_sample.rss_kib << " generator_pss_kib=" << established_sample.pss_kib
+                  << " generator_fds=" << established_sample.fds << '\n';
         std::cout << "transport=" << (config.transport == transport_mode::tcp_interleaved ? "tcp" : "udp") << " io_threads=" << config.io_threads
                   << " fps=" << config.frames_per_second << " requested_bitrate=" << config.bitrate
                   << " local_address=" << config.local_address.to_string() << " udp_port_start=" << config.udp_port_start
@@ -1029,10 +1028,8 @@ int main(int argc, char** argv)
                   << " generator_cpu_cores=" << (measurement_process_after.cpu_seconds - measurement_process_before.cpu_seconds) / measurement_elapsed
                   << " generator_rss_kib=" << measurement_process_after.rss_kib << " generator_pss_kib=" << measurement_process_after.pss_kib
                   << " generator_fds=" << measurement_process_after.fds << '\n';
-        std::cout << "phase=fairness bytes_min=" << percentile(bytes_per_source, 0.0)
-                  << " bytes_p10=" << percentile(bytes_per_source, 0.1)
-                  << " bytes_p50=" << percentile(bytes_per_source, 0.5)
-                  << " bytes_p90=" << percentile(bytes_per_source, 0.9)
+        std::cout << "phase=fairness bytes_min=" << percentile(bytes_per_source, 0.0) << " bytes_p10=" << percentile(bytes_per_source, 0.1)
+                  << " bytes_p50=" << percentile(bytes_per_source, 0.5) << " bytes_p90=" << percentile(bytes_per_source, 0.9)
                   << " bytes_max=" << percentile(bytes_per_source, 1.0) << '\n';
 
         for (std::size_t index = 0; index < sessions.size(); ++index)

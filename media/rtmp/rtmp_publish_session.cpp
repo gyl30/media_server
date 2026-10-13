@@ -317,8 +317,7 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
 
 int rtmp_publish_session::register_stream_if_ready()
 {
-    if (!stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ ||
-        (*expected_audio_ && !initial_audio_track_))
+    if (!stream_->tracks().empty() || !expected_audio_.has_value() || !initial_video_track_ || (*expected_audio_ && !initial_audio_track_))
     {
         return 0;
     }

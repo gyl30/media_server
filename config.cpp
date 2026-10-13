@@ -47,7 +47,9 @@ int parse_config(int argc, char** argv, config* cfg)
         "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
         "webrtc-address", boost::program_options::value<std::string>(&result.webrtc_address), "webrtc address")(
         "threads", boost::program_options::value<std::string>(&threads), "worker thread count")(
-        "control-token", boost::program_options::value<std::string>(&result.control_token), "bearer token required by control API; empty allows loopback only")(
+        "control-token",
+        boost::program_options::value<std::string>(&result.control_token),
+        "bearer token required by control API; empty allows loopback only")(
         "signaling-url", boost::program_options::value<std::string>(&signaling_url), "HTTP signaling base URL; default http://127.0.0.1:9090");
 
     boost::program_options::variables_map values;
@@ -89,9 +91,8 @@ int parse_config(int argc, char** argv, config* cfg)
 
     const auto parsed_signaling_url = ada::parse<ada::url_aggregator>(signaling_url);
     if (!parsed_signaling_url || !signaling_url.starts_with("http://") || parsed_signaling_url->get_protocol() != "http:" ||
-        parsed_signaling_url->get_hostname().empty() || parsed_signaling_url->has_credentials() ||
-        parsed_signaling_url->has_search() || parsed_signaling_url->has_hash() || parsed_signaling_url->get_port() == "0" ||
-        signaling_url.find('\\') != std::string::npos ||
+        parsed_signaling_url->get_hostname().empty() || parsed_signaling_url->has_credentials() || parsed_signaling_url->has_search() ||
+        parsed_signaling_url->has_hash() || parsed_signaling_url->get_port() == "0" || signaling_url.find('\\') != std::string::npos ||
         std::any_of(signaling_url.begin(), signaling_url.end(), [](unsigned char character) { return character <= 0x20 || character == 0x7f; }))
     {
         print_usage(options);

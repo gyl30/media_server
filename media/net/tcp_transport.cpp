@@ -23,10 +23,7 @@ std::size_t tcp_transport::read(std::span<std::uint8_t> data, boost::asio::yield
     return socket_.async_read_some(boost::asio::buffer(data), yield[error]);
 }
 
-void tcp_transport::write(std::span<const std::uint8_t> data)
-{
-    write(std::vector<std::uint8_t>(data.begin(), data.end()));
-}
+void tcp_transport::write(std::span<const std::uint8_t> data) { write(std::vector<std::uint8_t>(data.begin(), data.end())); }
 
 void tcp_transport::write(std::vector<std::uint8_t> data)
 {

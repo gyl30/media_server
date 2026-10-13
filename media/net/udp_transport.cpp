@@ -46,9 +46,9 @@ void udp_transport::connect(const boost::asio::ip::udp::endpoint& endpoint, boos
 }
 
 std::size_t udp_transport::read(std::span<std::uint8_t> buffer,
-                                      boost::asio::ip::udp::endpoint& endpoint,
-                                      boost::asio::yield_context& yield,
-                                      boost::system::error_code& error)
+                                boost::asio::ip::udp::endpoint& endpoint,
+                                boost::asio::yield_context& yield,
+                                boost::system::error_code& error)
 {
     return socket_.async_receive_from(boost::asio::buffer(buffer), endpoint, yield[error]);
 }
@@ -88,7 +88,8 @@ void udp_transport::start_write()
 {
     const auto datagram = write_queue_.front();
     const auto self = shared_from_this();
-    socket_.async_send_to(boost::asio::buffer(datagram->packet), datagram->endpoint,
+    socket_.async_send_to(boost::asio::buffer(datagram->packet),
+                          datagram->endpoint,
                           [self, datagram](boost::system::error_code error, std::size_t bytes) { self->on_write(datagram, error, bytes); });
 }
 

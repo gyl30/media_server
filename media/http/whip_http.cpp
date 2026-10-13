@@ -51,13 +51,12 @@ whip_http_string_response handle_options(const whip_http_request& request, bool 
     return response;
 }
 
-whip_http_string_response handle_post(
-    const whip_http_request& request,
-    worker_context& worker,
-    std::string_view stream_id,
-    const config& application_config,
-    const boost::asio::ip::tcp::socket& socket,
-    boost::asio::yield_context yield)
+whip_http_string_response handle_post(const whip_http_request& request,
+                                      worker_context& worker,
+                                      std::string_view stream_id,
+                                      const config& application_config,
+                                      const boost::asio::ip::tcp::socket& socket,
+                                      boost::asio::yield_context yield)
 {
     auto result = whip::create(worker, stream_id, request.body(), application_config, socket, yield);
     switch (result.error)
@@ -132,7 +131,8 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
         const auto content_type = request[boost::beast::http::field::content_type];
         if (!boost::beast::iequals(content_type, "application/sdp"))
         {
-            return make_string_response(request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
+            return make_string_response(
+                request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
         return handle_post(request, worker, first, application_config, socket, yield);
     }

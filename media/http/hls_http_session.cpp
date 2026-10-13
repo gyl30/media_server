@@ -191,11 +191,8 @@ void hls_http_session::send_redirect(std::string location)
         stream_, *response, [self, response](const boost::system::error_code& error, std::size_t) { self->response_completed(error, false); });
 }
 
-void hls_http_session::send_text_response(boost::beast::http::status status,
-                                          std::string_view content_type,
-                                          std::string body,
-                                          bool keep_alive,
-                                          std::string_view allow)
+void hls_http_session::send_text_response(
+    boost::beast::http::status status, std::string_view content_type, std::string body, bool keep_alive, std::string_view allow)
 {
     auto response = std::make_shared<boost::beast::http::response<boost::beast::http::string_body>>(status, request_.version());
     response->set(boost::beast::http::field::server, "media_server");
@@ -213,17 +210,16 @@ void hls_http_session::send_text_response(boost::beast::http::status status,
     if (request_.method() == boost::beast::http::verb::head)
     {
         auto serializer = std::make_shared<boost::beast::http::response_serializer<boost::beast::http::string_body>>(*response);
-        boost::beast::http::async_write_header(
-            stream_,
-            *serializer,
-            [self, response, serializer, keep_alive](const boost::system::error_code& error, std::size_t)
-            { self->response_completed(error, keep_alive); });
+        boost::beast::http::async_write_header(stream_,
+                                               *serializer,
+                                               [self, response, serializer, keep_alive](const boost::system::error_code& error, std::size_t)
+                                               { self->response_completed(error, keep_alive); });
         return;
     }
-    boost::beast::http::async_write(
-        stream_,
-        *response,
-        [self, response, keep_alive](const boost::system::error_code& error, std::size_t) { self->response_completed(error, keep_alive); });
+    boost::beast::http::async_write(stream_,
+                                    *response,
+                                    [self, response, keep_alive](const boost::system::error_code& error, std::size_t)
+                                    { self->response_completed(error, keep_alive); });
 }
 
 void hls_http_session::send_binary_response(boost::beast::http::status status,
@@ -242,11 +238,10 @@ void hls_http_session::send_binary_response(boost::beast::http::status status,
 
     stream_.expires_after(std::chrono::seconds(30));
     const auto self = shared_from_this();
-    boost::beast::http::async_write(
-        stream_,
-        *response,
-        [self, response, body = std::move(body), keep_alive](const boost::system::error_code& error, std::size_t)
-        { self->response_completed(error, keep_alive); });
+    boost::beast::http::async_write(stream_,
+                                    *response,
+                                    [self, response, body = std::move(body), keep_alive](const boost::system::error_code& error, std::size_t)
+                                    { self->response_completed(error, keep_alive); });
 }
 
 void hls_http_session::response_completed(const boost::system::error_code& error, bool keep_alive)

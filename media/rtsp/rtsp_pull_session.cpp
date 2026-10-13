@@ -198,10 +198,7 @@ int rtsp_pull_session::describe_callback(void* param, const char* sdp, int lengt
     return static_cast<rtsp_pull_session*>(param)->on_describe(sdp, length);
 }
 
-int rtsp_pull_session::setup_callback(void* param, int, std::int64_t)
-{
-    return static_cast<rtsp_pull_session*>(param)->on_setup();
-}
+int rtsp_pull_session::setup_callback(void* param, int, std::int64_t) { return static_cast<rtsp_pull_session*>(param)->on_setup(); }
 
 int rtsp_pull_session::play_callback(
     void* param, int media, const std::uint64_t*, const std::uint64_t*, const double*, const rtsp_rtp_info_t* info, int count)
@@ -268,9 +265,11 @@ void rtsp_pull_session::run(boost::asio::yield_context yield)
     handler.onteardown = &rtsp_pull_session::teardown_callback;
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
-    auto* client = rtsp_client_create(
-        config_.url.c_str(), config_.username.empty() ? nullptr : config_.username.c_str(),
-        config_.username.empty() ? nullptr : config_.password.c_str(), &handler, this);
+    auto* client = rtsp_client_create(config_.url.c_str(),
+                                      config_.username.empty() ? nullptr : config_.username.c_str(),
+                                      config_.username.empty() ? nullptr : config_.password.c_str(),
+                                      &handler,
+                                      this);
     if (client == nullptr)
     {
         shutdown();
@@ -385,7 +384,6 @@ void rtsp_pull_session::on_rtp(std::uint8_t channel, const void* data, std::uint
         shutdown();
         return;
     }
-
 }
 
 }    // namespace media_server

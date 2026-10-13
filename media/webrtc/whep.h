@@ -15,7 +15,7 @@ namespace media_server
 {
 class worker_context;
 class media_stream;
-}
+}    // namespace media_server
 
 namespace media_server::whep
 {

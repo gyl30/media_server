@@ -26,9 +26,7 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_publish_media::rtsp_publish_media(worker_context& worker,
-                                       std::string media_stream_id,
-                                       std::vector<rtsp_publish_track_description> descriptions)
+rtsp_publish_media::rtsp_publish_media(worker_context& worker, std::string media_stream_id, std::vector<rtsp_publish_track_description> descriptions)
     : worker_(worker), media_stream_id_(std::move(media_stream_id)), descriptions_(std::move(descriptions))
 {
 }
@@ -166,7 +164,6 @@ const std::vector<rtsp_publish_track_description>& rtsp_publish_media::descripti
 
 const std::string& rtsp_publish_media::media_stream_id() const noexcept { return media_stream_id_; }
 
-
 int rtsp_publish_media::packet_callback(void* param, avpacket_t* packet)
 {
     return static_cast<rtsp_publish_media*>(param)->on_demuxed_packet(packet);
@@ -240,9 +237,8 @@ bool rtsp_publish_media::validate_track_from_packet(const avpacket_t& packet)
         return false;
     }
 
-    const auto state = std::find_if(descriptions_.begin(),
-                                    descriptions_.end(),
-                                    [track](const rtsp_publish_track_description& value) { return value.track.id == track->id; });
+    const auto state = std::find_if(
+        descriptions_.begin(), descriptions_.end(), [track](const rtsp_publish_track_description& value) { return value.track.id == track->id; });
     if (state == descriptions_.end())
     {
         return false;

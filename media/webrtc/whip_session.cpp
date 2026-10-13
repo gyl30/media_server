@@ -27,8 +27,7 @@ bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U 
 
 }    // namespace
 
-whip_session::whip_session(worker_context& worker, std::string stream_id,
-                           std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
+whip_session::whip_session(worker_context& worker, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
     : worker_(worker),
       stream_id_(std::move(stream_id)),
       udp_transport_(std::move(transport)),
@@ -42,8 +41,7 @@ whip_session::whip_session(worker_context& worker, std::string stream_id,
 {
 }
 
-bool whip_session::startup(const webrtc_media_offer& transport_offer,
-                           const webrtc_answer& answer, const dtls_certificate& certificate)
+bool whip_session::startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate)
 {
     remote_ice_ufrag_ = transport_offer.ice_ufrag;
     const auto self = shared_from_this();

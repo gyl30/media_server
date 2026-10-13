@@ -40,15 +40,16 @@ void require(bool condition, const char* message)
 void http_result(boost::beast::http::status status, std::chrono::seconds delay, bool expected, bool slow_dns = false)
 {
     boost::asio::io_context io;
-    boost::scope::scope_exit release_dns([slow_dns]()
-                                       {
-                                           if (slow_dns)
-                                           {
-                                               std::scoped_lock lock(dns_mutex);
-                                               dns_released = true;
-                                               dns_condition.notify_all();
-                                           }
-                                       });
+    boost::scope::scope_exit release_dns(
+        [slow_dns]()
+        {
+            if (slow_dns)
+            {
+                std::scoped_lock lock(dns_mutex);
+                dns_released = true;
+                dns_condition.notify_all();
+            }
+        });
     boost::asio::steady_timer dns_delay(io, 1500ms);
     if (slow_dns)
     {
@@ -57,27 +58,34 @@ void http_result(boost::beast::http::status status, std::chrono::seconds delay, 
             dns_entered = false;
             dns_released = false;
         }
-        dns_delay.async_wait([](boost::system::error_code error)
-                             {
-                                 if (!error)
-                                 {
-                                     std::scoped_lock lock(dns_mutex);
-                                     dns_released = true;
-                                     dns_condition.notify_all();
-                                 }
-                             });
+        dns_delay.async_wait(
+            [](boost::system::error_code error)
+            {
+                if (!error)
+                {
+                    std::scoped_lock lock(dns_mutex);
+                    dns_released = true;
+                    dns_condition.notify_all();
+                }
+            });
     }
     tcp::acceptor listener(io, {boost::asio::ip::make_address("127.0.0.1"), 0});
     config application_config;
     application_config.signaling_url = *ada::parse<ada::url_aggregator>(std::string(slow_dns ? "http://slow.verify.invalid:" : "http://127.0.0.1:") +
-                                                                     std::to_string(listener.local_endpoint().port()) + "/gateway/");
+                                                                        std::to_string(listener.local_endpoint().port()) + "/gateway/");
     application_config.control_token = "service-test-token";
     const std::string token(64, 'a');
     const std::string stream_id = "e379e55f-a0d1-4300-a352-0a42d4a0cc09";
     std::optional<bool> result;
     std::chrono::steady_clock::duration elapsed{};
     std::exception_ptr exception;
-    const auto completed = [&exception](std::exception_ptr error) { if (error) { exception = error; } };
+    const auto completed = [&exception](std::exception_ptr error)
+    {
+        if (error)
+        {
+            exception = error;
+        }
+    };
     boost::asio::spawn(
         io,
         [&](boost::asio::yield_context yield)
@@ -95,7 +103,8 @@ void http_result(boost::beast::http::status status, std::chrono::seconds delay, 
             require(request[boost::beast::http::field::content_type] == "application/json", "verify content type missing");
             const auto body = boost::json::parse(request.body()).as_object();
             require(body.size() == 3 && body.at("token").as_string() == token && body.at("operation").as_string() == "play" &&
-                    body.at("stream_id").as_string() == stream_id, "verify request identity changed");
+                        body.at("stream_id").as_string() == stream_id,
+                    "verify request identity changed");
             if (delay != 0s)
             {
                 boost::asio::steady_timer timer(io, delay);
@@ -142,15 +151,17 @@ void dns_deadline()
         dns_entered = false;
         dns_released = false;
     }
-    boost::scope::scope_exit release_dns([]()
-                                       {
-                                           std::scoped_lock lock(dns_mutex);
-                                           dns_released = true;
-                                           dns_condition.notify_all();
-                                       });
+    boost::scope::scope_exit release_dns(
+        []()
+        {
+            std::scoped_lock lock(dns_mutex);
+            dns_released = true;
+            dns_condition.notify_all();
+        });
     tcp::acceptor listener(io, {boost::asio::ip::make_address("127.0.0.1"), 0});
     config application_config;
-    application_config.signaling_url = *ada::parse<ada::url_aggregator>("http://slow.verify.invalid:" + std::to_string(listener.local_endpoint().port()));
+    application_config.signaling_url =
+        *ada::parse<ada::url_aggregator>("http://slow.verify.invalid:" + std::to_string(listener.local_endpoint().port()));
     std::optional<bool> result;
     std::chrono::steady_clock::duration elapsed{};
     std::exception_ptr exception;
@@ -202,8 +213,16 @@ void http_targets()
     require(query && query->get_pathname() == "/control" && query->has_search(), "HTTP query presence lost");
     const auto empty_query = parse_http_target("/control?");
     require(empty_query && empty_query->has_search(), "empty query presence lost");
-    for (const auto target : {"http://localhost/play/token", "//other/play/token", "/play/token#fragment", "/play/./token", "/play/a/../token",
-                              "/play/%2e/token", "/play/%2e%2e/token", "/play\\token", "/play/token\t", "/play/token "})
+    for (const auto target : {"http://localhost/play/token",
+                              "//other/play/token",
+                              "/play/token#fragment",
+                              "/play/./token",
+                              "/play/a/../token",
+                              "/play/%2e/token",
+                              "/play/%2e%2e/token",
+                              "/play\\token",
+                              "/play/token\t",
+                              "/play/token "})
     {
         require(!parse_http_target(target), "normalized or non-origin HTTP target accepted");
     }

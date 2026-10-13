@@ -306,18 +306,17 @@ void content_urls(const std::string& scenario)
             else
             {
                 context.publisher->shutdown();
-                boost::asio::post(
-                    worker.io(),
-                    [&]()
-                    {
-                        const auto parent = lifetime.lock();
-                        require(parent != nullptr, "UDP child did not retain publisher until child cleanup");
-                        require(parent->stream_id().empty(), "publisher cleanup did not precede child cleanup");
-                        require(!context.input_lifetime.expired(), "UDP child released input callback before child cleanup");
-                        parent->shutdown();
-                        parent->shutdown();
-                        parent_cleanup_observed = true;
-                    });
+                boost::asio::post(worker.io(),
+                                  [&]()
+                                  {
+                                      const auto parent = lifetime.lock();
+                                      require(parent != nullptr, "UDP child did not retain publisher until child cleanup");
+                                      require(parent->stream_id().empty(), "publisher cleanup did not precede child cleanup");
+                                      require(!context.input_lifetime.expired(), "UDP child released input callback before child cleanup");
+                                      parent->shutdown();
+                                      parent->shutdown();
+                                      parent_cleanup_observed = true;
+                                  });
             }
             context.publisher.reset();
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -366,22 +365,32 @@ int main()
 {
     try
     {
-        const auto aac = rtsp_sdp_track_from_format(
-            "audio", 97, 48'000, "MPEG4-GENERIC",
-            "97 streamtype=5;profile-level-id=1;mode=AAC-hbr;config=1190;SizeLength=13;IndexLength=3;IndexDeltaLength=3", 2);
+        const auto aac =
+            rtsp_sdp_track_from_format("audio",
+                                       97,
+                                       48'000,
+                                       "MPEG4-GENERIC",
+                                       "97 streamtype=5;profile-level-id=1;mode=AAC-hbr;config=1190;SizeLength=13;IndexLength=3;IndexDeltaLength=3",
+                                       2);
         require(aac && aac->codec == codec_id::aac && aac->clock_rate == 48'000 && aac->channel_count == 2 &&
                     aac->codec_config == std::vector<std::uint8_t>{0x11, 0x90},
                 "valid AAC configuration was not normalized");
         for (const char* fmtp : std::array<const char*, 5>{nullptr, "97 mode=AAC-hbr", "97 config=119", "97 config=11zz", "97 config=0000"})
         {
-            require(!rtsp_sdp_track_from_format("audio", 97, 48'000, "MPEG4-GENERIC", fmtp, 2),
-                    "invalid AAC configuration was accepted");
+            require(!rtsp_sdp_track_from_format("audio", 97, 48'000, "MPEG4-GENERIC", fmtp, 2), "invalid AAC configuration was accepted");
         }
         std::cout << "RTSP AAC configuration guards: PASS\n";
         media_port_pool::init(24'400, 24'407);
-        for (const auto* scenario :
-             {"relative", "content_base", "content_location", "absolute", "invalid_sdp", "udp_one", "udp_two", "udp_duplicate", "udp_incomplete",
-              "udp_worker_stop"})
+        for (const auto* scenario : {"relative",
+                                     "content_base",
+                                     "content_location",
+                                     "absolute",
+                                     "invalid_sdp",
+                                     "udp_one",
+                                     "udp_two",
+                                     "udp_duplicate",
+                                     "udp_incomplete",
+                                     "udp_worker_stop"})
         {
             content_urls(scenario);
         }

@@ -348,9 +348,7 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
 
 struct webrtc_client_peer::implementation
 {
-    implementation(boost::asio::io_context& io,
-                   std::shared_ptr<webrtc_client_context> context_value,
-                   boost::asio::ip::address bind_address)
+    implementation(boost::asio::io_context& io, std::shared_ptr<webrtc_client_context> context_value, boost::asio::ip::address bind_address)
         : socket(io, boost::asio::ip::udp::endpoint(bind_address, 0)), keepalive_timer(io), context(std::move(context_value))
     {
     }
@@ -444,8 +442,8 @@ struct webrtc_client_peer::implementation
 };
 
 webrtc_client_peer::webrtc_client_peer(boost::asio::io_context& io,
-                                     std::shared_ptr<webrtc_client_context> context,
-                                     boost::asio::ip::address bind_address)
+                                       std::shared_ptr<webrtc_client_context> context,
+                                       boost::asio::ip::address bind_address)
     : implementation_(std::make_unique<implementation>(io, std::move(context), bind_address))
 {
 }

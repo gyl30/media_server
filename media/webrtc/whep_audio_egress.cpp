@@ -140,8 +140,9 @@ void whep_audio_egress::on_frame(const media_frame& frame)
 
 void whep_audio_egress::on_end() { finish(); }
 
-std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
-    const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings)
+std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
+                                                             worker_context& worker,
+                                                             whep_audio_settings settings)
 {
     const egress_key key{source.get(), settings.channels, settings.bitrate, settings.max_playback_rate};
     std::scoped_lock lock(egress_mutex);
@@ -186,13 +187,13 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
     }
     // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
     boost::asio::dispatch(released->worker_.io(),
-                      [weak = std::weak_ptr<whep_audio_egress>(released)]()
-                      {
-                          if (const auto self = weak.lock())
+                          [weak = std::weak_ptr<whep_audio_egress>(released)]()
                           {
-                              self->finish();
-                          }
-                      });
+                              if (const auto self = weak.lock())
+                              {
+                                  self->finish();
+                              }
+                          });
 }
 
 }    // namespace media_server

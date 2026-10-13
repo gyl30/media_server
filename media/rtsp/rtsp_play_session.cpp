@@ -41,8 +41,7 @@ std::uint32_t random_u32()
 
 [[nodiscard]] bool rtsp_play_track_supported(const media_track& track)
 {
-    return (track.kind == media_kind::video &&
-            (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
+    return (track.kind == media_kind::video && (track.codec == codec_id::h264 || track.codec == codec_id::h265)) ||
            (track.kind == media_kind::audio && (track.codec == codec_id::aac ||
                                                 (track.codec == codec_id::opus && track.clock_rate == 48'000 &&
                                                  (track.channel_count == 1 || track.channel_count == 2) && track.codec_config.empty()) ||
@@ -51,16 +50,9 @@ std::uint32_t random_u32()
 }
 }    // namespace
 
-rtsp_play_session::rtsp_play_session(worker_context& worker,
-                                     std::shared_ptr<media_stream> stream,
-                                     std::string path,
-                                     boost::asio::ip::address local_address,
-                                     write_handler write)
-    : worker_(worker),
-      path_(std::move(path)),
-      local_address_(std::move(local_address)),
-      write_handler_(std::move(write)),
-      stream_(std::move(stream))
+rtsp_play_session::rtsp_play_session(
+    worker_context& worker, std::shared_ptr<media_stream> stream, std::string path, boost::asio::ip::address local_address, write_handler write)
+    : worker_(worker), path_(std::move(path)), local_address_(std::move(local_address)), write_handler_(std::move(write)), stream_(std::move(stream))
 {
 }
 
@@ -155,11 +147,9 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     }
     constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
     const auto elapsed = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
-    const auto elapsed_ticks = (elapsed / ntp_fraction) * state.clock_rate +
-                               (elapsed % ntp_fraction) * state.clock_rate / ntp_fraction;
+    const auto elapsed_ticks = (elapsed / ntp_fraction) * state.clock_rate + (elapsed % ntp_fraction) * state.clock_rate / ntp_fraction;
     // Relate SR wall time to the shared presentation timeline, not packet arrival jitter.
-    timestamp += static_cast<std::uint32_t>(rtcp_sync_->pts * state.clock_rate / 1'000 + elapsed_ticks -
-                                            pts * state.clock_rate / 1'000);
+    timestamp += static_cast<std::uint32_t>(rtcp_sync_->pts * state.clock_rate / 1'000 + elapsed_ticks - pts * state.clock_rate / 1'000);
     boost::endian::store_big_u32(rtcp.data() + 16, timestamp);
     write_interleaved(static_cast<std::uint8_t>(state.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
 }
@@ -292,8 +282,8 @@ int rtsp_play_session::on_setup(
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
     }
 
-    auto iterator = std::ranges::find_if(
-        track_states_, [&path, this](const auto& item) { return path == path_ + "/trackID=" + std::to_string(item.first); });
+    auto iterator =
+        std::ranges::find_if(track_states_, [&path, this](const auto& item) { return path == path_ + "/trackID=" + std::to_string(item.first); });
     if (iterator == track_states_.end())
     {
         return rtsp_server_reply_setup(server, 404, nullptr, nullptr);
@@ -433,9 +423,8 @@ int rtsp_play_session::on_muxer_packet(int payload_index, const void* data, int 
         return 0;
     }
 
-    auto iterator = std::find_if(track_states_.begin(),
-                                 track_states_.end(),
-                                 [payload_index](const auto& item) { return item.second.payload_index == payload_index; });
+    auto iterator = std::find_if(
+        track_states_.begin(), track_states_.end(), [payload_index](const auto& item) { return item.second.payload_index == payload_index; });
     if (iterator == track_states_.end() || iterator->second.rtp_channel < 0)
     {
         return 0;

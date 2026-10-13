@@ -118,10 +118,14 @@ void bind_failure()
             if (protocol == "sender")
             {
                 auto stream = std::make_shared<media_stream>("verify/port-conflict", worker);
-                require(stream->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264,
-                                             .clock_rate = 90'000, .channel_count = 0, .codec_config = {}}}), "test tracks rejected");
-                auto session = std::make_shared<gb28181_udp_sender_session>(
-                    worker, stream, "sender", udp::endpoint(address, 40'000), std::nullopt);
+                require(stream->set_tracks({{.id = 1,
+                                             .kind = media_kind::video,
+                                             .codec = codec_id::h264,
+                                             .clock_rate = 90'000,
+                                             .channel_count = 0,
+                                             .codec_config = {}}}),
+                        "test tracks rejected");
+                auto session = std::make_shared<gb28181_udp_sender_session>(worker, stream, "sender", udp::endpoint(address, 40'000), std::nullopt);
                 require(!session->startup(address, 96, 1234), "sender retried another allocation after bind failure");
                 session->shutdown();
             }
@@ -139,15 +143,15 @@ void bind_failure()
                 std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(
                     rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, nullptr), &rtsp_server_destroy);
                 require(server != nullptr, "RTSP test server creation failed");
-                auto session = std::make_shared<rtsp_publish_session>(
-                    worker, "verify/port-conflict", address, [](std::span<const std::uint8_t>) {}, []() {});
+                auto session =
+                    std::make_shared<rtsp_publish_session>(worker, "verify/port-conflict", address, [](std::span<const std::uint8_t>) {}, []() {});
                 constexpr std::string_view sdp =
                     "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=port-test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n"
                     "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n"
                     "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=Z0IAH5WoFAFuQA==,aM4G4g==\r\n"
                     "a=control:trackID=1\r\n";
-                require(session->on_announce(server.get(), "rtsp://127.0.0.1/verify/port-conflict",
-                                             sdp.data(), static_cast<int>(sdp.size())), "RTSP test ANNOUNCE failed");
+                require(session->on_announce(server.get(), "rtsp://127.0.0.1/verify/port-conflict", sdp.data(), static_cast<int>(sdp.size())),
+                        "RTSP test ANNOUNCE failed");
                 rtsp_header_transport_t transport{};
                 require(rtsp_header_transport("RTP/AVP;unicast;client_port=40000-40001;mode=record", &transport) == 0,
                         "RTSP test transport rejected");
@@ -175,42 +179,41 @@ void bind_failure()
         }
     }
 
-    boost::asio::post(
-        worker.io(),
-        [&]()
-        {
-            try
-            {
-                auto receiver = std::make_shared<gb28181_udp_receiver_session>(worker, "verify/port-reuse", 96, 1234);
-                require(receiver->startup(address) == 50'000, "receiver did not reuse released allocation");
-                receiver->shutdown();
-                boost::asio::post(
-                    worker.io(),
-                    [&, receiver]()
-                    {
-                        try
-                        {
-                            const auto port = pool.acquire();
-                            require(port == 50'000, "shutdown did not release allocation");
-                            {
-                                udp::socket rtp(worker.io(), udp::endpoint(address, *port));
-                                udp::socket rtcp(worker.io(), udp::endpoint(address, static_cast<std::uint16_t>(*port + 1U)));
-                            }
-                            pool.release(*port);
-                        }
-                        catch (...)
-                        {
-                            failure = std::current_exception();
-                        }
-                        worker.request_stop();
-                    });
-            }
-            catch (...)
-            {
-                failure = std::current_exception();
-                worker.request_stop();
-            }
-        });
+    boost::asio::post(worker.io(),
+                      [&]()
+                      {
+                          try
+                          {
+                              auto receiver = std::make_shared<gb28181_udp_receiver_session>(worker, "verify/port-reuse", 96, 1234);
+                              require(receiver->startup(address) == 50'000, "receiver did not reuse released allocation");
+                              receiver->shutdown();
+                              boost::asio::post(worker.io(),
+                                                [&, receiver]()
+                                                {
+                                                    try
+                                                    {
+                                                        const auto port = pool.acquire();
+                                                        require(port == 50'000, "shutdown did not release allocation");
+                                                        {
+                                                            udp::socket rtp(worker.io(), udp::endpoint(address, *port));
+                                                            udp::socket rtcp(worker.io(),
+                                                                             udp::endpoint(address, static_cast<std::uint16_t>(*port + 1U)));
+                                                        }
+                                                        pool.release(*port);
+                                                    }
+                                                    catch (...)
+                                                    {
+                                                        failure = std::current_exception();
+                                                    }
+                                                    worker.request_stop();
+                                                });
+                          }
+                          catch (...)
+                          {
+                              failure = std::current_exception();
+                              worker.request_stop();
+                          }
+                      });
     worker.io().run();
     if (failure)
     {
@@ -240,9 +243,13 @@ int main(int argc, char** argv)
         else
         {
             require(mode == "allocation", "unknown test case");
-            for (const auto range : {std::array{0, 10}, std::array{-1, 10}, std::array{10, 9},
-                                     std::array{10, 65'536}, std::array{10'000, 10'000},
-                                     std::array{10'001, 10'002}, std::array{65'535, 65'535}})
+            for (const auto range : {std::array{0, 10},
+                                     std::array{-1, 10},
+                                     std::array{10, 9},
+                                     std::array{10, 65'536},
+                                     std::array{10'000, 10'000},
+                                     std::array{10'001, 10'002},
+                                     std::array{65'535, 65'535}})
             {
                 bool rejected{};
                 try

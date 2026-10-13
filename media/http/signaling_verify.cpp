@@ -19,7 +19,8 @@ namespace media_server
 
 bool valid_stream_token(std::string_view token) noexcept
 {
-    return token.size() == 64 && std::ranges::all_of(token, [](char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); });
+    return token.size() == 64 &&
+           std::ranges::all_of(token, [](char value) { return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f'); });
 }
 
 bool valid_stream_id(std::string_view stream_id) noexcept
@@ -74,40 +75,41 @@ bool verify_stream(const config& application_config,
 
         boost::system::error_code error;
         auto resolve_token = yield[error];
-        const auto endpoints = boost::asio::async_initiate<decltype(resolve_token), void(boost::system::error_code, boost::asio::ip::tcp::resolver::results_type)>(
-            [&host, &port, deadline, executor = yield.get_executor()](auto handler)
-            {
-                auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(executor);
-                auto timer = std::make_shared<boost::asio::steady_timer>(executor, deadline);
-                auto completion = std::make_shared<std::optional<decltype(handler)>>(std::move(handler));
-                resolver->async_resolve(
-                    host,
-                    port,
-                    [resolver, timer, completion](boost::system::error_code resolve_error, boost::asio::ip::tcp::resolver::results_type result) mutable
-                    {
-                        if (!*completion)
+        const auto endpoints =
+            boost::asio::async_initiate<decltype(resolve_token), void(boost::system::error_code, boost::asio::ip::tcp::resolver::results_type)>(
+                [&host, &port, deadline, executor = yield.get_executor()](auto handler)
+                {
+                    auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(executor);
+                    auto timer = std::make_shared<boost::asio::steady_timer>(executor, deadline);
+                    auto completion = std::make_shared<std::optional<decltype(handler)>>(std::move(handler));
+                    resolver->async_resolve(host,
+                                            port,
+                                            [resolver, timer, completion](boost::system::error_code resolve_error,
+                                                                          boost::asio::ip::tcp::resolver::results_type result) mutable
+                                            {
+                                                if (!*completion)
+                                                {
+                                                    return;
+                                                }
+                                                timer->cancel();
+                                                auto callback = std::move(**completion);
+                                                completion->reset();
+                                                callback(resolve_error, std::move(result));
+                                            });
+                    timer->async_wait(
+                        [resolver, timer, completion](boost::system::error_code timer_error) mutable
                         {
-                            return;
-                        }
-                        timer->cancel();
-                        auto callback = std::move(**completion);
-                        completion->reset();
-                        callback(resolve_error, std::move(result));
-                    });
-                timer->async_wait(
-                    [resolver, timer, completion](boost::system::error_code timer_error) mutable
-                    {
-                        if (timer_error || !*completion)
-                        {
-                            return;
-                        }
-                        resolver->cancel();
-                        auto callback = std::move(**completion);
-                        completion->reset();
-                        callback(boost::asio::error::timed_out, {});
-                    });
-            },
-            resolve_token);
+                            if (timer_error || !*completion)
+                            {
+                                return;
+                            }
+                            resolver->cancel();
+                            auto callback = std::move(**completion);
+                            completion->reset();
+                            callback(boost::asio::error::timed_out, {});
+                        });
+                },
+                resolve_token);
         if (!error)
         {
             boost::beast::tcp_stream connection(yield.get_executor());
@@ -143,21 +145,32 @@ bool verify_stream(const config& application_config,
                     boost::beast::http::async_read(connection, buffer, response, yield[error]);
                     if (!error)
                     {
-                        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count();
+                        const auto elapsed =
+                            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count();
                         spdlog::debug("signaling verify result token {} operation {} stream_id {} status {} body {} elapsed_ms {}",
-                                      token, operation, stream_id, response.get().result_int(), response.get().body(), elapsed);
+                                      token,
+                                      operation,
+                                      stream_id,
+                                      response.get().result_int(),
+                                      response.get().body(),
+                                      elapsed);
                         return response.get().result() == boost::beast::http::status::ok;
                     }
                 }
             }
         }
         spdlog::debug("signaling verify failed token {} operation {} stream_id {} stage {} error {} elapsed_ms {}",
-                      token, operation, stream_id, stage, error.message(),
+                      token,
+                      operation,
+                      stream_id,
+                      stage,
+                      error.message(),
                       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started_at).count());
     }
     catch (const std::exception& error)
     {
-        spdlog::error("signaling verify failed token {} operation {} stream_id {} stage {} exception {}", token, operation, stream_id, stage, error.what());
+        spdlog::error(
+            "signaling verify failed token {} operation {} stream_id {} stage {} exception {}", token, operation, stream_id, stage, error.what());
     }
     return false;
 }

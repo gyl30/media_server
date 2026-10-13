@@ -31,8 +31,10 @@ inline std::optional<std::chrono::steady_clock::time_point> read_measurement_sta
     return std::chrono::steady_clock::time_point{std::chrono::nanoseconds{nanoseconds}};
 }
 
-inline boost::asio::awaitable<std::chrono::steady_clock::time_point> wait_measurement_start(
-    boost::asio::io_context& io, const std::string& path, std::chrono::seconds warmup, std::chrono::seconds timeout)
+inline boost::asio::awaitable<std::chrono::steady_clock::time_point> wait_measurement_start(boost::asio::io_context& io,
+                                                                                            const std::string& path,
+                                                                                            std::chrono::seconds warmup,
+                                                                                            std::chrono::seconds timeout)
 {
     auto start = std::chrono::steady_clock::now() + warmup;
     const auto deadline = start + timeout;

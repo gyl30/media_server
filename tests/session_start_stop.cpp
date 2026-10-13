@@ -44,16 +44,17 @@ void stopped_start(std::string_view protocol, std::string_view phase)
 
     config application_config;
     std::weak_ptr<session> lifetime;
-    boost::scope::scope_exit cleanup([&]()
-    {
-        if (const auto remaining = lifetime.lock())
+    boost::scope::scope_exit cleanup(
+        [&]()
         {
-            remaining->shutdown();
-        }
-        worker.request_stop();
-        worker.io().restart();
-        worker.io().run_for(1s);
-    });
+            if (const auto remaining = lifetime.lock())
+            {
+                remaining->shutdown();
+            }
+            worker.request_stop();
+            worker.io().restart();
+            worker.io().run_for(1s);
+        });
 
     if (phase == "before_start")
     {
@@ -109,8 +110,7 @@ int main(int argc, char** argv)
     {
         if (argc != 3 || (std::string_view(argv[1]) != "rtmp" && std::string_view(argv[1]) != "rtsp") ||
             (std::string_view(argv[2]) != "before_start" && std::string_view(argv[2]) != "queued_start" &&
-             std::string_view(argv[2]) != "queued_shutdown" &&
-             std::string_view(argv[2]) != "active_read"))
+             std::string_view(argv[2]) != "queued_shutdown" && std::string_view(argv[2]) != "active_read"))
         {
             throw std::runtime_error("usage: session_start_stop_tests rtmp|rtsp before_start|queued_start|queued_shutdown|active_read");
         }

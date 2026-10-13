@@ -16,10 +16,7 @@ gb28181_tcp_receiver_session::gb28181_tcp_receiver_session(worker_context& worke
                                                            std::string stream_id,
                                                            std::uint8_t payload_type,
                                                            std::uint32_t ssrc)
-    : worker_(worker),
-      receiver_(worker_, std::move(stream_id), payload_type, ssrc),
-      socket_(worker_.io()),
-      idle_timer_(worker_.io())
+    : worker_(worker), receiver_(worker_, std::move(stream_id), payload_type, ssrc), socket_(worker_.io()), idle_timer_(worker_.io())
 {
 }
 

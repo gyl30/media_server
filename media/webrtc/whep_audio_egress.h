@@ -31,8 +31,9 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
     void on_end() override;
 
    private:
-    friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
-        const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings);
+    friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
+                                                                        worker_context& worker,
+                                                                        whep_audio_settings settings);
     friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
     whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker);
@@ -48,8 +49,9 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
     worker_context::shutdown_subscription shutdown_subscription_;
 };
 
-[[nodiscard]] std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(
-    const std::shared_ptr<media_stream>& source, worker_context& worker, whep_audio_settings settings);
+[[nodiscard]] std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
+                                                                           worker_context& worker,
+                                                                           whep_audio_settings settings);
 void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
 }    // namespace media_server

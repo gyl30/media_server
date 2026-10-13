@@ -45,8 +45,8 @@ boost::beast::http::response<boost::beast::http::string_body> make_receiver_list
 
 bool is_control_path(std::string_view path)
 {
-    return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") || path == "/gb28181/sender" ||
-           path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
+    return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") ||
+           path == "/gb28181/sender" || path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
 }
 
 }    // namespace
@@ -167,7 +167,8 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
             boost::system::error_code error;
             const auto value = boost::json::parse(request.body(), error);
             const auto* stream_id = !error && value.is_object() ? value.as_object().if_contains("stream_id") : nullptr;
-            if (parsed->has_search() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() || stream_id->as_string().empty())
+            if (parsed->has_search() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() ||
+                stream_id->as_string().empty())
             {
                 status = boost::beast::http::status::bad_request;
                 failure = "invalid_request";

@@ -169,7 +169,6 @@ std::optional<boost::asio::ip::address> required_address(const json_object& obje
     return address;
 }
 
-
 }    // namespace
 
 std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body)
@@ -269,15 +268,9 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
     {
         case gb28181_transport::udp:
         {
-            if (!has_only_fields(*object,
-                                 {"stream_id",
-                                  "sender_id",
-                                  "transport",
-                                  "remote_address",
-                                  "remote_rtp_port",
-                                  "remote_rtcp_port",
-                                  "payload_type",
-                                  "ssrc"}))
+            if (!has_only_fields(
+                    *object,
+                    {"stream_id", "sender_id", "transport", "remote_address", "remote_rtp_port", "remote_rtcp_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }
@@ -297,8 +290,7 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
 
         case gb28181_transport::tcp_active:
         {
-            if (!has_only_fields(*object,
-                                 {"stream_id", "sender_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
+            if (!has_only_fields(*object, {"stream_id", "sender_id", "transport", "remote_address", "remote_port", "payload_type", "ssrc"}))
             {
                 return std::nullopt;
             }

@@ -63,27 +63,30 @@ struct connection
 
     void read_to_end(std::vector<std::uint8_t>& received)
     {
-        boost::asio::spawn(io, [&](boost::asio::yield_context yield)
-                          {
-                              std::array<std::uint8_t, 8192> buffer{};
-                              for (;;)
-                              {
-                                  boost::system::error_code error;
-                                  const auto bytes = peer.async_read_some(boost::asio::buffer(buffer), yield[error]);
-                                  received.insert(received.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
-                                  if (error == boost::asio::error::eof)
-                                  {
-                                      return;
-                                  }
-                                  require(!error, "peer read failed");
-                              }
-                          }, [](std::exception_ptr error)
-                          {
-                              if (error)
-                              {
-                                  std::rethrow_exception(error);
-                              }
-                          });
+        boost::asio::spawn(
+            io,
+            [&](boost::asio::yield_context yield)
+            {
+                std::array<std::uint8_t, 8192> buffer{};
+                for (;;)
+                {
+                    boost::system::error_code error;
+                    const auto bytes = peer.async_read_some(boost::asio::buffer(buffer), yield[error]);
+                    received.insert(received.end(), buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(bytes));
+                    if (error == boost::asio::error::eof)
+                    {
+                        return;
+                    }
+                    require(!error, "peer read failed");
+                }
+            },
+            [](std::exception_ptr error)
+            {
+                if (error)
+                {
+                    std::rethrow_exception(error);
+                }
+            });
     }
 };
 
@@ -97,20 +100,20 @@ void serialization_and_ownership()
     std::vector<std::uint8_t> expected;
     std::size_t completions{};
     pair.read_to_end(received);
-    pair.transport->set_write_callback([&](boost::system::error_code result, std::size_t bytes)
-                                      {
-                                          require(!result && bytes == (completions < 20 ? 32'768U + completions : 257U),
-                                                  "completion order/size corrupted");
-                                          ++completions;
-                                          if (completions == 20)
-                                          {
-                                              pair.transport->write(std::vector<std::uint8_t>(257, 20));
-                                          }
-                                          if (completions == 21)
-                                          {
-                                              pair.transport->shutdown();
-                                          }
-                                      });
+    pair.transport->set_write_callback(
+        [&](boost::system::error_code result, std::size_t bytes)
+        {
+            require(!result && bytes == (completions < 20 ? 32'768U + completions : 257U), "completion order/size corrupted");
+            ++completions;
+            if (completions == 20)
+            {
+                pair.transport->write(std::vector<std::uint8_t>(257, 20));
+            }
+            if (completions == 21)
+            {
+                pair.transport->shutdown();
+            }
+        });
     pair.transport->write(std::vector<std::uint8_t>{});
     pair.transport->write(std::span<const std::uint8_t>{});
     for (std::uint8_t sequence = 0; sequence < 20; ++sequence)
@@ -141,15 +144,16 @@ void callback_shutdown()
     const std::weak_ptr<int> callback_lifetime = callback_owner;
     const std::weak_ptr<tcp_transport> lifetime = pair.transport;
     pair.read_to_end(received);
-    pair.transport->set_write_callback([&, callback_owner](boost::system::error_code error, std::size_t bytes)
-                                      {
-                                          require(!error && bytes == 73, "callback shutdown write failed");
-                                          ++completions;
-                                          pair.transport->shutdown();
-                                          pair.transport->shutdown();
-                                          pair.transport->write(std::vector<std::uint8_t>(91, 0xff));
-                                          pair.transport.reset();
-                                      });
+    pair.transport->set_write_callback(
+        [&, callback_owner](boost::system::error_code error, std::size_t bytes)
+        {
+            require(!error && bytes == 73, "callback shutdown write failed");
+            ++completions;
+            pair.transport->shutdown();
+            pair.transport->shutdown();
+            pair.transport->write(std::vector<std::uint8_t>(91, 0xff));
+            pair.transport.reset();
+        });
     callback_owner.reset();
     pair.transport->write(std::vector<std::uint8_t>(73, 0x11));
     pair.drain();
@@ -172,7 +176,9 @@ void in_flight_shutdown()
     pair.transport->write(std::vector<std::uint8_t>(101, 0x22));
     pair.transport->write(std::vector<std::uint8_t>(103, 0x33));
     std::array<std::uint8_t, 1> prefix{};
-    boost::asio::async_read(pair.peer, boost::asio::buffer(prefix), [&](boost::system::error_code error, std::size_t bytes)
+    boost::asio::async_read(pair.peer,
+                            boost::asio::buffer(prefix),
+                            [&](boost::system::error_code error, std::size_t bytes)
                             {
                                 require(!error && bytes == 1 && prefix[0] == 0x11, "in-flight write never started");
                                 require(completions == 0 && !callback_lifetime.expired(), "blocked write already completed");
@@ -180,7 +186,8 @@ void in_flight_shutdown()
                                 pair.transport->shutdown();
                                 pair.transport->write(std::vector<std::uint8_t>(107, 0x44));
                                 pair.transport.reset();
-                                boost::asio::post(pair.io, [&]()
+                                boost::asio::post(pair.io,
+                                                  [&]()
                                                   {
                                                       require(callback_lifetime.expired(), "shutdown retained callback");
                                                       require(completions == 0, "cancelled completion escaped shutdown fence");
@@ -211,27 +218,28 @@ void high_water_boundaries()
         std::size_t completions{};
         std::vector<std::uint8_t> received;
         pair.read_to_end(received);
-        pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
-                                          {
-                                              // 网络层只报告溢出，连接由上层关闭。
-                                              if (overflow)
-                                              {
-                                                  require(error == boost::asio::error::no_buffer_space && bytes == 0, "high water overflow not rejected");
-                                                  boost::system::error_code endpoint_error;
-                                                  const auto endpoint = pair.transport->local_endpoint(endpoint_error);
-                                                  require(!endpoint_error && endpoint.port() != 0, "transport closed socket before reporting overflow");
-                                                  boost::asio::post(pair.io, [&]() { pair.transport->shutdown(); });
-                                              }
-                                              else
-                                              {
-                                                  require(!error && bytes == (completions == 0 ? front_bytes : remaining), "high water completion bytes changed");
-                                              }
-                                              ++completions;
-                                              if (!overflow && (remaining == 0 || completions == 2))
-                                              {
-                                                  pair.transport->shutdown();
-                                              }
-                                          });
+        pair.transport->set_write_callback(
+            [&](boost::system::error_code error, std::size_t bytes)
+            {
+                // 网络层只报告溢出，连接由上层关闭。
+                if (overflow)
+                {
+                    require(error == boost::asio::error::no_buffer_space && bytes == 0, "high water overflow not rejected");
+                    boost::system::error_code endpoint_error;
+                    const auto endpoint = pair.transport->local_endpoint(endpoint_error);
+                    require(!endpoint_error && endpoint.port() != 0, "transport closed socket before reporting overflow");
+                    boost::asio::post(pair.io, [&]() { pair.transport->shutdown(); });
+                }
+                else
+                {
+                    require(!error && bytes == (completions == 0 ? front_bytes : remaining), "high water completion bytes changed");
+                }
+                ++completions;
+                if (!overflow && (remaining == 0 || completions == 2))
+                {
+                    pair.transport->shutdown();
+                }
+            });
         pair.transport->write(std::vector<std::uint8_t>(front_bytes, 0x11));
         pair.transport->write(std::vector<std::uint8_t>(remaining, 0x22));
         if (overflow)
@@ -244,9 +252,9 @@ void high_water_boundaries()
         if (overflow)
         {
             // 在途的首个写可能已发出部分数据，超限数据绝不能发出。
-            require(received.size() <= front_bytes && std::ranges::all_of(received, [](std::uint8_t byte) { return byte == 0x11; }) &&
-                        completions == 1U,
-                    "high water overflow sent rejected data or notified twice");
+            require(
+                received.size() <= front_bytes && std::ranges::all_of(received, [](std::uint8_t byte) { return byte == 0x11; }) && completions == 1U,
+                "high water overflow sent rejected data or notified twice");
         }
         else
         {
@@ -264,17 +272,18 @@ void stalled_reader()
     connection pair(true);
     std::size_t overflows{};
     std::size_t completed_bytes{};
-    pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
-                                      {
-                                          if (error == boost::asio::error::no_buffer_space)
-                                          {
-                                              ++overflows;
-                                              pair.transport->shutdown();
-                                              return;
-                                          }
-                                          require(!error, "stalled reader write failed");
-                                          completed_bytes += bytes;
-                                      });
+    pair.transport->set_write_callback(
+        [&](boost::system::error_code error, std::size_t bytes)
+        {
+            if (error == boost::asio::error::no_buffer_space)
+            {
+                ++overflows;
+                pair.transport->shutdown();
+                return;
+            }
+            require(!error, "stalled reader write failed");
+            completed_bytes += bytes;
+        });
     for (int index = 0; index < 64; ++index)
     {
         pair.transport->write(std::vector<std::uint8_t>(64U * 1024U, 0x33));
@@ -291,28 +300,32 @@ void socket_error()
     std::size_t errors{};
     bool reset_received{};
     const std::weak_ptr<tcp_transport> lifetime = pair.transport;
-    pair.transport->set_write_callback([&](boost::system::error_code error, std::size_t bytes)
-                                      {
-                                          require((error == boost::asio::error::broken_pipe || error == boost::asio::error::connection_reset) && bytes == 0,
-                                                  "real TCP write error not propagated");
-                                          ++errors;
-                                      });
-    boost::asio::spawn(pair.io, [&](boost::asio::yield_context yield)
-                      {
-                          std::array<std::uint8_t, 1> buffer{};
-                          boost::system::error_code error;
-                          pair.transport->read(buffer, yield, error);
-                          require(error == boost::asio::error::connection_reset, "peer reset not observed");
-                          reset_received = true;
-                          pair.transport->write(std::vector<std::uint8_t>(4096, 0x11));
-                          pair.transport->write(std::vector<std::uint8_t>(4096, 0x22));
-                      }, [](std::exception_ptr error)
-                      {
-                          if (error)
-                          {
-                              std::rethrow_exception(error);
-                          }
-                      });
+    pair.transport->set_write_callback(
+        [&](boost::system::error_code error, std::size_t bytes)
+        {
+            require((error == boost::asio::error::broken_pipe || error == boost::asio::error::connection_reset) && bytes == 0,
+                    "real TCP write error not propagated");
+            ++errors;
+        });
+    boost::asio::spawn(
+        pair.io,
+        [&](boost::asio::yield_context yield)
+        {
+            std::array<std::uint8_t, 1> buffer{};
+            boost::system::error_code error;
+            pair.transport->read(buffer, yield, error);
+            require(error == boost::asio::error::connection_reset, "peer reset not observed");
+            reset_received = true;
+            pair.transport->write(std::vector<std::uint8_t>(4096, 0x11));
+            pair.transport->write(std::vector<std::uint8_t>(4096, 0x22));
+        },
+        [](std::exception_ptr error)
+        {
+            if (error)
+            {
+                std::rethrow_exception(error);
+            }
+        });
     pair.peer.set_option(tcp::socket::linger(true, 0));
     pair.peer.close();
     pair.drain();

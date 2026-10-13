@@ -300,10 +300,7 @@ int rtsp_server_connection::announce_callback(void* param, rtsp_server_t* server
                     owner->transport_->write(data);
                 }
             },
-            [owner]()
-            {
-                owner->idle_timer_.touch();
-            });
+            [owner]() { owner->idle_timer_.touch(); });
         publish->set_shutdown_handler([owner]() { owner->shutdown(); });
         if (!publish->on_announce(server, uri != nullptr ? uri : "", sdp, length))
         {
@@ -342,10 +339,7 @@ int rtsp_server_connection::record_callback(
     return -1;
 }
 
-int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*)
-{
-    return rtsp_server_reply_options(server, 200);
-}
+int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
 
 int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
@@ -388,16 +382,16 @@ bool rtsp_server_connection::admit_play(std::string_view uri)
 
     const auto owner = shared_from_this();
     auto player = std::make_shared<rtsp_play_session>(worker_,
-                                                        std::move(stream),
-                                                        target->stream_id,
-                                                        local_address_,
-                                                        [owner](std::vector<std::uint8_t> data)
-                                                        {
-                                                            if (owner->transport_)
-                                                            {
-                                                                owner->transport_->write(std::move(data));
-                                                            }
-                                                        });
+                                                      std::move(stream),
+                                                      target->stream_id,
+                                                      local_address_,
+                                                      [owner](std::vector<std::uint8_t> data)
+                                                      {
+                                                          if (owner->transport_)
+                                                          {
+                                                              owner->transport_->write(std::move(data));
+                                                          }
+                                                      });
     player->set_shutdown_handler([owner]() { owner->shutdown(); });
     if (player->prepare_presentation() != 0)
     {

@@ -43,11 +43,11 @@ bool media_stalled(const Client& client, const media_progress& progress, bool ex
 
 template <typename Client>
 boost::asio::awaitable<void> watch_media(std::shared_ptr<Client> client,
-                                       std::shared_ptr<boost::asio::steady_timer> timer,
-                                       std::shared_ptr<media_progress> progress,
-                                       bool expect_audio,
-                                       std::chrono::seconds interval,
-                                       std::chrono::steady_clock::time_point deadline)
+                                         std::shared_ptr<boost::asio::steady_timer> timer,
+                                         std::shared_ptr<media_progress> progress,
+                                         bool expect_audio,
+                                         std::chrono::seconds interval,
+                                         std::chrono::steady_clock::time_point deadline)
 {
     progress->video = client->received_messages();
     progress->audio = client->received_audio_messages();

@@ -26,8 +26,8 @@ http_flv_client::http_flv_client(boost::asio::io_context& io, std::string path)
 boost::asio::awaitable<boost::system::error_code> http_flv_client::play(std::string host, std::uint16_t port, bool expect_audio)
 {
     boost::system::error_code error;
-    const auto endpoints = co_await resolver_.async_resolve(host, std::to_string(port),
-        boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    const auto endpoints =
+        co_await resolver_.async_resolve(host, std::to_string(port), boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
@@ -45,8 +45,7 @@ boost::asio::awaitable<boost::system::error_code> http_flv_client::play(std::str
     {
         co_return error;
     }
-    co_await boost::beast::http::async_read_header(socket_, http_buffer_, response_,
-        boost::asio::redirect_error(boost::asio::use_awaitable, error));
+    co_await boost::beast::http::async_read_header(socket_, http_buffer_, response_, boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
@@ -124,8 +123,8 @@ boost::asio::awaitable<boost::system::error_code> http_flv_client::read_exact(st
             response_.get().body().data = body_buffer_.data();
             response_.get().body().size = body_buffer_.size();
             boost::system::error_code error;
-            co_await boost::beast::http::async_read_some(socket_, http_buffer_, response_,
-                boost::asio::redirect_error(boost::asio::use_awaitable, error));
+            co_await boost::beast::http::async_read_some(
+                socket_, http_buffer_, response_, boost::asio::redirect_error(boost::asio::use_awaitable, error));
             body_offset_ = 0;
             body_size_ = body_buffer_.size() - response_.get().body().size;
             if (error && error != boost::beast::http::error::need_buffer)

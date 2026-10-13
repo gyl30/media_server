@@ -30,11 +30,8 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
 {
    public:
     using write_handler = std::function<void(std::vector<std::uint8_t>)>;
-    rtsp_play_session(worker_context& worker,
-                      std::shared_ptr<media_stream> stream,
-                      std::string path,
-                      boost::asio::ip::address local_address,
-                      write_handler write);
+    rtsp_play_session(
+        worker_context& worker, std::shared_ptr<media_stream> stream, std::string path, boost::asio::ip::address local_address, write_handler write);
 
    public:
     void set_shutdown_handler(std::function<void()> handler) { shutdown_handler_ = std::move(handler); }

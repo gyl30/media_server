@@ -42,7 +42,8 @@ class worker_sink_dispatcher final
             const auto& group = iterator->second;
             {
                 std::scoped_lock lock(group->mutex);
-                std::erase_if(group->sinks, [sink](const auto& weak)
+                std::erase_if(group->sinks,
+                              [sink](const auto& weak)
                               {
                                   const auto current = weak.lock();
                                   return !current || current.get() == sink;

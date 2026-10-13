@@ -214,12 +214,8 @@ bool gb28181_rtp_receiver::apply_topology(const ps_topology& topology)
     }
     video_codec_ = topology.video;
     audio_codec_ = topology.audio;
-    video_track_ = media_track{.id = video_track_id,
-                               .kind = media_kind::video,
-                               .codec = *video_codec_,
-                               .clock_rate = 90'000,
-                               .channel_count = 0,
-                               .codec_config = {}};
+    video_track_ = media_track{
+        .id = video_track_id, .kind = media_kind::video, .codec = *video_codec_, .clock_rate = 90'000, .channel_count = 0, .codec_config = {}};
     if (audio_codec_ == codec_id::g711a || audio_codec_ == codec_id::g711u)
     {
         audio_track_ = media_track{

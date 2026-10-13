@@ -10,7 +10,7 @@ namespace media_server
 class hls_segmenter;
 class media_stream;
 class worker_context;
-}
+}    // namespace media_server
 
 namespace media_server::hls
 {

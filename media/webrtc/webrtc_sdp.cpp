@@ -335,22 +335,22 @@ bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 
 
 const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_profile_level& source)
 {
-    const auto iterator = std::find_if(media.codecs.begin(),
-                                       media.codecs.end(),
-                                       [&source](const webrtc_codec_offer& codec)
-                                       {
-                                           if (!rtcp_mux_payload_type_allowed(codec.payload_type) || lower_copy(codec.encoding_name) != "h264" ||
-                                               codec.clock_rate != 90'000U || !has_parameter(codec.format_parameters, "packetization-mode", "1"))
-                                           {
-                                               return false;
-                                           }
-                                           const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
-                                           const auto offered = parse_h264_profile_level(profile_level_id.value_or("42000a"));
-                                           // 非对称 Level 采用宽松互通策略；answer 和媒体仍保留真实源 SPS，不保证接收端解码能力。
-                                           return offered && offered->profile == source.profile &&
-                                                  (source.level_rank <= offered->level_rank ||
-                                                   has_parameter(codec.format_parameters, "level-asymmetry-allowed", "1"));
-                                       });
+    const auto iterator =
+        std::find_if(media.codecs.begin(),
+                     media.codecs.end(),
+                     [&source](const webrtc_codec_offer& codec)
+                     {
+                         if (!rtcp_mux_payload_type_allowed(codec.payload_type) || lower_copy(codec.encoding_name) != "h264" ||
+                             codec.clock_rate != 90'000U || !has_parameter(codec.format_parameters, "packetization-mode", "1"))
+                         {
+                             return false;
+                         }
+                         const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
+                         const auto offered = parse_h264_profile_level(profile_level_id.value_or("42000a"));
+                         // 非对称 Level 采用宽松互通策略；answer 和媒体仍保留真实源 SPS，不保证接收端解码能力。
+                         return offered && offered->profile == source.profile &&
+                                (source.level_rank <= offered->level_rank || has_parameter(codec.format_parameters, "level-asymmetry-allowed", "1"));
+                     });
     return iterator == media.codecs.end() ? nullptr : &*iterator;
 }
 
@@ -717,8 +717,7 @@ const webrtc_media_offer* find_webrtc_transport(const webrtc_offer& offer)
         return nullptr;
     }
     const auto& mid = offer.bundle_mids.front();
-    const auto media = std::find_if(offer.media.begin(), offer.media.end(),
-                                  [&mid](const webrtc_media_offer& value) { return value.mid == mid; });
+    const auto media = std::find_if(offer.media.begin(), offer.media.end(), [&mid](const webrtc_media_offer& value) { return value.mid == mid; });
     if (media == offer.media.end() || media->port == 0 || !bundle_media_supported(*media) ||
         (lower_copy(media->type) != "video" && lower_copy(media->type) != "audio"))
     {

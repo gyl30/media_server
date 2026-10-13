@@ -30,8 +30,7 @@ hls_play_sessions& sessions()
 
 }    // namespace
 
-std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker,
-                                                           std::shared_ptr<hls_segmenter> segmenter)
+std::shared_ptr<hls_play_session> hls_play_session::create(worker_context& worker, std::shared_ptr<hls_segmenter> segmenter)
 {
     boost::uuids::random_generator generator;
     auto& current = sessions();
@@ -72,12 +71,8 @@ std::shared_ptr<hls_play_session> hls_play_session::find(std::string_view secret
     return iterator->second;
 }
 
-hls_play_session::hls_play_session(
-    worker_context& worker, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
-    : secret_(std::move(secret)),
-      segmenter_(std::move(segmenter)),
-      last_activity_(std::chrono::steady_clock::now()),
-      timer_(worker.io())
+hls_play_session::hls_play_session(worker_context& worker, std::string secret, std::shared_ptr<hls_segmenter> segmenter)
+    : secret_(std::move(secret)), segmenter_(std::move(segmenter)), last_activity_(std::chrono::steady_clock::now()), timer_(worker.io())
 {
 }
 

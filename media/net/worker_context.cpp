@@ -70,28 +70,27 @@ void worker_context::request_stop()
         return;
     }
 
-    boost::asio::post(
-        io_,
-        [this]()
-        {
-            for (auto iterator = tasks_.begin(); iterator != tasks_.end();)
-            {
-                const auto current = iterator++;
-                current->cancellation.emit(boost::asio::cancellation_type::terminal);
-            }
-            for (auto iterator = shutdown_callbacks_.begin(); iterator != shutdown_callbacks_.end();)
-            {
-                const auto current = iterator++;
-                auto callback = std::move(current->function);
-                if (current->subscription != nullptr)
-                {
-                    current->subscription->worker_ = nullptr;
-                }
-                shutdown_callbacks_.erase(current);
-                callback();
-            }
-            work_.reset();
-        });
+    boost::asio::post(io_,
+                      [this]()
+                      {
+                          for (auto iterator = tasks_.begin(); iterator != tasks_.end();)
+                          {
+                              const auto current = iterator++;
+                              current->cancellation.emit(boost::asio::cancellation_type::terminal);
+                          }
+                          for (auto iterator = shutdown_callbacks_.begin(); iterator != shutdown_callbacks_.end();)
+                          {
+                              const auto current = iterator++;
+                              auto callback = std::move(current->function);
+                              if (current->subscription != nullptr)
+                              {
+                                  current->subscription->worker_ = nullptr;
+                              }
+                              shutdown_callbacks_.erase(current);
+                              callback();
+                          }
+                          work_.reset();
+                      });
 }
 
 bool worker_context::stop_requested() const noexcept { return stop_requested_.load(std::memory_order_acquire); }

@@ -43,8 +43,8 @@ void media_stream::add_sink(std::shared_ptr<media_sink> sink)
         return;
     }
     auto* target = &sink->worker();
-    boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink = std::move(sink), target]() mutable
-                          { self->add_sink_owner(std::move(sink), *target); });
+    boost::asio::dispatch(worker_.io(),
+                          [self = shared_from_this(), sink = std::move(sink), target]() mutable { self->add_sink_owner(std::move(sink), *target); });
 }
 
 void media_stream::add_sink_owner(std::shared_ptr<media_sink> sink, worker_context& worker)

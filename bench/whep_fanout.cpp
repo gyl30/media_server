@@ -160,7 +160,8 @@ configuration parse_arguments(int argc, char** argv)
         config.io_threads == 0U || config.io_threads > 64U || config.duration.count() <= 0 || config.warmup.count() < 0 ||
         config.ready_timeout.count() <= 0 || config.progress_interval.count() <= 0)
     {
-        throw std::runtime_error("exactly one of whep-url or whep-urls-file, viewers, ramp-per-second, io-threads and positive duration are required");
+        throw std::runtime_error(
+            "exactly one of whep-url or whep-urls-file, viewers, ramp-per-second, io-threads and positive duration are required");
     }
     if (!config.whep_urls_file.empty())
     {
@@ -220,8 +221,13 @@ class play_session final : public std::enable_shared_from_this<play_session>
                  std::uint8_t video_payload_type,
                  bool expect_audio,
                  clock_type::time_point started)
-        : results_(std::move(results)), peer_(std::move(peer)), resource_url_(std::move(resource_url)), index_(index),
-          video_payload_type_(video_payload_type), expect_audio_(expect_audio), started_(started)
+        : results_(std::move(results)),
+          peer_(std::move(peer)),
+          resource_url_(std::move(resource_url)),
+          index_(index),
+          video_payload_type_(video_payload_type),
+          expect_audio_(expect_audio),
+          started_(started)
     {
     }
 
@@ -313,8 +319,8 @@ class play_session final : public std::enable_shared_from_this<play_session>
             media_ready_ = true;
             {
                 std::lock_guard lock(results_->mutex);
-                results_->first_media_milliseconds.push_back(static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - started_).count()));
+                results_->first_media_milliseconds.push_back(
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - started_).count()));
                 ++results_->media_ready;
             }
             results_->changed.notify_all();
@@ -474,11 +480,9 @@ int main(int argc, char** argv)
             auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, config.bind_address);
             media_server::bench::webrtc_http_response response;
             std::string error;
-            const auto url = !config.whep_urls.empty()
-                                 ? config.whep_urls[index]
-                                 : config.sources == 1U
-                                       ? config.whep_url
-                                       : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
+            const auto url = !config.whep_urls.empty() ? config.whep_urls[index]
+                             : config.sources == 1U    ? config.whep_url
+                                                    : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
             const auto posted = media_server::bench::post_webrtc_offer(url, offer, response, error);
             if (!posted || response.status != 201U || !peer->establish(response.body, error))
             {
@@ -509,9 +513,8 @@ int main(int argc, char** argv)
         }
         {
             std::unique_lock lock(results->mutex);
-            results->changed.wait_for(lock,
-                                      config.ready_timeout,
-                                      [&]() { return results->media_ready.load() + results->establishment_failures.load() == config.viewers; });
+            results->changed.wait_for(
+                lock, config.ready_timeout, [&]() { return results->media_ready.load() + results->establishment_failures.load() == config.viewers; });
         }
 
         const auto established = sample_process();
@@ -524,13 +527,11 @@ int main(int argc, char** argv)
         if (!latencies.empty())
         {
             std::cout << "first_media_ms_p50=" << latencies[(latencies.size() - 1U) / 2U]
-                      << " p95=" << latencies[(latencies.size() - 1U) * 95U / 100U]
-                      << " p99=" << latencies[(latencies.size() - 1U) * 99U / 100U]
+                      << " p95=" << latencies[(latencies.size() - 1U) * 95U / 100U] << " p99=" << latencies[(latencies.size() - 1U) * 99U / 100U]
                       << " max=" << latencies.back() << '\n';
         }
         std::cout << "phase=established requested=" << config.viewers << " ready=" << results->ready.load()
-                  << " media_ready=" << results->media_ready.load()
-                  << " establishment_failures=" << results->establishment_failures.load()
+                  << " media_ready=" << results->media_ready.load() << " establishment_failures=" << results->establishment_failures.load()
                   << " ramp_seconds=" << std::chrono::duration<double>(clock_type::now() - ramp_started).count()
                   << " generator_cpu_seconds=" << established.cpu_seconds << " generator_rss_kib=" << established.rss_kib
                   << " generator_pss_kib=" << established.pss_kib << " generator_fds=" << established.fds << std::endl;
@@ -565,8 +566,12 @@ int main(int argc, char** argv)
         std::exception_ptr barrier_error;
         clock_type::time_point requested_start;
         boost::asio::co_spawn(barrier,
-            media_server::bench::wait_measurement_start(barrier, config.start_file, config.warmup, config.ready_timeout),
-            [&](std::exception_ptr error, clock_type::time_point start) { barrier_error = error; requested_start = start; });
+                              media_server::bench::wait_measurement_start(barrier, config.start_file, config.warmup, config.ready_timeout),
+                              [&](std::exception_ptr error, clock_type::time_point start)
+                              {
+                                  barrier_error = error;
+                                  requested_start = start;
+                              });
         barrier.run();
         if (barrier_error)
         {
@@ -613,8 +618,7 @@ int main(int argc, char** argv)
             std::uint64_t progress_bytes_min = std::numeric_limits<std::uint64_t>::max();
             for (std::size_t index = 0; index < sessions.size(); ++index)
             {
-                const session_sample current{sessions[index]->received_bytes(), sessions[index]->video_packets(),
-                                             sessions[index]->audio_packets()};
+                const session_sample current{sessions[index]->received_bytes(), sessions[index]->video_packets(), sessions[index]->audio_packets()};
                 const auto video = current.video - progress_before[index].video;
                 const auto audio = current.audio - progress_before[index].audio;
                 progress_count += video > 0 && (config.video_only || audio > 0) ? 1U : 0U;
@@ -655,14 +659,13 @@ int main(int argc, char** argv)
         const auto viewer_rate = [&](std::size_t percentile)
         { return static_cast<double>(viewer_bytes[(viewer_bytes.size() - 1U) * percentile / 100U]) / elapsed; };
         std::cout << "phase=measurement requested=" << config.viewers << " ready=" << results->media_ready.load()
-                  << " measurement_start_monotonic_ns=" << measurement_start_ns
-                  << " measurement_end_monotonic_ns=" << measurement_end_ns
+                  << " measurement_start_monotonic_ns=" << measurement_start_ns << " measurement_end_monotonic_ns=" << measurement_end_ns
                   << " client_cpu_cores=" << (process_after.cpu_seconds - process_before.cpu_seconds) / elapsed
-                  << " steady_media_bytes=" << after.bytes - before.bytes << " progressing=" << progressing << " runtime_failures=" << results->runtime_failures.load()
-                  << " duration_seconds=" << elapsed << " received_bytes=" << after.bytes - before.bytes
-                  << " received_packets=" << after.packets - before.packets << " video_packets=" << after.video - before.video
-                  << " audio_packets=" << after.audio - before.audio << " media_datagrams=" << after.media_datagrams - before.media_datagrams
-                  << " unprotect_failures=" << after.unprotect_failures
+                  << " steady_media_bytes=" << after.bytes - before.bytes << " progressing=" << progressing
+                  << " runtime_failures=" << results->runtime_failures.load() << " duration_seconds=" << elapsed
+                  << " received_bytes=" << after.bytes - before.bytes << " received_packets=" << after.packets - before.packets
+                  << " video_packets=" << after.video - before.video << " audio_packets=" << after.audio - before.audio
+                  << " media_datagrams=" << after.media_datagrams - before.media_datagrams << " unprotect_failures=" << after.unprotect_failures
                   << " bytes_per_viewer_second=" << static_cast<double>(after.bytes - before.bytes) / elapsed / static_cast<double>(config.viewers)
                   << " viewer_bytes_per_second_min=" << viewer_rate(0) << " viewer_bytes_per_second_p10=" << viewer_rate(10)
                   << " viewer_bytes_per_second_p50=" << viewer_rate(50) << " viewer_bytes_per_second_p90=" << viewer_rate(90)
@@ -679,8 +682,8 @@ int main(int argc, char** argv)
         {
             std::cerr << error << '\n';
         }
-        return all_windows_healthy && progressing == config.viewers && results->runtime_failures.load() == 0U && results->stopped.load() == config.viewers &&
-                       removed == config.viewers
+        return all_windows_healthy && progressing == config.viewers && results->runtime_failures.load() == 0U &&
+                       results->stopped.load() == config.viewers && removed == config.viewers
                    ? 0
                    : 1;
     }

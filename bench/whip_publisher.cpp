@@ -149,8 +149,8 @@ configuration parse_arguments(int argc, char** argv)
             throw std::runtime_error("unknown argument " + std::string(argument));
         }
     }
-    if (config.urls_file.empty() || config.fixture.empty() || config.sources == 0U || config.ramp_per_second == 0U ||
-        config.io_threads == 0U || config.io_threads > 64U || config.duration.count() <= 0)
+    if (config.urls_file.empty() || config.fixture.empty() || config.sources == 0U || config.ramp_per_second == 0U || config.io_threads == 0U ||
+        config.io_threads > 64U || config.duration.count() <= 0)
     {
         throw std::runtime_error("fixture, whip-urls-file, positive sources, ramp, io-threads and duration required");
     }
@@ -265,10 +265,14 @@ media_fixture make_media_fixture(const configuration& config)
             {
                 std::vector<std::uint8_t> annex_b(static_cast<std::size_t>(packet->size) + 8192U);
                 const auto bytes = h264_mp4toannexb(&avc, packet->data, static_cast<std::size_t>(packet->size), annex_b.data(), annex_b.size());
-                if (bytes <= 0 || mpeg4_h264_annexb_nalu(annex_b.data(), static_cast<std::size_t>(bytes),
-                    [](void* param, const std::uint8_t* nalu, std::size_t size) {
-                        append_h264_nalu(*static_cast<std::vector<rtp_payload>*>(param), {nalu, size});
-                    }, &frame.packets) != 0 || frame.packets.empty())
+                if (bytes <= 0 ||
+                    mpeg4_h264_annexb_nalu(
+                        annex_b.data(),
+                        static_cast<std::size_t>(bytes),
+                        [](void* param, const std::uint8_t* nalu, std::size_t size)
+                        { append_h264_nalu(*static_cast<std::vector<rtp_payload>*>(param), {nalu, size}); },
+                        &frame.packets) != 0 ||
+                    frame.packets.empty())
                 {
                     throw std::runtime_error("invalid fixture H.264 access unit");
                 }
@@ -278,8 +282,8 @@ media_fixture make_media_fixture(const configuration& config)
             {
                 frame.packets.push_back({std::make_shared<const std::vector<std::uint8_t>>(packet->data, packet->data + packet->size), true});
             }
-            fixture.duration = std::max(fixture.duration, frame.at + std::chrono::nanoseconds{
-                av_rescale_q(packet->duration, stream->time_base, {1, 1'000'000'000})});
+            fixture.duration = std::max(fixture.duration,
+                                        frame.at + std::chrono::nanoseconds{av_rescale_q(packet->duration, stream->time_base, {1, 1'000'000'000})});
             fixture.frames.emplace_back(std::move(frame));
         }
         av_packet_unref(packet.get());
@@ -446,9 +450,13 @@ class publish_session final : public std::enable_shared_from_this<publish_sessio
         const auto offset = static_cast<std::uint32_t>(av_rescale_q(cycles_ * fixture_->duration.count(), {1, 1'000'000'000}, {1, rate}));
         for (const auto& payload : frame.packets)
         {
-            if (!send_packet(*payload.bytes, frame.video ? 102 : 111, payload.marker,
-                             frame.video ? video_sequence_ : audio_sequence_, frame.timestamp + offset,
-                             frame.video ? video_ssrc_ : audio_ssrc_, frame.video ? '0' : '1'))
+            if (!send_packet(*payload.bytes,
+                             frame.video ? 102 : 111,
+                             payload.marker,
+                             frame.video ? video_sequence_ : audio_sequence_,
+                             frame.timestamp + offset,
+                             frame.video ? video_ssrc_ : audio_ssrc_,
+                             frame.video ? '0' : '1'))
             {
                 return;
             }
@@ -605,7 +613,8 @@ int main(int argc, char** argv)
         {
             const auto& publish_url = config.urls[index];
             auto& shard = *shards[index % shards.size()];
-            auto peer = std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, boost::asio::ip::make_address(config.bind_address));
+            auto peer =
+                std::make_shared<media_server::bench::webrtc_client_peer>(shard.io, context, boost::asio::ip::make_address(config.bind_address));
             media_server::bench::webrtc_http_response response;
             std::string error;
             if (!media_server::bench::post_webrtc_offer(publish_url, offer, response, error) || response.status != 201U ||
@@ -638,14 +647,13 @@ int main(int argc, char** argv)
         }
 
         const auto established = sample_process();
-        std::cout << "phase=established requested=" << config.sources
-                  << " ready=" << results->ready.load() << " establishment_failures=" << results->establishment_failures.load()
+        std::cout << "phase=established requested=" << config.sources << " ready=" << results->ready.load()
+                  << " establishment_failures=" << results->establishment_failures.load()
                   << " ramp_seconds=" << std::chrono::duration<double>(clock_type::now() - ramp_started).count()
                   << " generator_cpu_seconds=" << established.cpu_seconds << " generator_rss_kib=" << established.rss_kib
                   << " generator_pss_kib=" << established.pss_kib << " generator_fds=" << established.fds << '\n';
-        std::cout << "io_threads=" << config.io_threads << " fixture=" << config.fixture
-                  << " fixture_frames=" << fixture->frames.size() << " fixture_seconds="
-                  << std::chrono::duration<double>(fixture->duration).count() << std::endl;
+        std::cout << "io_threads=" << config.io_threads << " fixture=" << config.fixture << " fixture_frames=" << fixture->frames.size()
+                  << " fixture_seconds=" << std::chrono::duration<double>(fixture->duration).count() << std::endl;
         if (results->ready.load() != config.sources)
         {
             const auto removed = stop_and_remove_sessions(sessions, results, shards);

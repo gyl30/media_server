@@ -25,8 +25,7 @@ constexpr track_id audio_track_id = 2;
 constexpr char rtcp_name[] = "media_server";
 }    // namespace
 
-rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_id)
-    : worker_(worker), media_stream_id_(std::move(media_stream_id))
+rtsp_pull_media::rtsp_pull_media(worker_context& worker, std::string media_stream_id) : worker_(worker), media_stream_id_(std::move(media_stream_id))
 {
 }
 
