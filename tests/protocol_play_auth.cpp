@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -70,6 +71,35 @@ void require(bool condition, const char* message)
     }
 }
 
+std::string take_rtsp_response(tcp::socket& socket, boost::asio::streambuf& buffer, const boost::asio::yield_context& yield)
+{
+    boost::system::error_code error;
+    const auto header_bytes = boost::asio::async_read_until(socket, buffer, "\r\n\r\n", yield[error]);
+    require(!error, "RTSP response read failed");
+    std::string headers(boost::asio::buffers_begin(buffer.data()), boost::asio::buffers_begin(buffer.data()) + static_cast<std::ptrdiff_t>(header_bytes));
+    buffer.consume(header_bytes);
+    std::size_t body_bytes{};
+    if (const auto position = headers.find("Content-Length: "); position != std::string::npos)
+    {
+        body_bytes = std::stoul(headers.substr(position + 16));
+    }
+    if (buffer.size() < body_bytes)
+    {
+        boost::asio::async_read(socket, buffer, boost::asio::transfer_exactly(body_bytes - buffer.size()), yield[error]);
+        require(!error, "RTSP response body read failed");
+    }
+    buffer.consume(body_bytes);
+    return headers;
+}
+
+std::string read_until_closed(tcp::socket& socket, boost::asio::streambuf& buffer, const boost::asio::yield_context& yield)
+{
+    boost::system::error_code error;
+    boost::asio::async_read(socket, buffer, yield[error]);
+    require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset, "RTSP play connection was not closed");
+    return {boost::asio::buffers_begin(buffer.data()), boost::asio::buffers_end(buffer.data())};
+}
+
 struct rtmp_peer
 {
     std::vector<std::uint8_t> outgoing;
@@ -105,9 +135,12 @@ void admission(bool rtmp, const std::string& scenario)
     sent_audio_packets = 0;
     config_before_play_start = false;
     invalid_context_sends = 0;
-    const bool accepted = scenario == "accepted" || scenario == "late_frame";
+    const bool accepted = scenario == "accepted" || scenario == "late_frame" || scenario.starts_with("play_");
+    const bool cross_worker = scenario == "play_cross_worker";
     auto& observed = rtmp ? flv_mux : rtsp_mux;
     worker_context worker;
+    worker_context source_worker;
+    std::thread source_thread;
     const auto address = boost::asio::ip::address_v4::loopback();
     tcp::acceptor signaling_listener(worker.io(), {address, 0});
     tcp::acceptor media_listener(worker.io(), {address, 0});
@@ -119,7 +152,7 @@ void admission(bool rtmp, const std::string& scenario)
     const std::string stream_id(64, 'a');
     const std::string token(64, 'b');
     std::optional<std::string> pending_token{token};
-    auto source = std::make_shared<media_stream>(stream_id, worker);
+    auto source = std::make_shared<media_stream>(stream_id, cross_worker ? source_worker : worker);
     const auto track = media_track{.id = 1,
                                    .kind = media_kind::audio,
                                    .codec = rtmp ? codec_id::opus : codec_id::g711a,
@@ -158,7 +191,14 @@ void admission(bool rtmp, const std::string& scenario)
         }
         owners.clear();
         stream_registry::instance().remove(*source);
-        source->end();
+        if (cross_worker)
+        {
+            boost::asio::post(source_worker.io(), [source]() { source->end(); });
+        }
+        else
+        {
+            source->end();
+        }
         if (replacement)
         {
             stream_registry::instance().remove(*replacement);
@@ -184,6 +224,97 @@ void admission(bool rtmp, const std::string& scenario)
                 finish();
             }
         });
+    const auto audio_frame = [](std::int64_t timestamp_ns)
+    {
+        return media_frame{.track = 1,
+                           .dts_ns = timestamp_ns,
+                           .pts_ns = timestamp_ns,
+                           .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5)};
+    };
+    const auto publish = [&](media_frame frame)
+    {
+        if (cross_worker)
+        {
+            boost::asio::post(source_worker.io(), [source, frame = std::move(frame)]() { source->publish(frame); });
+            return;
+        }
+        source->publish(std::move(frame));
+    };
+    // 非毫秒对齐的 G.711 时间戳会让 rtsp_play_session::on_frame 走失败分支，依次投递子、父 shutdown。
+    const auto play_after_describe = [&](tcp::socket& socket, boost::asio::streambuf& response, const boost::asio::yield_context& yield)
+    {
+        take_rtsp_response(socket, response, yield);
+        const auto url = "rtsp://127.0.0.1:" + std::to_string(media_port) + "/" + stream_id + "/" + token;
+        boost::system::error_code error;
+        const auto setup_request =
+            "SETUP " + url + "/trackID=1 RTSP/1.0\r\nCSeq: 2\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n";
+        boost::asio::async_write(socket, boost::asio::buffer(setup_request), yield[error]);
+        require(!error, "RTSP SETUP write failed");
+        const auto setup = take_rtsp_response(socket, response, yield);
+        require(setup.starts_with("RTSP/1.0 200"), "RTSP SETUP failed");
+        const auto session_begin = setup.find("Session: ") + 9;
+        const auto session = setup.substr(session_begin, setup.find_first_of(";\r", session_begin) - session_begin);
+        const auto play_request = [&](int sequence)
+        { return "PLAY " + url + " RTSP/1.0\r\nCSeq: " + std::to_string(sequence) + "\r\nSession: " + session + "\r\n\r\n"; };
+        boost::asio::async_write(socket, boost::asio::buffer(play_request(3)), yield[error]);
+        require(!error, "RTSP PLAY write failed");
+        require(take_rtsp_response(socket, response, yield).starts_with("RTSP/1.0 200"), "RTSP PLAY failed");
+
+        if (scenario == "play_normal")
+        {
+            publish(audio_frame(20'000'000));
+            std::array<std::uint8_t, 4> header{};
+            boost::asio::async_read(socket, response, boost::asio::transfer_at_least(4), yield[error]);
+            require(!error && response.size() >= 4, "RTSP interleaved read failed");
+            boost::asio::buffer_copy(boost::asio::buffer(header), response.data());
+            require(header[0] == 0x24 && header[1] == 0, "RTSP play sent unexpected interleaved channel");
+            require(stream_registry::instance().find(stream_id) == source, "normal RTSP play changed source generation");
+            return;
+        }
+
+        std::string late_output;
+        if (scenario == "play_replied")
+        {
+            // 第二个 PLAY 已被处理并回复后，媒体才失败。
+            boost::asio::async_write(socket, boost::asio::buffer(play_request(4)), yield[error]);
+            require(!error, "RTSP second PLAY write failed");
+            require(take_rtsp_response(socket, response, yield).starts_with("RTSP/1.0 200"), "playing RTSP session rejected PLAY");
+            publish(audio_frame(20'000'001));
+            late_output = read_until_closed(socket, response, yield);
+        }
+        else if (scenario == "play_buffered" || scenario == "play_combined" || scenario == "play_cross_worker")
+        {
+            // 同一 handler 内同步写入后立即投递失败帧：请求已进入服务端 socket，但读完成尚未被 reactor 收集。
+            auto requests = play_request(4);
+            if (scenario == "play_combined")
+            {
+                requests += play_request(5);
+            }
+            boost::asio::write(socket, boost::asio::buffer(requests));
+            publish(audio_frame(20'000'001));
+            late_output = read_until_closed(socket, response, yield);
+        }
+        else
+        {
+            require(scenario == "play_after_failure", "unknown RTSP play scenario");
+            publish(audio_frame(20'000'001));
+            boost::asio::async_write(socket, boost::asio::buffer(play_request(4)), yield[error]);
+            late_output = read_until_closed(socket, response, yield);
+        }
+        const auto late_reply = late_output.find("RTSP/1.0") != std::string::npos;
+        if (cross_worker)
+        {
+            // 跨 worker 时失败帧经 drain 投递，读完成可能先于或晚于 drain，两种顺序都必须安全。
+            require(!late_reply || late_output.starts_with("RTSP/1.0 200"), "cross worker late PLAY got unexpected reply");
+            std::cout << "RTSP play_cross_worker late PLAY " << (late_reply ? "replied before failure" : "dropped after shutdown") << '\n';
+        }
+        else
+        {
+            require(!late_reply, "late RTSP PLAY was answered after media failure");
+        }
+        require(rtsp_mux.live == 0, "failed RTSP play kept its muxer");
+        require(stream_registry::instance().find(stream_id) == source, "RTSP play failure removed the source generation");
+    };
     boost::asio::spawn(
         worker.io(),
         [&](boost::asio::yield_context yield)
@@ -347,7 +478,7 @@ void admission(bool rtmp, const std::string& scenario)
                     boost::asio::streambuf response;
                     boost::asio::async_read_until(client_socket, response, "\r\n\r\n", yield[error]);
                     const std::string headers(boost::asio::buffers_begin(response.data()), boost::asio::buffers_end(response.data()));
-                    if (scenario == "accepted")
+                    if (scenario == "accepted" || scenario.starts_with("play_"))
                     {
                         require(!error && headers.starts_with("RTSP/1.0 200"), "accepted RTSP DESCRIBE failed");
                     }
@@ -360,6 +491,10 @@ void admission(bool rtmp, const std::string& scenario)
                         require(!headers.starts_with("RTSP/1.0 200") &&
                                     (!error || error == boost::asio::error::eof || error == boost::asio::error::connection_reset),
                                 "failed RTSP admission emitted a successful SDP");
+                    }
+                    if (scenario.starts_with("play_"))
+                    {
+                        play_after_describe(client_socket, response, yield);
                     }
                 }
                 if (scenario == "late_frame")
@@ -394,12 +529,21 @@ void admission(bool rtmp, const std::string& scenario)
             finish();
         },
         completed);
+    if (cross_worker)
+    {
+        source_thread = std::thread([&source_worker]() { source_worker.run(); });
+    }
     worker.io().run_for(6s);
     if (!finished)
     {
         finish();
         worker.io().restart();
         worker.io().run_for(1s);
+    }
+    if (cross_worker)
+    {
+        source_worker.request_stop();
+        source_thread.join();
     }
     if (failure)
     {
@@ -521,6 +665,10 @@ int main(int argc, char** argv)
         {
             admission(false, "replacement");
             admission(false, "no_tracks");
+            for (const auto* scenario : {"play_normal", "play_replied", "play_buffered", "play_combined", "play_after_failure", "play_cross_worker"})
+            {
+                admission(false, scenario);
+            }
         }
         else
         {
