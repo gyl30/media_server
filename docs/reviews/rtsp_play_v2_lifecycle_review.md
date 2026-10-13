@@ -12,7 +12,7 @@
 | 是否修改生产代码 | 否 |
 | 是否新增测试 | 是。`tests/protocol_play_auth.cpp` 新增 6 个真实 TCP 场景，提交 4690a16 |
 | 是否建议合并 | 建议合并测试和本报告 |
-| 是否仍有未决问题 | 结论依赖 Asio 调度器的实现行为，Asio 文档并没有作出这一保证；见第 7 节 |
+| 是否仍有未决问题 | 结论限定在当前单线程 worker、Boost.Asio 1.92 配置和已检查的调度实现下成立，不是独立于 Asio 实现的协议级不变量；见第 7 节 |
 
 V2 原本假设的时序是：子会话 `safe_shutdown` 已执行，父连接的 `safe_shutdown` 还没执行，中间插入第二个 PLAY。
 
@@ -181,6 +181,11 @@ V2 与已经修复的问题不同：
 2. 播放子会话与父连接使用同一个 `worker_context`。
 3. `on_frame` 失败分支中，`shutdown()` 和 `shutdown_handler_()` 在同一同步区间内相邻调用，并且 `shutdown_handler_` 是同步 `post` 父连接关闭，中间没有定时器、额外 post 或跨 worker 跳转。
 4. 子会话只会因为 3.5 节列出的三种来源而关闭。
-5. Boost.Asio 调度器把同一 handler 内的投递整体接到队尾，读完成只在 reactor 任务中入队。这是 Boost 1.92 `scheduler.ipp` 的实现行为。Asio 文档只保证 strand 内的先后顺序，并不保证两个投递之间不会插入其他 handler。
+5. Boost.Asio 调度器把同一 handler 内的投递整体接到队尾，读完成只在 reactor 任务中入队。
+   - Boost.Asio 1.92 文档已经说明：`concurrency_hint=1` 时，handler 内投递的操作先进入线程本地队列，再批量转移到主队列。
+   - 本报告据此并结合 `scheduler.ipp` 和 epoll reactor 的源码，推出读完成不会插在子、父两个关闭 handler 之间。
+   - 这一推导只覆盖当前配置和已检查的实现，不能推广到所有 Asio backend、配置和版本。
 
-如果将来打破第 3 条，或者升级到改变该调度行为的 Asio 版本，新测试 `play_buffered` 会以段错误失败（第 4 节已验证）。因此这个测试可以作为该前提的回归保护。
+因此结论的准确范围是：在当前单线程 worker、Boost.Asio 1.92 配置与已检查的调度实现下，V2 不可达。该结论不是独立于 Asio 实现的协议级不变量。
+
+`play_buffered` 已经通过灵敏度实验（第 4 节）：人为延迟父连接关闭后，它能检测到目标危险排列。但这并不保证将来所有调度变化都一定会被这个测试捕获。
