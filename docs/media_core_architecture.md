@@ -29,7 +29,7 @@ public:
 };
 ```
 
-sink 不读取历史、不拥有 cursor，也不等待媒体。tracks 由 consumer 启动时直接从 source 读取。网络输出自己的 write queue、背压和关闭策略仍由协议 session 负责；media core 不为慢 viewer 保存 replay history，也不反压 publisher。
+sink 不读取历史、不拥有 cursor，也不等待媒体。tracks 由 consumer 启动时直接从 source 读取。采用 `tcp_transport` / `udp_transport` 的路径由 transport 负责通用写队列、串行发送和在途 buffer；协议 session 负责协议封装、错误处理以及入队拒绝后的生命周期决策。HTTP-FLV 的直接 HTTP 输出队列仍由 `http_flv_session` 持有。media core 不为慢 viewer 保存 replay history，也不反压 publisher。
 
 source end 在每个 worker 组内排在此前已经排队的 frame 之后，再调用 sink 的 `on_end()`。sink 可以在回调中关闭自身；stream 在 owner worker 串行处理注册和移除，跨 worker 的 queued callback 依赖 sink 自身的终态检查。
 
