@@ -1,9 +1,9 @@
 #ifndef MEDIA_SERVER_BENCH_PACKET_HEALTH_H
 #define MEDIA_SERVER_BENCH_PACKET_HEALTH_H
 
+#include <span>
 #include <cstdint>
 #include <optional>
-#include <span>
 
 namespace media_server::bench
 {

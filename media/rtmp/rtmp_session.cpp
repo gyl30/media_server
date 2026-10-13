@@ -6,10 +6,10 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "config.h"
-#include "media/http/signaling_verify.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
+#include "media/http/signaling_verify.h"
 #include "media/rtmp/rtmp_play_session.h"
 #include "media/rtmp/rtmp_publish_session.h"
 

@@ -1,6 +1,6 @@
 #include <array>
-#include <string_view>
 #include <utility>
+#include <string_view>
 
 #include <boost/asio/write.hpp>
 #include <boost/asio/connect.hpp>

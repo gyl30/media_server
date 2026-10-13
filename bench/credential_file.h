@@ -1,11 +1,11 @@
 #ifndef MEDIA_SERVER_BENCH_CREDENTIAL_FILE_H
 #define MEDIA_SERVER_BENCH_CREDENTIAL_FILE_H
 
+#include <string>
+#include <vector>
 #include <fstream>
 #include <stdexcept>
-#include <string>
 #include <unordered_set>
-#include <vector>
 
 namespace media_server::bench
 {

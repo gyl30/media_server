@@ -1,33 +1,33 @@
 #include <array>
 #include <chrono>
-#include <climits>
 #include <cstdio>
-#include <cstring>
-#include <optional>
-#include <sstream>
 #include <thread>
-#include <utility>
 #include <vector>
+#include <climits>
+#include <cstring>
+#include <sstream>
+#include <utility>
+#include <optional>
 
+#include <ada.h>
+#include <boost/crc.hpp>
+#include <openssl/evp.h>
+#include <openssl/ssl.h>
+#include <openssl/hmac.h>
+#include <boost/asio/post.hpp>
+#include <boost/asio/write.hpp>
+#include <boost/beast/http.hpp>
 #include <boost/asio/buffer.hpp>
-#include <boost/asio/connect.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/udp.hpp>
-#include <boost/asio/post.hpp>
+#include <boost/asio/connect.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include <boost/asio/write.hpp>
-#include <boost/beast/core/flat_buffer.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
-#include <boost/beast/http.hpp>
-#include <boost/crc.hpp>
-#include <ada.h>
-#include <openssl/evp.h>
-#include <openssl/hmac.h>
-#include <openssl/ssl.h>
+#include <boost/beast/core/flat_buffer.hpp>
 
-#include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/srtp_transport.h"
 #include "bench/clients/webrtc_client.h"
+#include "media/webrtc/dtls_certificate.h"
 
 namespace media_server::bench
 {

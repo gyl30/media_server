@@ -1,10 +1,10 @@
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
-#include <stdatomic.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <unistd.h>
+#include <stdatomic.h>
+#include <sys/socket.h>
 
 // 放行前 ACCEPT_FAULT_SKIP 个真实连接，随后 ACCEPT_FAULT_COUNT 个真实连接返回 ACCEPT_FAULT_ERRNO。
 // 只对已建立的连接注入，Asio 的探测性 accept（EAGAIN）不计数。

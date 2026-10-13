@@ -10,9 +10,9 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
 
-struct rtmp_client_t;
-
 #include "bench/packet_health.h"
+
+struct rtmp_client_t;
 
 namespace media_server::bench
 {

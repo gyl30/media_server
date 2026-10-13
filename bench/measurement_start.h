@@ -2,11 +2,11 @@
 #define MEDIA_SERVER_BENCH_MEASUREMENT_START_H
 
 #include <chrono>
+#include <string>
 #include <cstdint>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
-#include <string>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>

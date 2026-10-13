@@ -4,8 +4,8 @@
 #include <string>
 #include <string_view>
 
-#include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/spawn.hpp>
+#include <boost/asio/ip/tcp.hpp>
 
 #include "config.h"
 

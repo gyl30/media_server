@@ -1,24 +1,24 @@
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
+#include <iostream>
+#include <stdexcept>
 
-#include <boost/asio/error.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/error.hpp>
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/net/media_port_pool.h"
 #include "media/net/udp_transport.h"
-#include "media/net/worker_context.h"
-#include "media/webrtc/dtls_certificate.h"
 #include "media/webrtc/webrtc_sdp.h"
+#include "media/net/worker_context.h"
+#include "media/net/media_port_pool.h"
 #include "media/webrtc/whep_session.h"
+#include "media/webrtc/dtls_certificate.h"
 
 namespace
 {

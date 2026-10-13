@@ -1,6 +1,6 @@
-#include <algorithm>
 #include <vector>
 #include <utility>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
@@ -12,8 +12,8 @@
 extern "C"
 {
 #include "avpacket.h"
-#include "mpeg-proto.h"
 #include "mpeg-util.h"
+#include "mpeg-proto.h"
 #include "rtp-packet.h"
 #include "rtsp-demuxer.h"
 }

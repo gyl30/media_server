@@ -1,37 +1,37 @@
-#include <algorithm>
 #include <array>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <fstream>
-#include <iostream>
-#include <memory>
-#include <mutex>
 #include <sstream>
-#include <stdexcept>
-#include <string>
-#include <string_view>
-#include <thread>
 #include <utility>
-#include <vector>
-
+#include <iostream>
+#include <algorithm>
+#include <stdexcept>
+#include <filesystem>
+#include <string_view>
 #include <sys/resource.h>
+#include <condition_variable>
 
-#include <boost/asio/executor_work_guard.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/asio/io_context.hpp>
 #include <boost/asio/steady_timer.hpp>
-#include "bench/clients/webrtc_client.h"
+#include <boost/asio/executor_work_guard.hpp>
+
 #include "bench/credential_file.h"
+#include "bench/clients/webrtc_client.h"
 
 extern "C"
 {
-#include <libavformat/avformat.h>
 #include "mpeg4-avc.h"
+#include <libavformat/avformat.h>
 }
 
 namespace

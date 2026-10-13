@@ -1,5 +1,5 @@
-#include <memory>
 #include <bit>
+#include <memory>
 #include <random>
 #include <vector>
 #include <cstring>
@@ -9,8 +9,8 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/endian/conversion.hpp>
 #include <boost/scope/scope_exit.hpp>
+#include <boost/endian/conversion.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
 #include "media/codec/codec_utils.h"

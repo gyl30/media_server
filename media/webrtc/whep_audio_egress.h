@@ -1,8 +1,8 @@
 #ifndef MEDIA_WEBRTC_WHEP_AUDIO_EGRESS_H
 #define MEDIA_WEBRTC_WHEP_AUDIO_EGRESS_H
 
-#include <atomic>
 #include <map>
+#include <atomic>
 #include <memory>
 #include <vector>
 

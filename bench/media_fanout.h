@@ -1,19 +1,19 @@
 #ifndef MEDIA_SERVER_BENCH_MEDIA_FANOUT_H
 #define MEDIA_SERVER_BENCH_MEDIA_FANOUT_H
 
-#include <algorithm>
+#include <map>
+#include <ctime>
 #include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-#include <ctime>
-#include <iostream>
-#include <map>
-#include <memory>
-#include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
+#include <iostream>
+#include <algorithm>
+#include <string_view>
 
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -21,8 +21,8 @@
 #include <boost/asio/use_awaitable.hpp>
 
 #include "bench/media_progress.h"
-#include "bench/measurement_start.h"
 #include "bench/credential_file.h"
+#include "bench/measurement_start.h"
 
 namespace media_server::bench
 {

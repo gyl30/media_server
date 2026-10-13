@@ -1,6 +1,6 @@
 #include <vector>
-#include <cstddef>
 #include <chrono>
+#include <cstddef>
 #include <utility>
 
 #include <spdlog/spdlog.h>
@@ -9,8 +9,8 @@
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/detached.hpp>
 
-#include "media/net/media_port_pool.h"
 #include "media/net/worker_context.h"
+#include "media/net/media_port_pool.h"
 #include "media/webrtc/stun_message.h"
 #include "media/webrtc/whep_session.h"
 #include "media/webrtc/whep_audio_egress.h"

@@ -1,20 +1,20 @@
 #ifndef MEDIA_NET_WORKER_CONTEXT_H
 #define MEDIA_NET_WORKER_CONTEXT_H
 
-#include <boost/asio/io_context.hpp>
-#include <boost/asio/dispatch.hpp>
-#include <boost/asio/post.hpp>
-#include <boost/asio/spawn.hpp>
-#include <boost/asio/bind_executor.hpp>
-#include <boost/asio/cancellation_signal.hpp>
-#include <boost/asio/bind_cancellation_slot.hpp>
-#include <boost/asio/executor_work_guard.hpp>
-
+#include <list>
 #include <atomic>
+#include <utility>
 #include <exception>
 #include <functional>
-#include <list>
-#include <utility>
+
+#include <boost/asio/post.hpp>
+#include <boost/asio/spawn.hpp>
+#include <boost/asio/dispatch.hpp>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/bind_executor.hpp>
+#include <boost/asio/cancellation_signal.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/bind_cancellation_slot.hpp>
 
 namespace media_server
 {

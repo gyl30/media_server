@@ -1,24 +1,24 @@
 #include <array>
 #include <chrono>
+#include <memory>
+#include <string>
+#include <vector>
 #include <cstdint>
 #include <iostream>
-#include <memory>
 #include <stdexcept>
-#include <string>
 #include <string_view>
-#include <vector>
 
 #include <boost/beast/http.hpp>
 #include <boost/scope/scope_exit.hpp>
 
+#include "media/hls/hls.h"
 #include "media/codec/codec_utils.h"
 #include "media/core/media_stream.h"
-#include "media/core/stream_registry.h"
-#include "media/hls/hls.h"
 #include "media/hls/hls_segmenter.h"
+#include "media/net/worker_context.h"
+#include "media/core/stream_registry.h"
 #include "media/hls/hls_play_session.h"
 #include "media/http/hls_http_session.h"
-#include "media/net/worker_context.h"
 
 namespace
 {

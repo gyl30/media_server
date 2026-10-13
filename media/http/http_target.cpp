@@ -1,6 +1,6 @@
-#include "http_target.h"
-
 #include <algorithm>
+
+#include "http_target.h"
 
 namespace media_server
 {

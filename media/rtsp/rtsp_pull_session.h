@@ -11,8 +11,8 @@
 #include <boost/asio.hpp>
 
 #include "media/net/idle_timer.h"
-#include "media/core/session_registry.h"
 #include "media/net/tcp_transport.h"
+#include "media/core/session_registry.h"
 
 extern "C"
 {

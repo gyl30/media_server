@@ -1,9 +1,9 @@
-#include <algorithm>
-#include <cerrno>
 #include <cmath>
+#include <cerrno>
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 
@@ -15,8 +15,8 @@
 
 extern "C"
 {
-#include "mpeg-proto.h"
 #include "mpeg-ts.h"
+#include "mpeg-proto.h"
 }
 
 namespace media_server

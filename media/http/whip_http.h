@@ -3,10 +3,10 @@
 
 #include <string>
 
+#include <ada.h>
 #include <boost/beast/http.hpp>
 #include <boost/asio/spawn.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <ada.h>
 
 #include "config.h"
 

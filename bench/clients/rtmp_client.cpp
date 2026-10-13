@@ -12,9 +12,9 @@
 
 extern "C"
 {
-#include "rtmp-client.h"
-#include "flv-header.h"
 #include "flv-proto.h"
+#include "flv-header.h"
+#include "rtmp-client.h"
 }
 
 namespace media_server::bench

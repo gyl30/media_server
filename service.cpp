@@ -1,6 +1,6 @@
 #include <chrono>
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 #include <csignal>
 #include <utility>
 
@@ -9,16 +9,16 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "service.h"
-#include "media/core/log.h"
-#include "media/core/session_registry.h"
-#include "media/net/tcp_listener.h"
-#include "media/http/http_session.h"
 #include "media/hls/hls.h"
+#include "media/core/log.h"
 #include "media/webrtc/whip.h"
 #include "media/webrtc/whep.h"
-#include "media/rtmp/rtmp_session.h"
-#include "media/rtsp/rtsp_server_connection.h"
 #include "media/net/worker_pool.h"
+#include "media/net/tcp_listener.h"
+#include "media/http/http_session.h"
+#include "media/rtmp/rtmp_session.h"
+#include "media/core/session_registry.h"
+#include "media/rtsp/rtsp_server_connection.h"
 
 namespace media_server
 {

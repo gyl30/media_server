@@ -2,8 +2,8 @@
 #define MEDIA_SERVER_BENCH_MEDIA_PROGRESS_H
 
 #include <chrono>
-#include <cstdint>
 #include <memory>
+#include <cstdint>
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>

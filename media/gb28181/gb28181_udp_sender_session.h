@@ -13,9 +13,9 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/core/session_registry.h"
 #include "media/net/udp_transport.h"
 #include "media/net/worker_context.h"
+#include "media/core/session_registry.h"
 
 namespace media_server
 {

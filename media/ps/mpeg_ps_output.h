@@ -1,10 +1,10 @@
 #ifndef MEDIA_PS_MPEG_PS_OUTPUT_H
 #define MEDIA_PS_MPEG_PS_OUTPUT_H
 
-#include <cstdint>
 #include <map>
 #include <memory>
 #include <vector>
+#include <cstdint>
 
 #include "media/core/media_sink.h"
 #include "media/core/worker_sink_dispatcher.h"

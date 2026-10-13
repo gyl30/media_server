@@ -1,26 +1,25 @@
 #include <atomic>
 #include <chrono>
-#include <exception>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <string>
+#include <netdb.h>
+#include <iostream>
+#include <exception>
+#include <stdexcept>
 #include <string_view>
 
-#include <netdb.h>
-
 #include <ada.h>
-#include <boost/asio/read_until.hpp>
+#include <boost/json.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/json.hpp>
+#include <boost/asio/read_until.hpp>
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/core/session_registry.h"
-#include "media/core/stream_registry.h"
-#include "media/http/rtsp_pull_http.h"
 #include "media/net/worker_context.h"
+#include "media/http/rtsp_pull_http.h"
+#include "media/core/stream_registry.h"
+#include "media/core/session_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 
 namespace

@@ -1,23 +1,22 @@
-#include <chrono>
-#include <condition_variable>
-#include <cstring>
-#include <exception>
-#include <iostream>
 #include <mutex>
-#include <optional>
-#include <stdexcept>
+#include <chrono>
 #include <string>
-
+#include <cstring>
 #include <netdb.h>
+#include <iostream>
+#include <optional>
+#include <exception>
+#include <stdexcept>
+#include <condition_variable>
 
-#include <boost/asio/steady_timer.hpp>
+#include <boost/json.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/json.hpp>
 #include <boost/scope/scope_exit.hpp>
+#include <boost/asio/steady_timer.hpp>
 
-#include "media/http/signaling_verify.h"
 #include "media/http/http_target.h"
+#include "media/http/signaling_verify.h"
 
 namespace
 {

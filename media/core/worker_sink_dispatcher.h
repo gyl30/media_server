@@ -1,14 +1,14 @@
 #ifndef MEDIA_CORE_WORKER_SINK_DISPATCHER_H
 #define MEDIA_CORE_WORKER_SINK_DISPATCHER_H
 
-#include <algorithm>
-#include <cstddef>
-#include <deque>
 #include <map>
-#include <memory>
+#include <deque>
 #include <mutex>
-#include <utility>
+#include <memory>
 #include <vector>
+#include <cstddef>
+#include <utility>
+#include <algorithm>
 
 #include <boost/asio/post.hpp>
 

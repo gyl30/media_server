@@ -1,7 +1,7 @@
 #include <array>
-#include <algorithm>
 #include <vector>
 #include <utility>
+#include <algorithm>
 #include <string_view>
 
 #include <spdlog/spdlog.h>

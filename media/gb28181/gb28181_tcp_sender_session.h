@@ -13,8 +13,8 @@
 
 #include "media/net/tcp_listener.h"
 #include "media/core/media_stream.h"
-#include "media/core/session_registry.h"
 #include "media/net/tcp_transport.h"
+#include "media/core/session_registry.h"
 
 namespace media_server
 {

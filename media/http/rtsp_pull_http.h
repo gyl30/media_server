@@ -1,8 +1,8 @@
 #ifndef MEDIA_HTTP_RTSP_PULL_HTTP_H
 #define MEDIA_HTTP_RTSP_PULL_HTTP_H
 
-#include <boost/beast/http.hpp>
 #include <ada.h>
+#include <boost/beast/http.hpp>
 
 namespace media_server
 {

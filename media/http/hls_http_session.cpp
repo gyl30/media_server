@@ -6,13 +6,13 @@
 #include <boost/asio/post.hpp>
 
 #include "media/hls/hls.h"
+#include "media/http/http_target.h"
 #include "media/hls/hls_segmenter.h"
 #include "media/net/worker_context.h"
 #include "media/hls/hls_play_session.h"
+#include "media/core/stream_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/signaling_verify.h"
-#include "media/http/http_target.h"
-#include "media/core/stream_registry.h"
 
 namespace media_server
 {

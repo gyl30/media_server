@@ -1,5 +1,5 @@
-#include <algorithm>
 #include <utility>
+#include <algorithm>
 
 #include <spdlog/spdlog.h>
 

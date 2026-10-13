@@ -1,26 +1,26 @@
-#include <algorithm>
+#include <span>
 #include <array>
 #include <chrono>
-#include <cstdint>
-#include <exception>
-#include <iostream>
 #include <memory>
-#include <span>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <vector>
+#include <cstdint>
+#include <iostream>
+#include <algorithm>
+#include <exception>
+#include <stdexcept>
+#include <string_view>
 
-#include <boost/scope/scope_exit.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/ip/udp.hpp>
+#include <boost/scope/scope_exit.hpp>
 
-#include "media/core/stream_registry.h"
-#include "media/net/media_port_pool.h"
-#include "media/net/worker_context.h"
-#include "media/rtsp/rtsp_publish_session.h"
 #include "media/rtsp/rtsp_sdp.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/net/worker_context.h"
+#include "media/net/media_port_pool.h"
+#include "media/core/stream_registry.h"
+#include "media/rtsp/rtsp_publish_session.h"
 
 extern "C"
 {

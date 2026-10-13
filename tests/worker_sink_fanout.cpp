@@ -1,18 +1,18 @@
 #include <chrono>
 #include <future>
-#include <iostream>
 #include <memory>
-#include <stdexcept>
 #include <thread>
-#include <type_traits>
-#include <utility>
 #include <vector>
+#include <utility>
+#include <iostream>
+#include <stdexcept>
+#include <type_traits>
 
 #include <boost/asio/post.hpp>
 
 #include "media/core/media_stream.h"
-#include "media/net/worker_context.h"
 #include "media/ps/mpeg_ps_output.h"
+#include "media/net/worker_context.h"
 
 namespace
 {

@@ -1,32 +1,32 @@
 #include <array>
-#include <algorithm>
+#include <mutex>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
-#include <cstddef>
-#include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
 #include <limits>
 #include <memory>
-#include <mutex>
-#include <sstream>
-#include <stdexcept>
 #include <string>
-#include <string_view>
 #include <thread>
-#include <utility>
 #include <vector>
-
+#include <cstddef>
+#include <cstdint>
+#include <fstream>
+#include <sstream>
+#include <utility>
+#include <iostream>
+#include <algorithm>
+#include <stdexcept>
+#include <filesystem>
+#include <string_view>
 #include <sys/resource.h>
+#include <condition_variable>
 
-#include <boost/asio/executor_work_guard.hpp>
-#include <boost/asio/io_context.hpp>
 #include <boost/asio/post.hpp>
 #include <boost/asio/co_spawn.hpp>
-#include "bench/credential_file.h"
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+
 #include "bench/packet_health.h"
+#include "bench/credential_file.h"
 #include "bench/measurement_start.h"
 #include "bench/clients/webrtc_client.h"
 
