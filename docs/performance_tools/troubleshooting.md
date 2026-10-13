@@ -14,7 +14,7 @@
 | RUNNER_FAILED | 缺失/损坏 result、状态与退出码矛盾、超时；保留所有先前轮次 |
 | CLEANUP_FAILED | owned process/receiver/sender 清单及退出码，PID/starttick 核验；不执行全局 kill |
 | profiling BLOCKED | 工具是否存在、权限、PID 是否同一个、是否真正有 counter/sample；空文件不是零开销 |
-| 旧 wrapper 出现403/旧参数 | 用正式 perf_run/perf_publish；见 legacy_tools，不恢复无认证兼容入口 |
+| 旧 wrapper 出现403/旧参数 | 用正式 [perf_run](perf_run.md)/[perf_publish](perf_publish.md)，不恢复无认证兼容入口 |
 | HLS 无媒体 | 检查307、独立token、playlist sequence推进及完整段下载；不能重复同一段凑进展 |
 | TTY 改变/等待输入 | FFmpeg 必须 `-nostdin`，子进程 DEVNULL；报告工具缺陷，不掩盖 |
 

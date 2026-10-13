@@ -13,7 +13,9 @@
 - 单调时钟 `--start-file` 文件内容为同一主机的 CLOCK_MONOTONIC 纳秒时间，正式 runner 负责 barrier。不能在两台独立主机间直接共享其值。
 - CLI 不创建 namespace，不修改 sysctl，不提升全局 FD 上限。独立客户端的 stdout/stderr 保存到日志；native 不自动生成 `result.json`，统一 runner 才生成正式结果。
 
-本轮帮助/源码核对为 CODE VERIFIED，实际 DEV 回归结果见 [audit](audit.md) 和 [Pi 交接](pi_handoff.md)；TEST 正式性能测试未在本轮执行。以下网络命令是 DOCUMENTED / REQUIRES_SERVICE，不代表已运行。
+以下命令说明当前接口及运行前提，不代表已运行。每次任务按 [结果格式的证据等级](result_format.md#证据等级) 记录实际覆盖，不从历史验收继承 PASS。
+
+工具默认素材是 H264/AAC，WHIP 用 H264/Opus；不是所有生产 codec 的通用生成器。当前 GB PS 输出拒绝 Opus，HLS 不封装 Opus，native WebRTC 的 offer 范围见下文。协议可连接不证明该素材在所有输入×输出组合中都兼容，未实测组合单独标记。
 
 ## RTMP：`build/rtmp_fanout`
 
@@ -163,4 +165,4 @@ build/webrtc_disconnect play established < answer.sdp >disconnect.log 2>&1
 
 ## 已被替代的 RTSP 合成发布器
 
-`build/rtsp_publisher`保留历史micro-generator实现，没有正式独立凭据输入，视频为synthetic filler而非可解码fixture。当前授权产品下不作为正式输入。参数/边界/替代命令见 [legacy_tools](legacy_tools.md#rtsp_publisher-native)。不要将它成功发送字节写成真实音视频发布验收。
+`build/rtsp_publisher`保留历史micro-generator实现，没有正式独立凭据输入，视频为synthetic filler而非可解码fixture。当前授权产品下不作为正式输入；真实素材和授权发布使用 [perf_publish](perf_publish.md) 或 [perf_run](perf_run.md)。不要将它成功发送字节写成真实音视频发布验收。

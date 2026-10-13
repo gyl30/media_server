@@ -15,6 +15,14 @@
 
 成功退出码通常0，否则1/参数错误2。perf_capacity检验runner退出码、状态与HEALTHY/SERVER_UNSTABLE一致性。perf_validate的负对照runner非零可以是预期，但必须有具体故障证据和清理结果。
 
+## 证据等级
+
+- CODE：源码、参数、离线或 mock 检查；没有实际媒体和容量证据。
+- DEV：指定开发环境的真实媒体功能验证；短窗、小负载不能外推 TEST 容量。
+- TEST：指定测试环境的实际运行；部署/帮助检查不等于性能测量，容量、profiling 和 soak 各自需要独立证据。
+
+证据等级与上述状态分别记录。工具阶段验收可从 Git（如 `76355e4`）追溯，新任务以自己的包、媒体、窗口和原始结果为准。未执行的组合保持 NOT_RUN，不能由生产支持矩阵、旧 PASS 或部署成功补成已测。
+
 ## perf_run result.json
 
 | 字段 | 来源/语义 |
@@ -49,9 +57,11 @@
 - CPU cores = 区间CPU seconds / 实际wall seconds，1表示一核，乘100才是单核百分比；不是整机百分比。不同进程可能使用client_window_counter或proc_window_delta，保留方法标记。
 - RSS/PSS/VmSize以KiB存储（1024字节）；RSS含共享页全额，PSS按共享比例，VmSize是地址空间，不能混称物理内存。FD是已打开描述符数，不等于socket数。
 - thread CPU由对应采样端点差分，新出现线程缺少前端点时无法恢复完整区间成本，不能将0当作线程从未运行。
+- 1Hz RSS/PSS 最大值只是采样峰值，不是真实峰值；VmHWM 是 RSS 历史高水位，不能当作 PSS 峰值。
 - steady_media_bytes通常不等于链路wire bytes；WHEP解密RTP计数和NIC/loopback吞吐不同。平均每viewer吞吐的分母是实际成功测量时间与viewer数，不能用全部请求数量稀释失败。
 - UDP/TCP tx/rx queue为内核当前队列字节，不是应用层队列容量；UDP drops为采样时仍属于进程的socket聚合值，关闭socket可能使聚合减少。namespace SNMP属于整个namespace，不能全部归因server。
 - p50/p95/p99是该字段声明的样本群（首媒体延迟、每viewer吞吐等），不是统一的请求延迟。首媒体延迟包含建立过程，不能和稳态发送耗时比较。
+- 分组 p99 不能平均成全体 p99。HLS/GB 的统一首媒体字段可能缺失，应查协议子 JSON；缺值不能补零或与其他协议无条件合并。
 - allocator allocated/active/resident/retained、Linux RSS/PSS不同；retained不是活跃对象或泄漏证据。
 
 ## 归档与可比性

@@ -42,6 +42,6 @@ python3 bench/perf_validate.py \
 
 超时/取消只针对本项启动的进程组；SIGTERM 后最多30秒、必要时SIGKILL。执行非交互 stdin=DEVNULL，FFmpeg保留-nostdin。不会创建 namespace、修改sysctl、停止外部服务。
 
-原始 token/URL 和日志敏感，受限保存、不得直接公开提交。结果仅为功能/负对照验证，不是正式性能结果。CLI/offline：DEV VERIFIED；实际媒体验收以本轮记录为准；TEST正式执行：REQUIRES_TEST。
+原始 token/URL 和日志敏感，受限保存、不得直接公开提交。结果仅为功能/负对照验证，不是正式性能结果；CLI/offline 检查不能替代实际故障与清理证据。
 
-参见 [perf_run](perf_run.md)、[结果格式](result_format.md)、[Pi手册](pi_handoff.md)。
+参见 [perf_run](perf_run.md)、[结果格式](result_format.md)、[性能测试规范](../performance_testing.md)。

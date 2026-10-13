@@ -12,7 +12,7 @@
 
 既定产品边界为视频源、可选音频。内部存在 AAC、Opus、G.711 类型和 HLS 音频分支，不等于已承诺纯音频 publisher 或所有 codec 的任意协议组合。
 
-依据：已跟踪的 [媒体核心边界](../docs/media_core_architecture.md)、[协议/codec 审查](../docs/performance_tools/test_plan_review.md)和当前 `media/core/media_types.h`；本地 `docs/project_decisions.md` §1 仅补充历史讨论。
+依据：已跟踪的 [媒体核心边界](../docs/media_core_architecture.md)、[协议客户端边界](../docs/performance_tools/protocol_clients.md)和当前 `media/core/media_types.h`；本地 `docs/project_decisions.md` §1 仅补充历史讨论。
 
 ## 架构与职责
 
@@ -38,7 +38,7 @@
 
 RTSP UDP 发布不能推导为 UDP Play/Pull。codec 和参数是否可用由实际协议协商决定，第三方库支持某 codec 不等于项目对外支持。
 
-依据：当前协议 session、`rtsp_pull_session::rtp_port_callback()`、`rtsp_play_session::on_setup()`；[工具协议矩阵](../docs/performance_tools/test_plan_review.md)记录了相应能力与验证边界。
+依据：当前协议 session、`rtsp_pull_session::rtp_port_callback()`、`rtsp_play_session::on_setup()`；[协议客户端说明](../docs/performance_tools/protocol_clients.md)记录工具能力及媒体检查边界，不代表所有输入×输出组合都已实测。
 
 ## 核心数据流
 

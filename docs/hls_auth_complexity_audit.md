@@ -10,6 +10,8 @@ HLS 修复提交：`f1a6d49cd535d66b52894dfd44090dc6a4459bfe`
 
 结论：修复了一处授权前创建媒体处理资源的问题。历史审计没有找到可以证明安全删除的新增状态、接口或关闭协调；不实施额外精简。进程停止机制确实在历史硬退出方案之后恢复，但属于明确提交的生命周期取舍，并未恢复关闭完成等待。生产改动只有 HLS 请求中六行代码的位置调整，净 LOC 为 0，新增状态、接口和同步机制均为 0。
 
+本文保留 HLS 授权 RED/GREEN、worker 退出与取消回调的技术依据；各节源码坐标和测试只对应所列基线。早期 WHIP prepare/activate、WHEP atomic fence 等描述已由后续提交替代，不能据此恢复旧状态或启动阶段；现行决定见 [.agent/decisions.md](../.agent/decisions.md)。文中的候选、分支和未推送状态均是历史记录，不是当前待办或 Git 状态。
+
 ## HLS 修复与时序
 
 `media/http/hls_http_session.cpp:90` 原来先固定 source，再调用 `hls::get_or_create()`，最后请求授权。分片器可能已创建 muxer、订阅并持有 source，随后才返回 403。

@@ -38,10 +38,12 @@ python3 bench/perf_run.py --output "$ROOT/viewers" --input existing \
 
 ## 输出、成功与失败
 
-`sources.json` 含 stream_id、play_body、publisher_pid；generation 的唯一 stream_id 是发布 token，属于敏感数据。另有每个发布/双轨探针日志、路径凭据、`result.json`。记录实际开始/结束单调时间、fixture hash、ready generations、errors/cleanup_errors。
+`sources.json` 含 stream_id、play_body、publisher_pid、publisher_starttick；generation 的唯一 stream_id 是发布 token，属于敏感数据。existing 播放以 PID/starttick 固定发布者身份，不能使用缺失 starttick 的旧快照。另有每个发布/双轨探针日志、路径凭据、`result.json`。记录实际开始/结束单调时间、fixture hash、ready generations、errors/cleanup_errors。
 
 退出 0/PASS：配置/素材成功，要求的 generation 完成 readiness 并保持发布进程存活，owned publishers 回收且设备删除无错误。SIGTERM/SIGINT 在至少一个 generation ready 后视为正常操作停止，结果标 `stopped_by_operator`；这不证明完成所有 cycles，也不证明保持期间持续双轨增长。连续媒体验收由 perf_run 客户端完成。
 
 退出 1/FAIL：缺素材、affinity 错、签发/发布/双轨 readiness 失败、发布进程提前退出或清理错误。setup 失败也保存 result，不以 traceback 代替证据。自己创建的设备会 stop/DELETE、自己创建的进程会停止；不停止外部 DUT/signaling。
 
 本工具创建真实信令持久记录和发布会话，需独立数据库。结果目录 0700；不得公开原始 URL/token。源替换与少量 viewer churn 是功能回归，不能把 cycles 运行写成长期 soak 或容量边界。
+
+WHIP 子进程的固定 duration 为86400秒，包含 generation 准备时间；外层 `--duration` 不会延长它。超过该寿命的保持任务不能视为受支持的长期发布。

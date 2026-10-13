@@ -63,6 +63,6 @@ export HEAP_FILE=/var/tmp/my-diagnostic/server.12345.0.f.heap # 替换成一个�
 
 所有诊断子进程使用 DEVNULL stdin 和本工具创建的独立进程组；超时或完成后清理该组的遗留 helper，不触及 DUT 或其他 Agent。cpu-stat/record 子命令上限 duration+60 秒，offcpu duration+90 秒，离线 report 120 秒，关闭再有最多约 4 秒等待。
 
-离线回归 `tests/perf_profile_acceptance.py` 覆盖空统计、缺计数、零样本、warning 假栈、DEVNULL、归属字段和超时 helper 清理；fake 输出不是 TEST 性能证据。实际高负载 perf/BCC/heap 由 Pi 在 TEST 首次验收，缺权限记 BLOCKED，不绕过保护。
+离线回归 `tests/perf_profile_acceptance.py` 覆盖空统计、缺计数、零样本、warning 假栈、DEVNULL、归属字段和超时 helper 清理；fake 输出不是 TEST 性能证据。实际高负载 perf/BCC/heap 需按对应任务在 TEST 独立验证，缺权限记 BLOCKED，不绕过保护。
 
 原始栈、路径、ELF、dump 可能包含敏感资产；只保存到受限独立目录，未经检查脱敏不得公开。诊断源、binary、fixture SHA 应与本轮 workload 原始结果关联。

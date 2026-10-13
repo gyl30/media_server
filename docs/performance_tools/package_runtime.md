@@ -81,10 +81,10 @@ PY
 
 ## 依赖边界与失败
 
-未内置：系统 Python、aiohttp 实际安装、Chrome/Firefox、Playwright、GB simulator、perf/BCC/jeprof、旧 lifecycle disconnect 测试资产/编译器。正式统一负载使用 native 工具和 Python；浏览器、真实 SIP 模拟器、诊断模式必须按专项文档补齐实际依赖并记录 SHA/版本。复制脚本不等于脚本全部功能无依赖可用。
+未内置：系统 Python、aiohttp 实际安装、Chrome/Firefox、Playwright、GB simulator、perf/BCC/jeprof、旧 lifecycle disconnect 测试资产/编译器。正式统一负载使用 native 工具和 Python；浏览器、真实 SIP 模拟器、诊断模式按实际任务补齐依赖并记录 SHA/版本。复制脚本不等于脚本全部功能无依赖可用。
 
 打包器对缺输入、缺 NSS 模块、ldd 缺库/失败、同 SONAME 不同内容等直接非零失败；不能把半成品当 PASS。已有目录拒绝覆盖，失败产物先保留用于复核；不会自动删除其他文件。Python requirements 是依赖清单，不是在包内自动 vendoring，缺依赖应明确 BLOCKED/失败，不静默使用别处 SDK。
 
 正常打包只创建指定新目录，不启动进程或网络服务；归档与解包的存储预算由调用方预检。manifest、CMakeCache、原始 URL/日志可能包含路径或凭据，归档应受限保存，未经脱敏不得公开提交。压缩包 SHA 不能替代解包后逐项文件检查。
 
-本轮离线 acceptance 测试覆盖静态 ELF、manifest 启动器和构建来源；真实 runtime 独立启动属于另列 DEV 验证，TEST 部署/正式测量由 Pi 执行，不能仅依据打包成功标为 TEST VERIFIED。
+离线 acceptance 测试覆盖静态 ELF、manifest 启动器和构建来源；真实 runtime 启动、TEST 部署与正式测量分别需要实际运行证据，不能仅依据打包成功标为 TEST VERIFIED。

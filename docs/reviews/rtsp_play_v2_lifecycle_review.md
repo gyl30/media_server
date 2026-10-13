@@ -11,7 +11,7 @@
 | 是否有真实生命周期缺陷 | 没有发现 |
 | 是否修改生产代码 | 否 |
 | 是否新增测试 | 是。`tests/protocol_play_auth.cpp` 新增 6 个真实 TCP 场景，提交 4690a16 |
-| 是否建议合并 | 建议合并测试和本报告 |
+| 合入记录 | 测试与报告已合入，见 `4690a16`、`1e83b92`、`7994550`；不是当前待合并任务 |
 | 是否仍有未决问题 | 结论限定在当前单线程 worker、Boost.Asio 1.92 配置和已检查的调度实现下成立，不是独立于 Asio 实现的协议级不变量；见第 7 节 |
 
 V2 原本假设的时序是：子会话 `safe_shutdown` 已执行，父连接的 `safe_shutdown` 还没执行，中间插入第二个 PLAY。
@@ -33,8 +33,7 @@ V2 原本假设的时序是：子会话 `safe_shutdown` 已执行，父连接的
 
 V2 的来源：
 
-- `protocol_timing_simplification_audit.md` 第 90 行列为 VERIFY，当时只有源码推导。
-- `code_simplification_continuation.md` 沿用了这一结论，建议先用真实 TCP 时序确认可达性，再决定是否修改。
+- `2d07fc4` 中的 `docs/reviews/code_simplification_continuation.md` 第三部分 V2（原报告第 90 行）列为 VERIFY，当时只有源码推导，建议先用真实 TCP 时序确认可达性，再决定是否修改。该历史来源可通过 `git show 2d07fc4:docs/reviews/code_simplification_continuation.md` 读取，不是当前必读文件。
 
 V2 与已经修复的问题不同：
 

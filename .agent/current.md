@@ -12,9 +12,9 @@
 
 | 阶段 | 已记录结果与依据 |
 | --- | --- |
-| 格式、include 与提交规范 | `09213ec`、`5722ffb`、`813b4f1`；检查 168 个第一方 C/C++ 文件，两次完整构建/CTest 通过。详见 [专项报告](../docs/reviews/code_style_and_commit_audit.md)；本轮格式任务未改业务行为 |
+| 格式、include 与提交规范 | `09213ec`、`5722ffb`、`813b4f1`；检查 168 个第一方 C/C++ 文件，两次完整构建/CTest 通过。专项报告可从 `813b4f1` 的 Git 文件树追溯；该格式任务未改业务行为 |
 | RTSP 播放 V2 关闭时序 | `4690a16` 新增真实 TCP 回归，`1e83b92`、`7994550` 落地并限定结论。在已检查的单线程 worker/Boost 1.92 调度下不可达，未修改生产；见 [时序报告](../docs/reviews/rtsp_play_v2_lifecycle_review.md) |
-| 已证明的局部精简及取消处理 | `7788320` 合并结果，后续审查保留必要取消/identity 语义；见 [合并复核](../docs/reviews/code_simplification_merge_review.md)和 [续审](../docs/reviews/code_simplification_continuation.md) |
+| 已证明的局部精简及取消处理 | `7788320` 合并结果，后续审查保留必要取消/identity 语义；实现与验证记录可从 `2d07fc4` 的 Git 文件树追溯，合并记录由 `7788320` 追溯 |
 | 较早 F4 / F3 / HLS 正确性问题 | `a753d54` 修 PLAY 回调，`b4965b8` 强化真实 EMFILE 测试，`f1a6d49` 修授权前资源创建。旧本地决策台账中的待办已被这些提交覆盖，不能重新实现 |
 
 ## 测试状态与边界
@@ -22,7 +22,7 @@
 - 最新格式专项：RelWithDebInfo、GCC 16、Boost 1.92 静态、既定 FFmpeg SDK，`BUILD_TESTING=ON` 且 benchmarks 开启；排版阶段和 include 阶段分别 CTest **60/60 PASS**（284.09 / 283.51 秒）。最终文档提交未改变编译输入，沿用最终代码阶段结果。
 - RTSP V2：`4690a16` 的定向真实 TCP 测试及 50 次重复通过，完整 CTest **56/56 PASS**。这个数量属于该构建配置，不与开启 benchmark 工具测试的 60 项混用。
 - 格式专项未运行 Go、ASan、UBSan 或性能测试。历史 sanitizer 结果只用于理解已受测路径，不能称为该代码基线的全量 sanitizer PASS。
-- 格式专项的独立 build、source 镜像与原始临时 evidence 已按用户要求清理；Git 中的审查汇总保留。报告中的旧临时路径不保证仍存在。
+- 格式专项的独立 build、source 镜像与原始临时 evidence 已按用户要求清理；审查汇总可从 `813b4f1` 的 Git 文件树追溯。报告中的旧临时路径不保证仍存在。
 - 更早跨机、厂商、Chrome 与 sanitizer 结果见 [系统验证](../docs/system_validation.md)，包括 PARTIAL/FAIL/BLOCKED 和后续定向收口，不能压成“全部协议验收完成”。
 
 ## 性能线与下一步

@@ -18,6 +18,8 @@
 
 总 viewer 数平均分配到协议，余数顺序分配。多协议搜索的 start/granularity 应保证搜索中的最低候选能够为每种协议安排至少一个 viewer。
 
+搜索只改变 viewer 总数，透传的 `--sources` 在各轮固定；多源需按实际 viewer/source 分布分别运行，不能将结果解释为 source×viewer 二维容量或任意混合比例的容量。
+
 搜索：按 step 递增，首次确认 SERVER_UNSTABLE 后按 granularity 二分缩小 H/F 区间；然后分别执行规定次数的独立 H/F 复验。任何 CLIENT_RESOURCE、RESOURCE_BUDGET、RUNNER_FAILED、未确认失败或不一致复验都会 INCONCLUSIVE，不能充当服务端 F 边界。
 
 ## 不启动负载的示例
@@ -43,7 +45,7 @@ python3 bench/perf_capacity.py \
   --min-free-memory-mib 8192 --min-free-disk-mib 10240
 ```
 
-以上档位是可执行示例，不是已批准的压力规模或已测容量；Pi 必须先检查 host、安全预算、客户端余量，按手册批准的负载执行。该搜索步长250/granularity50/start100符合参数约束。
+以上档位是可执行示例，不是已批准的压力规模或已测容量；Pi 必须先检查 host、安全预算、客户端余量，按 [性能测试规范](../performance_testing.md) 执行正式负载。该搜索步长250/granularity50/start100符合参数约束，不替代正式方案的500步长/100粒度。
 
 ## 结果与失败
 
@@ -57,4 +59,4 @@ python3 bench/perf_capacity.py \
 
 PASS 表示按当前算法得到并复验边界；不是宣称系统完全无泄漏或全部浏览器兼容。profiling 必须另起同条件独立运行，不能与无 profiler 正式测量混合。
 
-本轮只执行 CLI、计划及 mock/offline 回归，未执行正式容量搜索：CODE/DEV VERIFIED；正式 TEST 搜索 NOT_RUN，交由 Pi。参见 [perf_run](perf_run.md)、[结果格式](result_format.md)、[Pi 手册](pi_handoff.md)。
+计划与 mock/offline 回归不证明正式容量；每次搜索的状态以实际原始结果和独立复验为准。参见 [perf_run](perf_run.md)、[结果格式](result_format.md)。

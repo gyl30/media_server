@@ -25,11 +25,11 @@ cmake --build build-tooling -j12
 ctest --test-dir build-tooling -j8 --output-on-failure
 ```
 
-不要误用 `BUILD_BENCHMARKS`：当前真实选项是 `MEDIA_SERVER_BUILD_BENCHMARKS`。显式选择已验证 FFmpeg CLI；系统旧 FFmpeg 可能不能写 enhanced HEVC FLV（本轮首跑已复现该环境失败）。RelWithDebInfo 使用 `-O2 -g -DNDEBUG`，项目带 `-Werror`。保留 CTest 已有资源锁，不把全部测试串行化。与其他实例冲突时使用自己的 namespace，而不是杀其他服务。
+不要误用 `BUILD_BENCHMARKS`：当前真实选项是 `MEDIA_SERVER_BUILD_BENCHMARKS`。显式选择已验证 FFmpeg CLI；系统旧 FFmpeg 可能不能写 enhanced HEVC FLV。RelWithDebInfo 使用 `-O2 -g -DNDEBUG`，项目带 `-Werror`。保留 CTest 已有资源锁，不把全部测试串行化。与其他实例冲突时使用自己的 namespace，而不是杀其他服务。
 
 ## 短时 DEV 隔离
 
-本轮已验证非特权 namespace 可用；此命令创建自己的临时网络空间，不改宿主网络，也不占 Pi 的空间：
+支持非特权 user/network namespace 的环境可用以下命令创建自己的临时网络空间，不改宿主网络，也不占 Pi 的空间：
 
 ```bash
 unshare -Urn sh -c 'ip link set lo up; ip address add 198.19.0.10/32 dev lo; ip address add 198.19.0.11/32 dev lo; exec bash'

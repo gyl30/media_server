@@ -1,5 +1,7 @@
 # 全协议时序、状态与生命周期精简审计
 
+> 本文保留第二部分基线下的协议时序、状态不变量及测试覆盖依据，源码行号和候选状态不代表当前待办。R1/R2 已由 `1e3885e` 实施；后续局部精简记录可从 `2d07fc4` 的 Git 文件树追溯。V1 保留原证据边界；RTSP 播放 V2 的后续验证见 [专项结论](rtsp_play_v2_lifecycle_review.md)。现行决策以 [.agent/decisions.md](../../.agent/decisions.md) 和当前源码为准。
+
 ## 一、总体结论
 
 当前基础设施与协议职责已经基本收口，没有发现值得再次开展全仓重构的结构性冗余。RTSP、RTMP、GB28181、HTTP-FLV、HLS、WHIP/WHEP 的主要状态分别表达协议阶段、固定轨道、源代际、异步操作或资源归属；不能只因为资源指针存在就删除这些状态。
@@ -289,6 +291,8 @@ TCP write/关闭由 `media/net/tcp_transport.cpp:26`、`:50` post 到 socket exe
 取消请求不保证成功完成的 async_connect/read 自动改报 operation_aborted。GB TCP `media/gb28181/gb28181_tcp_sender_session.cpp:64`、receiver `media/gb28181/gb28181_tcp_receiver_session.cpp:93`、Pull resolve/connect 的 cancellation 要保留。`service.cpp:56` 的 operation_aborted 退出 listener，与普通 accept 错误固定 3 秒重试语义不同。不能统一成普通网络错误后重试关闭中的 listener。
 
 上一轮纯日志过滤已经删除；RTSP UDP handler、GB UDP stream fence 代替没有独立语义的取消码过滤。本轮没有发现需要恢复这些取消过滤的依据，不新增关闭状态。日志内容变化已属于既有提交，不混入 R1/R2 的无日志变化结论。
+
+后续续审 `2d07fc4` 保留了三个具体边界：RTSP UDP 的 RTCP timer 可能在关闭前成功完成、关闭后才执行回调，`schedule_rtcp()` 的端口检查阻止再次挂定时器；WHIP/WHEP 迟到包处理以 `local_port_` 守住已关闭资源；GB UDP 错误路径先同步停止 `sender_` 产出，再投递父会话关闭。它们不能按重复终态检查删除，完整续审过程由 Git 历史追溯。
 
 ### 6.4 targeted 测试能证明什么
 

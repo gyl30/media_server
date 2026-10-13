@@ -49,7 +49,7 @@
 - 背景：媒体流与 PS 输出曾复制跨 worker 分发；WHIP/WHEP 也有相似的协议流程。
 - 决定：统一 worker-group dispatch 和通用网络队列，保留 WHIP/WHEP 各自的协议/媒体生命周期；当前不新增共同 `webrtc_transport`。
 - 原因：前者确实消除重复调度算法；后者已有 UDP/STUN/DTLS/SRTP 组件，媒体方向与关闭归属不同，再抽总类需要新的回调与协调，收益不足。
-- 相关历史：`68c45e0`「统一跨工作线程 Sink 分发并接入媒体流」、`acee8da`「记录 WebRTC 传输只读设计审计」；已跟踪的 [WebRTC 审计](../docs/webrtc_transport_audit.md)、[基础设施审计](../docs/infrastructure_duplication_audit.md)。旧审计的端口池、启动阶段和字段细节不是当前源码规范。
+- 相关历史：`68c45e0`「统一跨工作线程 Sink 分发并接入媒体流」、`acee8da`「记录 WebRTC 传输只读设计审计」、`9200b00`「记录基础设施重复设计审计」。两份旧审计从对应提交的 Git 文件树追溯，其端口池、启动阶段和字段细节不是当前源码规范。
 
 ## D08：WebRTC 阶段与源结束分别表达
 
@@ -75,9 +75,9 @@
 ## D11：GB28181 区分业务身份、PS topology 与传输
 
 - 背景：device、registration、channel、live 和 RTP 会话寿命不同；PSM 宣告与 codec 配置就绪也不同步。
-- 决定：Go 管理 SIP/live，媒体侧管理 RTP/PS。先收集并确认 topology/config，再注册固定轨道源；UDP、TCP active/passive 保留实际建连差异。RTCP 开始状态不从 timer 猜测。
+- 决定：Go 管理 SIP/live，媒体侧管理 RTP/PS。同 device/channel 可共享 live；关闭 viewer 或 viewer 传输失败不停止上游，停止 live 则结束该路所有观看者。先收集并确认 topology/config，再注册固定轨道源；UDP、TCP active/passive 保留实际建连差异。RTCP 开始状态不从 timer 猜测。
 - 原因：合并这些事实会丢失代际 fencing 或协议准备阶段。共享 PS 不共享各 sender 的 RTP 身份；不支持的音频降级也不能伪装成完整双轨成功。
-- 相关历史：`b49a45b`、`971a803`、`f3b2966`、`72be980`；当前 `gb28181_rtp_receiver.*`、`gb28181_udp_sender_session.*`、`signaling/live_session.go`。
+- 相关历史：`b49a45b`、`971a803`、`f3b2966`、`72be980`；共享 live/viewer 的范围见 `f6b2680` 的 Web UI 验证记录。当前依据：`gb28181_rtp_receiver.*`、`gb28181_udp_sender_session.*`、`signaling/live_session.go`、`live_session_test.go` 和 `signaling/web/whep.js`。
 
 ## D12：资源认领与废弃路径保持单一权威
 

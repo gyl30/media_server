@@ -13,6 +13,8 @@
 
 支持的输出：`rtmp, rtsp, flv, hls, whep, gb_udp, gb_tcp_active, gb_tcp_passive`。`--outputs none` 是 **PARTIAL publish-only**：每个源仍有一个 FLV 双轨客户端持续运行整个稳态窗口，**不是严格零 viewer，也不是只运行一次的首媒体探针**。其客户端和服务端输出开销必须保留，不能当作纯发布成本。
 
+本工具总会准备媒体源，没有 idle 模式。严格空载或零输出发布基线需要独立 DUT/发布者和同长度的资源采样，不能用本工具结果替代。
+
 ## CLI
 
 | 参数 | 默认/要求 |
@@ -57,6 +59,8 @@ existing 每个 viewer 都调用 `/api/play` 取得独立凭据；返回 stream_
 
 existing 模式的 `--server-bin` 必须指向当前 DUT 实际可执行文件，而不是任意占位路径。准备探针之前比对 `/proc/PID/exe`，固定 starttick、exe 和 network namespace；采样继续核对同一身份。错误 PID、PID 复用、exec 或 namespace 改变记 `BLOCKED/PROCESS_IDENTITY`，不作为服务器容量失败。外部 DUT 消失记 `INCONCLUSIVE/UNCONFIRMED`；外部发布者消失记 `UPSTREAM_FAILED`。自管进程先保存启动 tick，媒体 ready 后再固定 exec 完成后的完整身份。
 
+同一 ELF 的多个实例还要核对 URL/监听 socket 的 PID/FD 归属。DUT、发布者、上游、signaling、runner 和客户端成本分别归因；客户端先饱和不能作为 DUT 容量上限。
+
 ## ready、窗口与 PASS
 
 1. 发布源通过 FLV 双轨媒体探针；仅 registry 存在不算 source ready。
@@ -67,6 +71,10 @@ existing 模式的 `--server-bin` 必须指向当前 DUT 实际可执行文件�
 6. 服务端异常退出、观测到 queue-full/发送缓冲错误/UDP drops、上游异常退出或清理失败，都不能 PASS。客户端 CPU/FD/UDP 资源压力会使容量判定不确定或 BLOCKED。
 
 H.264/AAC 消息、RTP 双轨或独立 HLS 分片进展不等于真实音视频解码；浏览器/FFmpeg 解码需独立验证。
+
+## 长期运行边界
+
+资源 samples 在内存中累计，运行结束才写入完整 JSON；没有增量落盘或按时长限制采样内存。自管 WHIP publisher 固定运行 86400 秒，准备与 warmup 也占用其寿命，因此 24 小时 measurement 会跨过发布者结束点。长时任务先验证采样成本、发布者持续性、结果落盘和清理，不能只增大 `--duration` 就声明支持 soak。
 
 ## 输出与清理
 
@@ -80,6 +88,4 @@ SIGTERM/SIGINT 请求有界清理并保存失败结果。仅清理本轮 Popen �
 
 凭据文件、source ID、原始日志可能敏感；目录为 0700，结果不得未经脱敏公开。配置/命令脱敏不保证原始协议日志完全脱敏。源码 HEAD 与运行包的 binary SHA/build manifest 必须一起归档，不能拿工具 HEAD 代替实际运行二进制版本。
 
-## 验证状态
-
-本轮 CLI/offline 断言：DEV VERIFIED。正式 TEST 负载、容量和 profiling：REQUIRES_TEST；实际小规模运行以本轮验收记录为准。参见 [结果格式](result_format.md)、[负对照](perf_validate.md)、[Pi 手册](pi_handoff.md)。
+运行状态与证据等级按 [结果格式](result_format.md) 解释；实际媒体验收以该次运行的原始结果为准。需要故障对照时使用 [perf_validate](perf_validate.md)，正式执行门槛见 [性能测试规范](../performance_testing.md)。
