@@ -74,6 +74,11 @@ const api = {
     await page("Page.reload", {});
     await sleep(wait);
   },
+  // 真实剪贴板：授予权限并模拟页面获得焦点（无头模式默认不聚焦，读写剪贴板会被拒绝）。
+  async allowClipboard(origin) {
+    await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
+    await page("Emulation.setFocusEmulationEnabled", { enabled: true });
+  },
   async click(x, y) {
     for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
       await page("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
