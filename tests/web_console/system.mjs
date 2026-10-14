@@ -12,7 +12,7 @@ async function expected() {
     channels += list.length;
     lives += list.filter(channel => channel.live?.state === "streaming").length;
   }
-  const pulls = sources.filter(source => source.session?.state === "created").length;
+  const pulls = sources.filter(source => source.session?.state === "created" && source.session.media_ready).length;
   const pushing = pushes.filter(device => device.state === "publishing").length;
   return {
     total: devices.length + sources.length + pushes.length,
@@ -33,7 +33,7 @@ export default async function (b) {
   check("国标通道数与接口一致", await waitFor(b, `document.querySelectorAll('.kpi .value')[2].childNodes[0].textContent === '${want.channels}'`, 5000));
   check("运行中视频源与接口一致", Number(await kpi(3)) === want.streams, `${await kpi(3)} vs ${want.streams}`);
   check("显示通道数据时间", (await q(text(".kpis"))).includes("GB 通道数据时间"));
-  check("媒体流构成", (await q(text(".kpis"))).includes(`GB 点播 ${want.lives} · RTSP 拉流 ${want.pulls} · 推流 ${want.pushing}`));
+  check("媒体流构成", (await q(text(".kpis"))).includes(`GB 点播 ${want.lives} · 主动拉流 ${want.pulls} · 推流 ${want.pushing}`));
   check("总览没有虚构图表或指标", !/(CPU|Mbps|%)/.test(await q(text("#view"))));
   await b.shot(`${shots}/overview.png`);
 

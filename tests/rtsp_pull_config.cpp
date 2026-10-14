@@ -17,7 +17,7 @@
 
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
-#include "media/http/rtsp_pull_http.h"
+#include "media/http/pull_http.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
@@ -40,13 +40,13 @@ void require(bool condition, const char* message)
     }
 }
 
-rtsp_pull_http_response create(worker_context& worker, boost::json::object body)
+pull_http_response create(worker_context& worker, boost::json::object body)
 {
-    rtsp_pull_http_request request(http::verb::post, "/rtsp/pull/create", 11);
+    pull_http_request request(http::verb::post, "/pull/create", 11);
     request.set(http::field::content_type, "application/json");
     request.body() = boost::json::serialize(body);
-    const auto target = ada::parse<ada::url_aggregator>("http://localhost/rtsp/pull/create");
-    return handle_rtsp_pull_request(request, worker, *target);
+    const auto target = ada::parse<ada::url_aggregator>("http://localhost/pull/create");
+    return handle_pull_request(request, worker, *target);
 }
 
 void invalid_requests()

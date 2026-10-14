@@ -13,7 +13,7 @@ import (
 // fakePullMedia 记录媒体服务器收到的拉流创建与接收会话删除；fail 为真时拒绝创建。
 type fakePullMedia struct {
 	mu      sync.Mutex
-	created []rtspPullCreateRequest
+	created []pullCreateRequest
 	deleted []string
 	fail    bool
 	ready   bool
@@ -24,8 +24,8 @@ func (m *fakePullMedia) serve(t *testing.T, s *infrastructureServer) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		switch request.URL.Path {
-		case "/rtsp/pull/create":
-			var command rtspPullCreateRequest
+		case "/pull/create":
+			var command pullCreateRequest
 			if err := json.NewDecoder(request.Body).Decode(&command); err != nil {
 				t.Error(err)
 			}
@@ -183,4 +183,26 @@ func TestResumeSourcesFollowsDesiredState(t *testing.T) {
 	if _, ok := s.rtspSourceSession("22222222-2222-4222-8222-222222222222"); ok {
 		t.Fatal("stopped source resumed")
 	}
+}
+
+// RTMP 拉流来源与 RTSP 共用拉流源模型：需要 app 与流名，不接受用户名密码；创建即拉流。
+func TestRTMPPullSourceValidationAndStart(t *testing.T) {
+	s := testInfrastructure(t)
+	media := &fakePullMedia{}
+	media.serve(t, s)
+	handler := s.handler()
+	for _, body := range []string{
+		`{"stream_name":"bad","url":"rtmp://10.0.0.1/live"}`,
+		`{"stream_name":"bad","url":"rtmp://10.0.0.1//cam"}`,
+		`{"stream_name":"bad","url":"rtmp://user:pass@10.0.0.1/live/cam"}`,
+		`{"stream_name":"bad","url":"rtmp://10.0.0.1/live/cam","username":"admin","password":"x"}`,
+		`{"stream_name":"bad","url":"srt://10.0.0.1/live/cam"}`,
+	} {
+		apiRequest(t, handler, "POST", "/api/sources", body, http.StatusBadRequest)
+	}
+	source := decodeSource(t, apiRequest(t, handler, "POST", "/api/sources", `{"stream_name":"cdn","url":"rtmp://10.0.0.1:1936/live/cam?key=abc"}`, http.StatusCreated).Body.Bytes())
+	if source.Session == nil || len(media.created) != 1 || media.created[0].URL != "rtmp://10.0.0.1:1936/live/cam?key=abc" || media.created[0].Username != nil {
+		t.Fatalf("rtmp source: %+v %+v", source, media.created)
+	}
+	apiRequest(t, handler, "PATCH", "/api/sources/"+source.SourceID, `{"username":"admin"}`, http.StatusBadRequest)
 }

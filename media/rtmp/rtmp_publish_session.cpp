@@ -25,6 +25,7 @@ namespace
 {
 constexpr track_id video_track_id = 1;
 constexpr track_id audio_track_id = 2;
+constexpr std::int64_t audio_wait_ms = 500;
 }    // namespace
 
 rtmp_publish_session::rtmp_publish_session(worker_context& worker, std::string stream_id)
@@ -250,7 +251,8 @@ int rtmp_publish_session::publish_media(int codec, std::span<const std::uint8_t>
     }
     else
     {
-        return 0;
+        spdlog::warn("rtmp input unsupported codec {}", codec);
+        return -1;
     }
 
     const auto incoming_codec = codec == FLV_VIDEO_H264    ? codec_id::h264
@@ -312,7 +314,34 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
             return result;
         }
     }
+    if (stream_->tracks().empty() && !expected_audio_.has_value() && infer_tracks_without_metadata(codec, dts) != 0)
+    {
+        return -1;
+    }
     return publish_media(codec, data, pts, dts, flags);
+}
+
+// 没有 onMetaData 时（例如拉取不发送元数据的服务器）按实际到达的配置确定轨道：收到音频帧即有音频；
+// 首个视频帧之后 500ms 媒体时间内没有音频则只有视频。之前的帧不发布，观看端自然等待下一个关键帧。
+int rtmp_publish_session::infer_tracks_without_metadata(int codec, std::uint32_t dts)
+{
+    const bool audio = codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_OPUS || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U;
+    if (audio && initial_audio_track_)
+    {
+        expected_audio_ = true;
+    }
+    else if (!audio && initial_video_track_)
+    {
+        if (!first_video_dts_)
+        {
+            first_video_dts_ = dts;
+        }
+        if (rtmp_timestamp_delta(dts, *first_video_dts_) >= audio_wait_ms)
+        {
+            expected_audio_ = false;
+        }
+    }
+    return expected_audio_.has_value() ? register_stream_if_ready() : 0;
 }
 
 int rtmp_publish_session::register_stream_if_ready()

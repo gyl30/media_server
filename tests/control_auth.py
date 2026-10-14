@@ -64,11 +64,12 @@ def main():
         results["receiver repeat delete"] = status(base + "/receivers/delete", "secret", {"stream_id": receiver["stream_id"]})
         results["old gb delete route"] = status(base + "/gb28181/receiver/delete", "secret", {"stream_id": receiver["stream_id"]})
         results["old pull delete route"] = status(base + "/rtsp/pull/delete", "secret", {"stream_id": receiver["stream_id"]})
+        results["old pull create route"] = status(base + "/rtsp/pull/create", "secret", {"stream_id": "old", "url": "rtsp://127.0.0.1/x"})
         with socket.socket() as upstream:
             upstream.bind(("127.0.0.1", 0))
             upstream.listen(1)
             pull = {"stream_id": "control-auth-pull", "url": f"rtsp://127.0.0.1:{upstream.getsockname()[1]}/source"}
-            results["pull create"] = status(base + "/rtsp/pull/create", "secret", pull)
+            results["pull create"] = status(base + "/pull/create", "secret", pull)
             with urllib.request.urlopen(listing, timeout=3) as response:
                 assert json.load(response) == {"receivers": [{"stream_id": pull["stream_id"], "ready": False}]}
             results["pull unified delete"] = status(base + "/receivers/delete", "secret", {"stream_id": pull["stream_id"]})
@@ -84,7 +85,7 @@ def main():
     expected = {"no token": 403, "wrong token": 403, "right token": 200,
                 "delete no token": 403, "delete wrong token": 403, "delete right token missing": 404,
                 "receiver create": 201, "wrong id delete": 404, "receiver delete": 204,
-                "receiver repeat delete": 404, "old gb delete route": 404, "old pull delete route": 404,
+                "receiver repeat delete": 404, "old gb delete route": 404, "old pull delete route": 405, "old pull create route": 405,
                 "pull create": 201, "pull unified delete": 204, "pull repeat delete": 404,
                 "play route": 404, "loopback without token": 200, "loopback delete without token": 404}
     print(results)

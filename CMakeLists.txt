@@ -250,7 +250,7 @@ add_library(media_core STATIC
     media/http/hls_http_session.cpp
     media/http/gb28181_json.cpp
     media/http/gb28181_http.cpp
-    media/http/rtsp_pull_http.cpp
+    media/http/pull_http.cpp
     media/http/signaling_verify.cpp
     media/http/http_target.cpp
     media/http/whep_http.cpp
@@ -275,6 +275,7 @@ add_library(media_core STATIC
     media/webrtc/whep.cpp
     media/webrtc/webrtc_packetizer.cpp
     media/rtmp/rtmp_publish_session.cpp
+    media/rtmp/rtmp_pull_session.cpp
     media/rtmp/rtmp_play_session.cpp
     media/rtmp/rtmp_session.cpp
     media/rtsp/rtsp_sdp.cpp
@@ -381,6 +382,11 @@ if(BUILD_TESTING)
             set_tests_properties(${protocol}_stop_${scenario} PROPERTIES TIMEOUT 10)
         endforeach()
     endforeach()
+    add_executable(rtmp_pull_lifecycle_tests tests/rtmp_pull_lifecycle.cpp)
+    target_link_libraries(rtmp_pull_lifecycle_tests PRIVATE media_core media_server_link_options)
+    target_link_options(rtmp_pull_lifecycle_tests PRIVATE -Wl,--wrap=getaddrinfo)
+    add_test(NAME rtmp_pull_lifecycle COMMAND rtmp_pull_lifecycle_tests)
+    set_tests_properties(rtmp_pull_lifecycle PROPERTIES TIMEOUT 15)
     add_executable(rtsp_pull_shutdown_tests tests/rtsp_pull_shutdown.cpp)
     target_link_libraries(rtsp_pull_shutdown_tests PRIVATE media_core media_server_link_options)
     target_link_options(rtsp_pull_shutdown_tests PRIVATE -Wl,--wrap=getaddrinfo)
@@ -453,6 +459,12 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} h265)
         set_tests_properties(rtmp_hevc_decode PROPERTIES TIMEOUT 60)
+        foreach(pull_mode rtmp rtmp_listen rtmp_unsupported rtsp)
+            add_test(NAME pull_decode_${pull_mode}
+                COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pull_decode.py
+                    $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} ${pull_mode})
+            set_tests_properties(pull_decode_${pull_mode} PROPERTIES TIMEOUT 90)
+        endforeach()
         add_test(NAME publish_idle_timeout
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/publish_idle_timeout.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG})

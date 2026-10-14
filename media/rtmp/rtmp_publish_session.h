@@ -42,6 +42,7 @@ class rtmp_publish_session final
     int handle_audio_config(int codec, std::span<const std::uint8_t> data);
     int initialize_g711_track(int codec);
     int publish_media(int codec, std::span<const std::uint8_t> data, std::uint32_t pts, std::uint32_t dts, int flags);
+    int infer_tracks_without_metadata(int codec, std::uint32_t dts);
 
    private:
     int register_stream_if_ready();
@@ -53,6 +54,7 @@ class rtmp_publish_session final
     std::optional<media_track> initial_video_track_;
     std::optional<media_track> initial_audio_track_;
     std::optional<bool> expected_audio_;
+    std::optional<std::uint32_t> first_video_dts_;
 };
 
 }    // namespace media_server

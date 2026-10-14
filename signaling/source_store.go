@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -271,8 +272,12 @@ func scanRTSPSource(row rowScanner) (rtspSource, error) {
 	return source, nil
 }
 
+// 只有 RTSP 拉流使用用户名密码；RTMP 的认证信息只能在 URL 的流名或查询串中。
 func validRTSPSource(source rtspSource) bool {
-	return validUUIDv4(source.sourceID) && source.streamName != "" && validRTSPSourceURL(source.url) &&
-		(source.password == "" || source.username != "") &&
+	credentials := source.password == "" || source.username != ""
+	if strings.HasPrefix(source.url, string(pullProtocolRTMP)+"://") {
+		credentials = source.username == "" && source.password == ""
+	}
+	return validUUIDv4(source.sourceID) && source.streamName != "" && validPullSourceURL(source.url) && credentials &&
 		(source.desiredState == sourceDesiredStopped || source.desiredState == sourceDesiredRunning)
 }

@@ -1,11 +1,11 @@
 // 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除。
 import { api } from "/api.js";
-import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, sourceReady, PUSH_PROTOCOLS } from "/store.js";
+import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, sourceReady, pullProtocol, PUSH_PROTOCOLS, PULL_PROTOCOLS } from "/store.js";
 import {
   h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus, copyButton,
 } from "/ui.js";
 
-const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-push", "RTMP 推流"],
+const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-pull", "RTMP 拉流"], ["rtmp-push", "RTMP 推流"],
   ["rtsp-push", "RTSP 推流"], ["whip-push", "WHIP 推流"], ["push-unspecified", "推流（未指定）"]];
 const filters = { query: "", protocol: "all", status: "all" };
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
@@ -224,7 +224,7 @@ export function deleteDevice(device, ctx) {
 }
 
 const ADD_OPTIONS = [
-  ["gb", "GB28181 · SIP 注册"], ["rtsp-pull", "RTSP · 主动拉流"],
+  ["gb", "GB28181 · SIP 注册"], ["rtsp-pull", "RTSP · 主动拉流"], ["rtmp-pull", "RTMP · 主动拉流"],
   ["rtmp", "RTMP · 主动推流"], ["rtsp", "RTSP · 主动推流"], ["whip", "WHIP · 主动推流"],
 ];
 const PUSH_HELP = {
@@ -237,8 +237,8 @@ const PUSH_HELP = {
 export function openDeviceDialog(existing = null) {
   const dialog = document.getElementById("device-dialog");
   const raw = existing?.raw;
-  // choice：gb / rtsp-pull / rtmp / rtsp / whip；推流设备编辑时为当前协议（未指定为空串）。
-  let choice = existing ? (existing.kind === "rtsp" ? "rtsp-pull" : raw.protocol) : "gb";
+  // choice：gb / rtsp-pull / rtmp-pull / rtmp / rtsp / whip；推流设备编辑时为当前协议（未指定为空串）。
+  let choice = existing ? (existing.kind === "rtsp" ? `${pullProtocol(raw.url)}-pull` : raw.protocol) : "gb";
   let busy = false;
   // 添加推流设备时预生成的接入凭据；三种协议的地址共用它，切换协议不重新生成。
   let prepared = null;
@@ -277,14 +277,19 @@ export function openDeviceDialog(existing = null) {
       nodes.push(h("p", {}, "先选择设备接入协议，下面只显示该协议实际需要的配置项。"));
     }
     if (existing?.kind === "rtsp") {
-      nodes.push(h("div", { class: "field" }, h("span", {}, "接入协议"), h("div", { class: "inline" }, protoTag("RTSP"), h("span", { class: "muted tiny" }, "主动拉流 · 接入方式创建后不可修改"))));
+      nodes.push(h("div", { class: "field" }, h("span", {}, "接入协议"), h("div", { class: "inline" }, protoTag(existing.protocol), h("span", { class: "muted tiny" }, "主动拉流 · 接入方式创建后不可修改"))));
     } else {
       nodes.push(field("protocol", "接入协议", picker, existing ? "协议用于展示和选择接入地址，不会限制服务端可接受的推流协议" : "", true));
     }
     nodes.push(field("name", "名称", fields.name, "", true));
     if (choice === "gb") {
       nodes.push(field("device_id", "国标设备编号", fields.device_id, "设备需要使用该编号主动发起 SIP 注册；创建成功不等于已上线。", true));
+    } else if (choice === "rtmp-pull") {
+      fields.url.placeholder = "rtmp://192.168.1.100:1935/live/stream";
+      nodes.push(field("url", "RTMP 地址", fields.url, "rtmp://主机[:端口]/应用名/流名，流名可带查询参数（例如推流密钥）。平台以 RTMP Play 拉取。", true));
+      nodes.push(h("p", { class: "muted tiny" }, existing ? "修改地址后会按新配置重新拉流，正在观看的用户会断开。" : "确定添加后自动开始拉流；连接失败时设备仍保留，可修改地址或重试连接。"));
     } else if (choice === "rtsp-pull") {
+      fields.url.placeholder = "rtsp://192.168.1.100:554/live";
       nodes.push(field("url", "RTSP 地址", fields.url, "请输入 rtsp:// 地址。认证信息在下方单独填写，不放进 URL。", true));
       nodes.push(h("div", { class: "form-grid" },
         field("username", "用户名（可选）", fields.username, existing && raw.username ? "清空用户名会同时清除已保存的密码" : ""),
@@ -345,8 +350,11 @@ export function openDeviceDialog(existing = null) {
     if (!name) errors.name = "请输入名称";
     if (choice === "gb" && !/^[0-9]{20}$/.test(fields.device_id.value.trim())) errors.device_id = "请输入 20 位数字的设备编号";
     if (choice === "rtsp-pull") {
-      if (!validRTSPURL(fields.url.value.trim())) errors.url = "请输入 rtsp:// 开头、不含账号密码的地址";
+      if (!validPullURL(fields.url.value.trim(), "rtsp")) errors.url = "请输入 rtsp:// 开头、不含账号密码的地址";
       if (!fields.username.value && fields.password.value) errors.username = "设置密码前请输入用户名";
+    }
+    if (choice === "rtmp-pull" && !validPullURL(fields.url.value.trim(), "rtmp")) {
+      errors.url = "请输入 rtmp://主机/应用名/流名，不含账号密码";
     }
     if (Object.keys(errors).length) {
       render();
@@ -385,11 +393,15 @@ export function openDeviceDialog(existing = null) {
   openDialog(dialog, existing ? fields.name : picker);
 }
 
-// 与服务端 validRTSPSourceURL 一致：rtsp 协议、有主机名、不内嵌账号密码。
-function validRTSPURL(value) {
+// 与服务端 validPullSourceURL 一致：有主机名、不内嵌账号密码；RTMP 需要应用名与流名。
+function validPullURL(value, protocol) {
   try {
     const url = new URL(value);
-    return url.protocol === "rtsp:" && Boolean(url.hostname) && !url.username && !url.password;
+    if (url.protocol !== `${protocol}:` || !url.hostname || url.username || url.password) {
+      return false;
+    }
+    const [app, ...stream] = url.pathname.slice(1).split("/");
+    return protocol !== "rtmp" || (Boolean(app) && stream.join("/") !== "");
   } catch {
     return false;
   }
@@ -410,6 +422,14 @@ async function save(choice, existing, name, fields, prepared) {
     return `已添加 ${PUSH_PROTOCOLS[choice]} 推流设备，接入地址 5 分钟内有效`;
   }
   const payload = { stream_name: name, url: fields.url.value.trim() };
+  if (choice === "rtmp-pull") {
+    if (existing) {
+      await api.patchSource(existing.id, payload);
+      return "已保存设备";
+    }
+    await api.createSource(payload);
+    return "已添加 RTMP 拉流源，正在连接";
+  }
   const username = fields.username.value;
   const password = fields.password.value;
   if (!existing) {

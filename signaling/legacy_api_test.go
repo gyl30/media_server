@@ -26,7 +26,7 @@ func TestRetiredGBControlRoutesAreAbsent(t *testing.T) {
 func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	s := testInfrastructure(t)
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/rtsp/pull/create" {
+		if request.URL.Path == "/pull/create" {
 			writer.WriteHeader(http.StatusCreated)
 		} else if request.URL.Path == "/receivers/delete" {
 			writer.WriteHeader(http.StatusNoContent)

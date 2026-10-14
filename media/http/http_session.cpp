@@ -10,11 +10,11 @@
 #include "media/webrtc/whip.h"
 #include "media/http/whep_http.h"
 #include "media/http/whip_http.h"
+#include "media/http/pull_http.h"
 #include "media/http/http_target.h"
 #include "media/http/gb28181_http.h"
 #include "media/http/http_session.h"
 #include "media/net/worker_context.h"
-#include "media/http/rtsp_pull_http.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
 #include "media/http/hls_http_session.h"
@@ -47,7 +47,7 @@ boost::beast::http::response<boost::beast::http::string_body> make_receiver_list
 bool is_control_path(std::string_view path)
 {
     return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") ||
-           path == "/gb28181/sender" || path.starts_with("/gb28181/sender/") || path == "/rtsp/pull" || path.starts_with("/rtsp/pull/");
+           path == "/gb28181/sender" || path.starts_with("/gb28181/sender/") || path == "/pull" || path.starts_with("/pull/");
 }
 
 }    // namespace
@@ -200,9 +200,9 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
         write_string_response(request, std::move(response), yield);
         return;
     }
-    if (path == "/rtsp/pull" || path.starts_with("/rtsp/pull/"))
+    if (path == "/pull" || path.starts_with("/pull/"))
     {
-        write_string_response(request, media_server::handle_rtsp_pull_request(request, worker_, *parsed), yield);
+        write_string_response(request, media_server::handle_pull_request(request, worker_, *parsed), yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))

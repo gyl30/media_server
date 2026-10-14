@@ -40,14 +40,14 @@ func (s *infrastructureServer) startSource(ctx context.Context, sourceID string)
 		return "", err
 	}
 
-	command := rtspPullCreateRequest{
+	command := pullCreateRequest{
 		StreamID: session.streamID, URL: source.url,
 	}
 	if source.username != "" {
 		command.Username = &source.username
 		command.Password = &source.password
 	}
-	if err := s.media.createRTSPPull(ctx, command); err != nil {
+	if err := s.media.createPull(ctx, command); err != nil {
 		var rejection *mediaServerHTTPRejection
 		ambiguousCreate := !errors.As(err, &rejection)
 		cleanupConfirmed := !ambiguousCreate

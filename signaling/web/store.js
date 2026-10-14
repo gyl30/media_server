@@ -112,6 +112,12 @@ export function deviceHash(kind, id) {
 }
 
 export const PUSH_PROTOCOLS = { rtmp: "RTMP", rtsp: "RTSP", whip: "WHIP" };
+// 主动拉流的协议由来源 URL 决定，不单独保存。
+export const PULL_PROTOCOLS = { rtsp: "RTSP", rtmp: "RTMP" };
+
+export function pullProtocol(url) {
+  return url.slice(0, url.indexOf(":"));
+}
 
 function gbStatus(device) {
   if (device.online) {
@@ -193,7 +199,8 @@ export function unifiedDevices() {
       channelError: store.channels.get(device.device_id)?.error || null,
     })),
     ...store.sources.map(source => ({
-      key: `rtsp:${source.source_id}`, kind: "rtsp", id: source.source_id, name: source.stream_name, protocol: "RTSP", filter: "rtsp-pull",
+      key: `rtsp:${source.source_id}`, kind: "rtsp", id: source.source_id, name: source.stream_name,
+      protocol: PULL_PROTOCOLS[pullProtocol(source.url)], filter: `${pullProtocol(source.url)}-pull`,
       mode: "拉流", endpoint: source.url, raw: source, status: sourceStatus(source),
     })),
     ...store.pushDevices.map(device => ({
@@ -220,7 +227,8 @@ export function runningStreams() {
   }
   for (const source of store.sources) {
     if (sourceReady(source)) {
-      streams.push({ kind: "rtsp", protocol: "RTSP", streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: "RTSP 拉流", target: { source_id: source.source_id } });
+      const protocol = PULL_PROTOCOLS[pullProtocol(source.url)];
+      streams.push({ kind: "rtsp", protocol, streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: `${protocol} 拉流`, target: { source_id: source.source_id } });
     }
   }
   for (const device of store.pushDevices) {

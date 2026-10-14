@@ -64,7 +64,7 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 	defer s.endSourceControl()
 
 	var payload sourceCreateRequest
-	if !decodeJSON(writer, request, &payload) || payload.StreamName == "" || !validRTSPSourceURL(payload.URL) {
+	if !decodeJSON(writer, request, &payload) || payload.StreamName == "" || !validPullSourceURL(payload.URL) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -114,7 +114,7 @@ func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, req
 	username, usernameValid := decodeOptionalString(payload.Username)
 	password, passwordValid := decodeOptionalString(payload.Password)
 	if !streamNameValid || !urlValid || !usernameValid || !passwordValid ||
-		(streamName != nil && *streamName == "") || (urlValue != nil && !validRTSPSourceURL(*urlValue)) {
+		(streamName != nil && *streamName == "") || (urlValue != nil && !validPullSourceURL(*urlValue)) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -196,9 +196,28 @@ func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceRespo
 	return response
 }
 
-func validRTSPSourceURL(value string) bool {
+// pullProtocol 按来源 URL 区分主动拉流协议，不另存协议字段。
+type pullProtocol string
+
+const (
+	pullProtocolRTSP pullProtocol = "rtsp"
+	pullProtocolRTMP pullProtocol = "rtmp"
+)
+
+// validPullSourceURL 校验主动拉流来源：rtsp:// 或 rtmp://（rtmp 需要 app 与流名两级路径），不内嵌账号密码。
+func validPullSourceURL(value string) bool {
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "rtsp" || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
+	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
+		return false
+	}
+	switch pullProtocol(parsed.Scheme) {
+	case pullProtocolRTSP:
+	case pullProtocolRTMP:
+		app, stream, found := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
+		if !found || app == "" || stream == "" {
+			return false
+		}
+	default:
 		return false
 	}
 	if strings.HasSuffix(parsed.Host, ":") {

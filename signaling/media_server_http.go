@@ -28,7 +28,7 @@ type gb28181ReceiverRequest struct {
 	ssrc        uint32
 }
 
-type rtspPullCreateRequest struct {
+type pullCreateRequest struct {
 	StreamID string  `json:"stream_id"`
 	URL      string  `json:"url"`
 	Username *string `json:"username,omitempty"`
@@ -133,8 +133,8 @@ func (c *mediaServerHTTPClient) updateReceiverSSRC(ctx context.Context, streamID
 	return c.post(ctx, c.server.controlURL+"/gb28181/receiver/update", requestBody, http.StatusNoContent, nil)
 }
 
-func (c *mediaServerHTTPClient) createRTSPPull(ctx context.Context, command rtspPullCreateRequest) error {
-	return c.post(ctx, c.server.controlURL+"/rtsp/pull/create", command, http.StatusCreated, nil)
+func (c *mediaServerHTTPClient) createPull(ctx context.Context, command pullCreateRequest) error {
+	return c.post(ctx, c.server.controlURL+"/pull/create", command, http.StatusCreated, nil)
 }
 
 func (c *mediaServerHTTPClient) post(ctx context.Context, url string, requestBody any, successStatus int, responseBody any) error {

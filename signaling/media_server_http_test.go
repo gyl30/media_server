@@ -10,7 +10,7 @@ import (
 
 func TestRTSPPullCreateMatchesMediaContract(t *testing.T) {
 	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/rtsp/pull/create" {
+		if request.Method != http.MethodPost || request.URL.Path != "/pull/create" {
 			t.Errorf("unexpected media request: %s %s", request.Method, request.URL.Path)
 		}
 		var command struct {
@@ -32,7 +32,7 @@ func TestRTSPPullCreateMatchesMediaContract(t *testing.T) {
 	}))
 	t.Cleanup(media.Close)
 	client := newMediaServerHTTPClient(mediaServer{controlURL: media.URL}, time.Second)
-	if err := client.createRTSPPull(t.Context(), rtspPullCreateRequest{
+	if err := client.createPull(t.Context(), pullCreateRequest{
 		StreamID: "8cbb0faf-3a7e-49bc-a64e-343dfb334954", URL: "rtsp://camera.example/live",
 	}); err != nil {
 		t.Fatalf("media rejected signaling RTSP request: %v", err)

@@ -85,10 +85,10 @@ export function mountOverview(root, ctx) {
     const note = channelsNote();
     replaceKeepingFocus(body, [
       h("div", { class: "kpis" },
-        metric("接入对象", "camera", String(devices.length), "个", `GB28181 ${gb.length} · RTSP 拉流 ${rtsp.length} · 推流 ${push.length}`),
+        metric("接入对象", "camera", String(devices.length), "个", `GB28181 ${gb.length} · 主动拉流 ${rtsp.length} · 推流 ${push.length}`),
         metric("在线国标设备", "check", String(gb.filter(device => device.raw.online).length), `/ ${gb.length}`, "按 SIP 注册与心跳判断"),
         metric("国标通道", "grid", String(channels.length), "个", note || "没有在线的国标设备"),
-        metric("运行中视频源", "video", String(streams.length), "路", `GB 点播 ${count("gb")} · RTSP 拉流 ${count("rtsp")} · 推流 ${count("push")}`)),
+        metric("运行中视频源", "video", String(streams.length), "路", `GB 点播 ${count("gb")} · 主动拉流 ${count("rtsp")} · 推流 ${count("push")}`)),
       h("div", { class: "overview-grid" },
         h("div", { class: "stack" },
           h("section", { class: "card" },
@@ -96,7 +96,7 @@ export function mountOverview(root, ctx) {
             h("div", { class: "card-body stack" },
               h("div", { class: "connect-overview" },
                 connectType("camera", "GB28181", gb.length, `在线 ${gb.filter(device => device.raw.online).length} 台`),
-                connectType("link", "RTSP 拉流", rtsp.length, `拉流中 ${count("rtsp")} 路`),
+                connectType("link", "主动拉流", rtsp.length, `拉流中 ${count("rtsp")} 路`),
                 connectType("radio", "主动推流", push.length, pushProtocols)),
               h("div", { class: "hint" }, "设备与视频源统一管理，但不同接入方式使用各自真实的配置项；只有国标设备具有 SIP 注册与通道层级。"))),
           h("section", { class: "card" },
@@ -113,7 +113,7 @@ export function mountOverview(root, ctx) {
             ? emptyState({ icon: "video", title: "当前没有运行中的视频源", text: "国标点播、开始拉流或推流设备接入后会出现在这里。" })
             : h("div", { class: "event-list" }, streams.slice(0, 8).map(stream => h("div", { class: "event" },
               h("span", { class: "feed-icon" }, icon("camera")),
-              h("div", { class: "what" }, h("strong", {}, stream.name), h("span", {}, `${stream.protocol} · ${stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "RTSP 拉流" : "推流"}`)),
+              h("div", { class: "what" }, h("strong", {}, stream.name), h("span", {}, `${stream.protocol} · ${stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "主动拉流" : "推流"}`)),
               h("button", { class: "link", type: "button", dataset: { key: `play:${stream.streamID}` }, onclick: () => ctx.playInCenter(playItem(stream)) }, "预览")))))),
     ]);
   }
@@ -130,7 +130,7 @@ export function mountStreams(root, ctx) {
   const ensureChannels = onlineChannelsOnce();
   let kind = "all";
   const filter = h("select", { class: "select", "aria-label": "按来源筛选", onchange: event => { kind = event.target.value; update(); } },
-    h("option", { value: "all" }, "全部来源"), h("option", { value: "gb" }, "GB28181 点播"), h("option", { value: "rtsp" }, "RTSP 拉流"), h("option", { value: "push" }, "推流"));
+    h("option", { value: "all" }, "全部来源"), h("option", { value: "gb" }, "GB28181 点播"), h("option", { value: "rtsp" }, "主动拉流"), h("option", { value: "push" }, "推流"));
   const count = h("span", { class: "muted tiny" });
   const body = h("div");
   const foot = h("div");
@@ -161,7 +161,7 @@ export function mountStreams(root, ctx) {
       h("tbody", {}, streams.map(stream => h("tr", {},
         h("td", { class: "c-name" }, h("div", { class: "cell-title" }, h("strong", {}, stream.name), h("span", { class: "table-sub mono", title: stream.streamID }, stream.streamID))),
         h("td", { class: "c-proto" }, protoTag(stream.protocol)),
-        h("td", { class: "c-mode" }, stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "RTSP 拉流" : "主动推流"),
+        h("td", { class: "c-mode" }, stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "主动拉流" : "主动推流"),
         h("td", { class: "c-status" }, badge(stream.kind === "push" ? "推流中" : "运行中", "success")),
         h("td", { class: "c-actions" }, h("div", { class: "text-actions" },
           h("button", { type: "button", dataset: { key: `play:${stream.streamID}` }, onclick: () => ctx.playInCenter(playItem(stream)) }, "加入监控"),
@@ -204,7 +204,7 @@ export function mountStatus(root) {
         h("div", { class: "card-body" },
           line("在线 / 运行中接入对象", h("strong", {}, `${online} / ${devices.length}`)),
           line("国标设备在线", h("strong", {}, `${gb.filter(device => device.raw.online).length} / ${gb.length}`)),
-          line("RTSP 拉流中", h("strong", {}, `${streams.filter(stream => stream.kind === "rtsp").length} / ${rtsp.length}`)),
+          line("主动拉流中", h("strong", {}, `${streams.filter(stream => stream.kind === "rtsp").length} / ${rtsp.length}`)),
           line("推流中", h("strong", {}, `${streams.filter(stream => stream.kind === "push").length} / ${push.length}`)),
           line("国标点播", h("strong", {}, String(streams.filter(stream => stream.kind === "gb").length))))),
       ...UNSUPPORTED.map(([title, items]) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, title)),
