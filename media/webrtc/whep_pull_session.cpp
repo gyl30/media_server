@@ -385,15 +385,15 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
         idle_timer_.touch();
         spdlog::info("whep pull ice connected {} remote {} {}", config_.stream_id, endpoint.address().to_string(), endpoint.port());
         const auto self = shared_from_this();
-        dtls_ = std::make_unique<dtls_transport>(
-            answer_->fingerprint,
-            [self](std::span<const std::uint8_t> datagram)
-            {
-                if (self->selected_)
-                {
-                    self->send_udp(std::vector<std::uint8_t>(datagram.begin(), datagram.end()), *self->selected_);
-                }
-            });
+        dtls_ =
+            std::make_unique<dtls_transport>(answer_->fingerprint,
+                                             [self](std::span<const std::uint8_t> datagram)
+                                             {
+                                                 if (self->selected_)
+                                                 {
+                                                     self->send_udp(std::vector<std::uint8_t>(datagram.begin(), datagram.end()), *self->selected_);
+                                                 }
+                                             });
         // 应答 setup:passive 表示对端等待本端发起 DTLS 握手。
         if (!dtls_->startup(*certificate_, answer_->setup == "passive" ? dtls_role::client : dtls_role::server))
         {

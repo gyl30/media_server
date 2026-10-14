@@ -23,9 +23,9 @@ namespace
 {
 
 pull_http_response make_json_response(const pull_http_request& request,
-                                           boost::beast::http::status status,
-                                           boost::json::object body,
-                                           std::string_view allow = {})
+                                      boost::beast::http::status status,
+                                      boost::json::object body,
+                                      std::string_view allow = {})
 {
     pull_http_response response{status, request.version()};
     response.set(boost::beast::http::field::server, "media_server");
@@ -41,9 +41,9 @@ pull_http_response make_json_response(const pull_http_request& request,
 }
 
 pull_http_response make_error_response(const pull_http_request& request,
-                                            boost::beast::http::status status,
-                                            std::string_view error,
-                                            std::string_view allow = {})
+                                       boost::beast::http::status status,
+                                       std::string_view error,
+                                       std::string_view allow = {})
 {
     boost::json::object body;
     body["error"] = error;
@@ -242,13 +242,13 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
         {
             return invalid();
         }
-        return start_session(request,
-                             *stream_id,
-                             std::make_shared<whep_pull_session>(worker,
-                                                                 whep_pull_config{.stream_id = *stream_id,
-                                                                                  .url = std::string(url->get_href()),
-                                                                                  .token = std::move(token),
-                                                                                  .local_address = local_address}));
+        return start_session(
+            request,
+            *stream_id,
+            std::make_shared<whep_pull_session>(
+                worker,
+                whep_pull_config{
+                    .stream_id = *stream_id, .url = std::string(url->get_href()), .token = std::move(token), .local_address = local_address}));
     }
     return invalid();
 }

@@ -1265,8 +1265,8 @@ std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp)
         return std::nullopt;
     }
     const auto& transport_mid = answer->bundle_mids.front();
-    const auto transport =
-        std::find_if(answer->media.begin(), answer->media.end(), [&transport_mid](const webrtc_media_offer& media) { return media.mid == transport_mid; });
+    const auto transport = std::find_if(
+        answer->media.begin(), answer->media.end(), [&transport_mid](const webrtc_media_offer& media) { return media.mid == transport_mid; });
     if (transport == answer->media.end() || transport->port == 0 || !transport->rtcp_mux || transport->ice_ufrag.empty() ||
         transport->ice_pwd.empty() || transport->fingerprint.empty() || transport->candidates.empty())
     {

@@ -156,9 +156,14 @@ void check_whep_pull()
         throw std::runtime_error("whep pull offer not acceptable");
     }
 
-    const media_track video{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .channel_count = 0,
+    const media_track video{.id = 1,
+                            .kind = media_kind::video,
+                            .codec = codec_id::h264,
+                            .clock_rate = 90'000,
+                            .channel_count = 0,
                             .codec_config = {0, 0, 0, 1, 0x67, 0x64, 0x00, 0x1f}};
-    const media_track audio{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = 2, .codec_config = {}};
+    const media_track audio{
+        .id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = 2, .codec_config = {}};
     webrtc_answer_config server = client;
     server.port = 49004;
     server.ice_ufrag = "srvufrag";
@@ -176,7 +181,8 @@ void check_whep_pull()
     }
 
     auto without_candidate = answer->sdp;
-    without_candidate.erase(without_candidate.find("a=candidate:"), without_candidate.find("a=end-of-candidates") - without_candidate.find("a=candidate:"));
+    without_candidate.erase(without_candidate.find("a=candidate:"),
+                            without_candidate.find("a=end-of-candidates") - without_candidate.find("a=candidate:"));
     auto vp8_only = answer->sdp;
     vp8_only.replace(vp8_only.find("H264/90000"), 10, "VP8/90000");
     for (const auto& invalid : {without_candidate, vp8_only, std::string("v=0\r\n")})
@@ -200,9 +206,10 @@ void check_stun_controlling_round_trip()
     {
         throw std::runtime_error("controlling STUN request not accepted");
     }
-    const auto response = make_stun_binding_success_response(*parsed, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 5000), "server-password");
-    if (parse_stun_binding_success_response(response, "server-password") != transaction || parse_stun_binding_success_response(response, "wrong-password") ||
-        parse_stun_binding_success_response(request, "server-password"))
+    const auto response = make_stun_binding_success_response(
+        *parsed, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 5000), "server-password");
+    if (parse_stun_binding_success_response(response, "server-password") != transaction ||
+        parse_stun_binding_success_response(response, "wrong-password") || parse_stun_binding_success_response(request, "server-password"))
     {
         throw std::runtime_error("STUN success response verification failed");
     }

@@ -42,7 +42,7 @@ struct stun_binding_request
 
 // 校验 Binding 成功响应的 MESSAGE-INTEGRITY（对端密码）与 FINGERPRINT，返回其事务 ID。
 [[nodiscard]] std::optional<std::array<std::uint8_t, 12>> parse_stun_binding_success_response(std::span<const std::uint8_t> packet,
-                                                                                             std::string_view password);
+                                                                                              std::string_view password);
 
 [[nodiscard]] std::vector<std::uint8_t> make_stun_binding_error_response(const stun_binding_request& request,
                                                                          std::uint16_t error_code,

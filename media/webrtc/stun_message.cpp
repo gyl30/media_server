@@ -453,8 +453,8 @@ std::optional<std::array<std::uint8_t, 12>> parse_stun_binding_success_response(
     }
     const auto attributes = scan_stun_attributes(packet);
     if (!attributes || !attributes->message_integrity_offset || !attributes->fingerprint_offset ||
-        !verify_message_integrity(packet, *attributes->message_integrity_offset, password) ||
-        *attributes->fingerprint_offset + 8U != packet.size() || !verify_fingerprint(packet, *attributes->fingerprint_offset))
+        !verify_message_integrity(packet, *attributes->message_integrity_offset, password) || *attributes->fingerprint_offset + 8U != packet.size() ||
+        !verify_fingerprint(packet, *attributes->fingerprint_offset))
     {
         spdlog::debug("stun reject binding success response");
         return std::nullopt;
