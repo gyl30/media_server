@@ -1,5 +1,8 @@
-// 设备详情的管理操作（真实接口）：GB 点播 / 停止、RTSP 开始 / 停止取流、推流地址签发 / 撤销。
+// 设备详情的管理操作（真实接口）：GB 点播 / 停止、RTSP 开始 / 停止取流、推流接入地址查看 / 复制 / 重新生成。
 import { base, shots, check, clickText, text, toasts, api, waitFor, summary } from "./lib.mjs";
+import { execFileSync } from "node:child_process";
+
+const sql = query => execFileSync("sqlite3", [process.env.WEB_CONSOLE_DB, query]).toString().trim();
 
 const GB = "34020000001320000101";
 const CHANNEL = "34020000001310000001";
@@ -50,22 +53,22 @@ export default async function (b) {
   check("停止后期望状态为 stopped", (await api("/api/sources")).body.sources.find(item => item.source_id === sourceID).desired_state === "stopped");
   await api(`/api/sources/${sourceID}`, { method: "DELETE" });
 
-  // 推流：签发显示三个地址；撤销
+  // 推流：详情显示同一地址与状态；待接入时不提供重新生成；过期后重新生成，旧地址失效
   const push = (await api("/api/push-devices", { method: "POST", body: { name: "详情测试 推流" } })).body;
   await b.goto(base + `#devices/push/${push.device_id}`, 1500);
-  await q(clickText(".card .btn", "签发推流地址"));
-  check("签发后在弹窗中显示 RTMP / RTSP / WHIP 地址（协议未指定）", await waitFor(b, "document.querySelectorAll('#issue-dialog .url-value').length === 3", 5000));
-  const urls = await q("[...document.querySelectorAll('#issue-dialog .url-value')].map(e => e.textContent)");
-  check("地址形态与接口一致", urls[0].startsWith("rtmp://127.0.0.1:21935/live/") && urls[1].startsWith("rtsp://127.0.0.1:28554/") && urls[2].includes("/publish/whip/"), urls.join(" "));
-  check("后端状态为已签发", (await api(`/api/push-devices/${push.device_id}`)).body.state === "issued");
-  check("不单独显示 token 字段", !(await q("document.querySelector('#issue-dialog').innerText")).toLowerCase().includes("token"));
-  await b.shot(`${shots}/detail-push-issued.png`);
-  await q(clickText("#issue-dialog .btn", "完成"));
-  await waitFor(b, "document.querySelector('.page').innerText.includes('撤销签发')", 5000);
-  await q(clickText(".card .btn", "撤销签发"));
-  await confirm();
-  check("撤销后回到空闲", await waitFor(b, `fetch('/api/push-devices/${push.device_id}').then(r => r.json()).then(j => j.state === 'idle')`, 5000)
-    && await waitFor(b, "document.querySelector('.page').innerText.includes('尚未签发推流地址')", 5000));
+  const urls = await q("[...document.querySelectorAll('.page .url-value')].map(e => e.textContent)");
+  check("未指定协议显示三种地址且与接口一致", urls.length === 3 && urls[0] === push.rtmp_url && urls[1] === push.rtsp_url && urls[2] === push.whip_url, urls.join(" "));
+  check("显示待接入与截止时间", (await q(text(".page"))).includes("待接入") && (await q(text(".page"))).includes("前首次接入有效"));
+  check("待接入时不提供重新生成", !(await q("!!document.querySelector('[data-key=push-renew]')")));
+  check("不单独显示 token 字段", !(await q(text(".page"))).toLowerCase().includes("token"));
+  await b.shot(`${shots}/detail-push-pending.png`);
+  sql(`UPDATE push_devices SET credential_expires_at = 1 WHERE device_id = '${push.device_id}'`);
+  await q(clickText(".topbar .btn", "刷新"));
+  check("过期后显示地址已过期", await waitFor(b, "document.querySelector('.page').innerText.includes('地址已过期')", 5000));
+  await q("document.querySelector('[data-key=push-renew]').click()");
+  check("重新生成后回到待接入并显示新地址", await waitFor(b, `document.querySelector('.page .url-value') && document.querySelector('.page .url-value').textContent !== ${JSON.stringify(urls[0])} && document.querySelector('.page').innerText.includes('待接入')`, 5000));
+  const verify = await api("/internal/verify", { method: "POST", body: { token: push.token, operation: "publish", stream_id: push.token } });
+  check("旧地址已失效", verify.status === 403, String(verify.status));
   await api(`/api/push-devices/${push.device_id}`, { method: "DELETE" });
   summary();
 }

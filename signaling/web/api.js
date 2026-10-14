@@ -65,6 +65,7 @@ export const api = {
   createPushDevice: (body) => request("/api/push-devices", { method: "POST", body }),
   patchPushDevice: (deviceID, body) => request(`/api/push-devices/${segment(deviceID)}`, { method: "PATCH", body }),
   deletePushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}`, { method: "DELETE" }),
-  publishPushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}/publish`, { method: "POST" }),
+  preparePushCredential: () => request("/api/push-devices/credentials", { method: "POST" }),
+  renewPushCredential: (deviceID) => request(`/api/push-devices/${segment(deviceID)}/publish`, { method: "POST" }),
   stopPushDevice: (deviceID) => request(`/api/push-devices/${segment(deviceID)}/stop`, { method: "POST" }),
 };

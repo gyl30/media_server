@@ -1,11 +1,11 @@
 // 设备详情：按 GB28181、RTSP 拉流、推流设备分别展示信息与操作，共用页面布局与播放地址面板。
 import { api } from "/api.js";
-import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, PUSH_PROTOCOLS } from "/store.js";
+import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, pushURLs, formatClock, PUSH_PROTOCOLS } from "/store.js";
 import {
   h, icon, badge, protoTag, emptyState, toast, confirmAction, errorMessage, formatAgo, replaceKeepingFocus,
 } from "/ui.js";
 import {
-  openDeviceDialog, deleteDevice, editState, startSource, stopSource, stopPush, issuePublish, playItem,
+  openDeviceDialog, deleteDevice, editState, startSource, stopSource, stopPush, renewPushURL, pushURLRows, playItem,
 } from "/devices.js";
 import { createPlaybackPanel } from "/playback.js";
 
@@ -188,19 +188,31 @@ export function mountDetail(root, ctx, kind, id) {
     });
   }
 
+  // 接入地址：一次性使用，确认添加或重新生成后 5 分钟内首次接入有效。推流中不能重新生成，避免隐式断开现有发布。
   function publishCard(device) {
-    const state = device.raw.state;
-    const action = state === "idle"
-      ? h("button", { class: "btn sm primary", type: "button", dataset: { key: "publish" }, onclick: () => void issuePublish(device) }, icon("link", "sm"), "签发推流地址")
-      : h("button", { class: "btn sm danger-subtle", type: "button", dataset: { key: "push-stop" }, onclick: () => stopPush(device) }, icon("square", "sm"), state === "issued" ? "撤销签发" : "停止推流");
+    const raw = device.raw;
+    const publishing = raw.state === "publishing";
+    const actions = [publishing
+      ? h("button", { class: "btn sm danger-subtle", type: "button", dataset: { key: "push-stop" }, onclick: () => stopPush(device) }, icon("square", "sm"), "停止推流")
+      : null,
+    raw.state === "pending" ? null : h("button", {
+      class: "btn sm", type: "button", disabled: publishing, title: publishing ? "正在推流，停止推流后才能重新生成地址" : "",
+      dataset: { key: "push-renew" }, onclick: () => void renewPushURL(device),
+    }, icon("refresh", "sm"), raw.state === "none" ? "生成地址" : "重新生成地址")].filter(Boolean);
     const text = {
-      idle: "尚未签发推流地址。签发后服务端提供一次性推流地址，界面只显示设备所选协议的地址。",
-      issued: "已签发推流地址，等待设备连接。地址只在签发时显示；如未保存，请撤销签发后重新签发。",
-      verified: "设备已使用推流地址完成授权。授权验证不代表音视频一定正常，可在实时监控中预览确认。停止后需要重新签发地址才能再次推流。",
-    }[state];
+      none: "该设备创建于接入地址功能之前，还没有接入地址。",
+      pending: `地址 ${formatClock(raw.expires_at)} 前首次接入有效，首次接入成功后立即失效。`,
+      used: `地址已于 ${formatClock(raw.used_at)} 被使用，当前没有推流。需要再次接入时重新生成地址。`,
+      expired: `地址已于 ${formatClock(raw.expires_at)} 过期且未被使用。重新生成后 5 分钟内有效。`,
+      publishing: `地址已于 ${formatClock(raw.used_at)} 被使用，推流正在进行。推流认证不代表音视频一定正常，请以播放画面为准。`,
+    }[raw.state];
+    const protocolNote = raw.protocol ? `按设备协议显示 ${PUSH_PROTOCOLS[raw.protocol]} 地址；服务端当前不限制推流协议。` : "设备未指定协议，三种地址共用同一凭据，任选其一。";
     return h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("div", {}, h("h2", {}, "推流地址"), h("div", { class: "sub" }, "临时签发 · 一次性授权")), h("div", { class: "head-actions" }, action)),
-      h("div", { class: "card-body" }, h("div", { class: "hint" }, text)));
+      h("div", { class: "card-head" }, h("div", {}, h("h2", {}, "接入地址"), h("div", { class: "sub" }, `一次性 · ${device.status.label}`)), h("div", { class: "head-actions" }, actions)),
+      h("div", { class: "card-body stack" },
+        raw.token ? pushURLRows(pushURLs(raw)) : null,
+        h("div", { class: "hint" }, text),
+        raw.token ? h("p", { class: "muted tiny" }, protocolNote) : null));
   }
 
   // 只有可证明正在运行的媒体流才申请播放地址；否则给出该设备当前可做的下一步。
@@ -224,7 +236,7 @@ export function mountDetail(root, ctx, kind, id) {
         : "尚未开始拉流。开始拉流后才会生成播放地址。";
       return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text }) };
     }
-    if (raw.state === "verified") {
+    if (raw.state === "publishing") {
       return { title: device.name, actions: playAction(playItem(device)), stream: { id: raw.token, source: { push_device_id: id } } };
     }
     return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: "film", title: "媒体未就绪 · 设备未推流", text: "设备使用推流地址连接后，这里才会生成播放地址。" }) };

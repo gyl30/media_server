@@ -163,7 +163,8 @@ func TestMediaReconcileKeepsStateWhenMediaUnavailable(t *testing.T) {
 	}
 }
 
-func TestPushReconcileRegistrationGraceAndKnownIssuedRuns(t *testing.T) {
+// 未消费的凭据没有推流运行，媒体侧同名接收会话按遗留会话删除。
+func TestPushReconcileRegistrationGraceAndUnconsumedCredentials(t *testing.T) {
 	s := testInfrastructure(t)
 	now := time.Now()
 	s.live.sip.now = func() time.Time { return now }
@@ -206,10 +207,10 @@ func TestPushReconcileRegistrationGraceAndKnownIssuedRuns(t *testing.T) {
 	if _, ok := s.tokens.pushRuns[old]; ok {
 		t.Fatal("missing established push run retained")
 	}
-	if _, ok := s.tokens.pushRuns[issued]; !ok {
-		t.Fatal("unconsumed issued run was released")
+	if _, ok := s.tokens.pushRuns[issued]; ok {
+		t.Fatal("unconsumed credential has a run")
 	}
-	if len(deleted) != 1 || deleted[0] != "orphan" {
+	if len(deleted) != 2 || deleted[0] != issuedToken || deleted[1] != "orphan" {
 		t.Fatalf("wrong orphan deletion: %v", deleted)
 	}
 	verifyToken(t, s, play.Token, "play", oldToken, http.StatusForbidden)

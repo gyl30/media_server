@@ -19,7 +19,7 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 	s.tokens.mu.Lock()
 	pushes := make(map[string]pushRun)
 	for deviceID, run := range s.tokens.pushRuns {
-		if !run.verifiedAt.IsZero() && now.Sub(run.verifiedAt) > pushRegistrationGrace {
+		if now.Sub(run.verifiedAt) > pushRegistrationGrace {
 			pushes[deviceID] = run
 		}
 	}

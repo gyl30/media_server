@@ -18,7 +18,7 @@ function currentStream(target) {
   }
   if (target.push_device_id) {
     const device = store.pushDevices.find(item => item.device_id === target.push_device_id);
-    return { id: device?.state === "verified" ? device.token : "", at: store.updatedAt };
+    return { id: device?.state === "publishing" ? device.token : "", at: store.updatedAt };
   }
   const cache = store.channels.get(target.device_id);
   const channel = (cache?.channels || []).find(item => item.channel_id === target.channel_id);
@@ -30,7 +30,7 @@ function previewable(device) {
   if (device.kind === "rtsp") {
     return device.raw.session?.state === "created" ? "" : device.raw.session ? "拉流会话处理中" : "未拉流";
   }
-  return device.raw.state === "verified" ? "" : device.raw.state === "issued" ? "等待推流" : "未推流";
+  return device.raw.state === "publishing" ? "" : device.status.label;
 }
 
 export function mountVideo(root, ctx) {

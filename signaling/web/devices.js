@@ -1,6 +1,6 @@
-// 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除、签发推流地址。
+// 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除。
 import { api } from "/api.js";
-import { store, unifiedDevices, deviceHash, refresh, loadChannels, PUSH_PROTOCOLS } from "/store.js";
+import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, PUSH_PROTOCOLS } from "/store.js";
 import {
   h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus, copyButton,
 } from "/ui.js";
@@ -126,11 +126,8 @@ function rowActions(device, ctx) {
       : action("开始拉流", "start", () => startSource(device)));
     if (source.session?.state === "created") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
   } else {
-    const state = device.raw.state;
     links.push(action("编辑", "edit", () => openDeviceDialog(device)));
-    links.push(state === "idle" ? action("签发地址", "issue", () => issuePublish(device))
-      : action(state === "issued" ? "撤销签发" : "停止推流", "stop", () => stopPush(device), { neg: true }));
-    if (state === "verified") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
+    if (device.raw.state === "publishing") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
   }
   links.push(action("删除", "delete", () => deleteDevice(device, ctx), { neg: true }));
   return links;
@@ -183,54 +180,38 @@ export function stopSource(device) {
 }
 
 export function stopPush(device) {
-  const issued = device.raw.state === "issued";
   confirmAction({
-    title: issued ? "撤销签发" : "停止推流",
-    message: issued ? "撤销后已签发的推流地址立即失效。" : `停止「${device.name}」的推流后，正在观看的用户都会断开；再次推流需要重新签发地址。`,
-    confirmLabel: issued ? "撤销签发" : "停止推流",
+    title: "停止推流", message: `停止「${device.name}」的推流后，正在观看的用户都会断开；接入地址已使用，再次推流需要重新生成地址。`, confirmLabel: "停止推流",
     async action() {
       await api.stopPushDevice(device.id);
-      toast(issued ? "已撤销签发" : "已停止推流", "success");
+      toast("已停止推流", "success");
       void refresh();
     },
   });
 }
 
-// 签发推流地址：服务端一次签发三种地址、共用一个一次性授权；只展示设备所选协议的地址（未指定时三种都展示）。
-export async function issuePublish(device) {
-  let result;
+// 重新生成接入地址：旧地址立即失效；推流中由服务端拒绝。
+export async function renewPushURL(device) {
   try {
-    result = await api.publishPushDevice(device.id);
+    await api.renewPushCredential(device.id);
+    toast("已生成新的接入地址，5 分钟内有效", "success");
   } catch (error) {
-    toast(errorMessage(error), "danger");
-    return;
+    toast(error.code === "publishing" ? "正在推流，停止推流后才能重新生成地址" : errorMessage(error), "danger");
   }
-  void refresh();
-  const chosen = device.raw.protocol;
-  const urls = [["rtmp", "RTMP", result.rtmp_url], ["rtsp", "RTSP", result.rtsp_url], ["whip", "WHIP", result.whip_url]]
-    .filter(([value]) => !chosen || value === chosen);
-  const dialog = document.getElementById("issue-dialog");
-  dialog.replaceChildren(
-    h("div", { class: "dialog-head" }, h("h2", {}, "推流地址"), h("button", { class: "icon-btn", type: "button", "aria-label": "关闭", onclick: () => dialog.close() }, icon("x"))),
-    h("div", { class: "dialog-body" },
-      h("div", { class: "inline" }, h("strong", {}, device.name), protoTag(device.protocol)),
-      h("div", { class: "url-rows bordered" }, urls.map(([, label, url]) => h("div", { class: "url-row" },
-        h("div", { class: "url-proto" }, h("strong", {}, label)), h("div", { class: "url-side" }, copyButton(url, ` ${label} 推流地址`)), h("div", { class: "url-value" }, url)))),
-      h("ul", { class: "rules" },
-        h("li", {}, `一次性授权：${new Date(result.expires_at).toLocaleTimeString("zh-CN", { hour12: false })} 前首次连接有效，连接建立后不受此期限影响。`),
-        h("li", {}, chosen ? `按设备协议只显示 ${PUSH_PROTOCOLS[chosen]} 地址。服务端同时签发了其他协议地址且共用同一授权，当前不会限制推流协议。`
-          : "设备未指定协议，三种地址共用同一授权，任选其一推流。"),
-        h("li", {}, "地址只在本次签发时显示，关闭后无法再次查看；如未保存，请撤销签发后重新签发。"))),
-    h("div", { class: "dialog-foot" }, h("button", { class: "btn primary", type: "button", onclick: () => dialog.close() }, "完成")));
-  dialog.setAttribute("aria-label", "推流地址");
-  openDialog(dialog, dialog.querySelector(".copy-btn"));
+  await refresh();
+}
+
+// 接入地址行：按设备协议只列一种；未指定协议时三种共用同一凭据。
+export function pushURLRows(urls) {
+  return h("div", { class: "url-rows bordered" }, urls.map(([, label, url]) => h("div", { class: "url-row" },
+    h("div", { class: "url-proto" }, h("strong", {}, label)), h("div", { class: "url-side" }, copyButton(url, ` ${label} 推流地址`)), h("div", { class: "url-value" }, url))));
 }
 
 export function deleteDevice(device, ctx) {
   const messages = {
     gb: `删除「${device.name}」会停止该设备所有通道的点播，正在观看的用户都会断开。`,
     rtsp: `删除「${device.name}」会先停止拉流，正在观看的用户会断开。`,
-    push: `删除「${device.name}」会停止当前推流并作废已签发的推流地址，正在观看的用户会断开。`,
+    push: `删除「${device.name}」会停止当前推流并作废接入地址，正在观看的用户会断开。`,
   };
   confirmAction({
     title: "删除设备", message: messages[device.kind], confirmLabel: "删除设备",
@@ -254,9 +235,9 @@ const ADD_OPTIONS = [
   ["rtmp", "RTMP · 主动推流"], ["rtsp", "RTSP · 主动推流"], ["whip", "WHIP · 主动推流"],
 ];
 const PUSH_HELP = {
-  rtmp: "推流客户端（编码器、OBS 等）使用服务端签发的 RTMP 地址推流。",
-  rtsp: "推流客户端使用服务端签发的 RTSP 地址，通过 ANNOUNCE / RECORD 发布。",
-  whip: "兼容 WHIP 的客户端使用签发的 HTTP 地址发起 SDP 协商。",
+  rtmp: "编码器、OBS 等推流客户端使用下面的 RTMP 地址推流。",
+  rtsp: "推流客户端使用下面的 RTSP 地址，通过 ANNOUNCE / RECORD 发布。",
+  whip: "兼容 WHIP 的客户端向下面的 HTTP 地址发起 SDP 协商。",
 };
 
 // existing 为空时是添加；否则编辑（RTSP 拉流源或推流设备）。
@@ -266,6 +247,10 @@ export function openDeviceDialog(existing = null) {
   // choice：gb / rtsp-pull / rtmp / rtsp / whip；推流设备编辑时为当前协议（未指定为空串）。
   let choice = existing ? (existing.kind === "rtsp" ? "rtsp-pull" : raw.protocol) : "gb";
   let busy = false;
+  // 添加推流设备时预生成的接入凭据；三种协议的地址共用它，切换协议不重新生成。
+  let prepared = null;
+  let prepareError = null;
+  let preparing = false;
   const fields = {
     name: h("input", { class: "input", name: "name", autocomplete: "off", maxlength: "64", value: existing?.name || "", placeholder: "请输入设备或视频源名称" }),
     device_id: h("input", { class: "input mono", name: "device_id", inputmode: "numeric", maxlength: "20", autocomplete: "off", placeholder: "20 位数字，例如 34020000001320000001" }),
@@ -285,7 +270,7 @@ export function openDeviceDialog(existing = null) {
   picker.addEventListener("change", () => { choice = picker.value; for (const key of Object.keys(errors)) delete errors[key]; render(); });
   const errors = {};
   const failure = h("div", { class: "notice warn", role: "alert", hidden: true }, icon("alert"), h("span"));
-  const submit = h("button", { class: "btn primary", type: "submit" }, existing ? "保存" : "创建");
+  const submit = h("button", { class: "btn primary", type: "submit" }, existing ? "保存" : "确定添加");
   const cancel = h("button", { class: "btn", type: "button", onclick: () => { if (!busy) dialog.close(); } }, "取消");
   const close = h("button", { class: "icon-btn", type: "button", "aria-label": "关闭", onclick: () => { if (!busy) dialog.close(); } }, icon("x"));
   const content = h("div", { class: "dialog-body" });
@@ -301,7 +286,7 @@ export function openDeviceDialog(existing = null) {
     if (existing?.kind === "rtsp") {
       nodes.push(h("div", { class: "field" }, h("span", {}, "接入协议"), h("div", { class: "inline" }, protoTag("RTSP"), h("span", { class: "muted tiny" }, "主动拉流 · 接入方式创建后不可修改"))));
     } else {
-      nodes.push(field("protocol", "接入协议", picker, existing ? "协议用于展示和选择签发地址，不会限制服务端可接受的推流协议" : "", true));
+      nodes.push(field("protocol", "接入协议", picker, existing ? "协议用于展示和选择接入地址，不会限制服务端可接受的推流协议" : "", true));
     }
     nodes.push(field("name", "名称", fields.name, "", true));
     if (choice === "gb") {
@@ -316,11 +301,37 @@ export function openDeviceDialog(existing = null) {
       }
       if (!existing) nodes.push(h("p", { class: "muted tiny" }, "创建后默认未拉流，需要时点击列表中的「开始拉流」。"));
     } else if (!existing) {
-      nodes.push(h("div", { class: "explainer" }, h("strong", {}, `${PUSH_PROTOCOLS[choice]} 推流接入`), h("p", {}, PUSH_HELP[choice]),
-        h("p", { class: "muted tiny" }, "创建后在列表中「签发地址」：服务端签发一次性推流地址，界面只显示所选协议的地址。不设置固定 URL 或永久凭据。")));
+      nodes.push(h("div", { class: "explainer" }, h("strong", {}, `${PUSH_PROTOCOLS[choice]} 推流接入`), h("p", {}, PUSH_HELP[choice])));
+      if (prepared) {
+        nodes.push(pushURLRows(pushURLs({ ...prepared, protocol: choice })),
+          h("ul", { class: "rules" },
+            h("li", {}, "点击「确定添加」后地址才生效，有效期 5 分钟；取消添加则地址作废。"),
+            h("li", {}, "首次接入成功后地址立即失效，已建立的推流不受影响。地址可在设备详情中再次查看。")));
+      } else if (prepareError) {
+        nodes.push(h("div", { class: "notice warn" }, icon("alert"), h("span", {}, `接入地址生成失败：${errorMessage(prepareError)}`)));
+      } else {
+        nodes.push(h("p", { class: "muted tiny" }, "正在生成接入地址…"));
+        void prepare();
+      }
     }
+    submit.disabled = Boolean(!existing && PUSH_PROTOCOLS[choice] && !prepared);
     nodes.push(failure);
     content.replaceChildren(...nodes);
+  }
+
+  async function prepare() {
+    if (preparing) {
+      return;
+    }
+    preparing = true;
+    try {
+      prepared = await api.preparePushCredential();
+    } catch (error) {
+      prepareError = error;
+    }
+    if (dialog.open) {
+      render();
+    }
   }
 
   const syncPassword = () => {
@@ -354,7 +365,7 @@ export function openDeviceDialog(existing = null) {
     submit.setAttribute("aria-busy", "true");
     failure.hidden = true;
     try {
-      const message = await save(choice, existing, name, fields);
+      const message = await save(choice, existing, name, fields, prepared);
       dialog.close();
       toast(message, "success");
       void refresh();
@@ -392,7 +403,7 @@ function validRTSPURL(value) {
 }
 
 // 返回与实际请求一致的成功提示。
-async function save(choice, existing, name, fields) {
+async function save(choice, existing, name, fields, prepared) {
   if (choice === "gb") {
     await api.createDevice({ device_id: fields.device_id.value.trim(), name });
     return "已添加设备，等待设备注册";
@@ -402,8 +413,8 @@ async function save(choice, existing, name, fields) {
       await api.patchPushDevice(existing.id, choice === existing.raw.protocol ? { name } : { name, protocol: choice });
       return "已保存设备";
     }
-    await api.createPushDevice({ name, protocol: choice });
-    return `已添加 ${PUSH_PROTOCOLS[choice]} 推流设备`;
+    await api.createPushDevice({ name, protocol: choice, token: prepared.token });
+    return `已添加 ${PUSH_PROTOCOLS[choice]} 推流设备，接入地址 5 分钟内有效`;
   }
   const payload = { stream_name: name, url: fields.url.value.trim() };
   const username = fields.username.value;

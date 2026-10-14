@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,20 +14,24 @@ import (
 	"time"
 )
 
+// streamToken 是一次性播放 token。
 type streamToken struct {
-	operation string
 	streamID  string
 	expiresAt time.Time
 }
 
+// pushRun 是已通过发布认证的推流运行；verifiedAt 用于媒体对账的注册宽限。
 type pushRun struct {
 	streamID   string
 	verifiedAt time.Time
 }
 
+// tokens 只保存播放 token；推流接入凭据以数据库为准。prepared 是添加推流设备时已展示、尚未确认的凭据及其确认期限，
+// 确认添加时必须命中这里，未确认的凭据不能用于发布。pushRuns 是已通过发布认证的推流运行。
 type streamTokens struct {
 	mu       sync.Mutex
 	tokens   map[string]streamToken
+	prepared map[string]time.Time
 	pushRuns map[string]pushRun
 }
 
@@ -62,14 +67,8 @@ func (s *streamTokens) expireLocked(now time.Time) {
 			continue
 		}
 		delete(s.tokens, value)
-		if token.operation == "publish" {
-			for deviceID, run := range s.pushRuns {
-				if run.streamID == value && run.verifiedAt.IsZero() {
-					delete(s.pushRuns, deviceID)
-				}
-			}
-		}
 	}
+	maps.DeleteFunc(s.prepared, func(_ string, expiresAt time.Time) bool { return !now.Before(expiresAt) })
 }
 
 func (s *streamTokens) expire(now time.Time) {
@@ -129,7 +128,7 @@ func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs,
 		return playbackURLs{}, err
 	}
 	expiresAt := s.live.sip.now().Add(s.tokenTTL)
-	s.tokens.tokens[value] = streamToken{operation: "play", streamID: streamID, expiresAt: expiresAt}
+	s.tokens.tokens[value] = streamToken{streamID: streamID, expiresAt: expiresAt}
 	server := s.media.server
 	httpHost := net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.httpPort)))
 	path := "/" + streamID + "/" + value
@@ -194,7 +193,7 @@ func (s *infrastructureServer) streamRunningLocked(streamID string) bool {
 		}
 	}
 	for _, run := range s.tokens.pushRuns {
-		if run.streamID == streamID && !run.verifiedAt.IsZero() {
+		if run.streamID == streamID {
 			return true
 		}
 	}
@@ -224,7 +223,7 @@ func (s *infrastructureServer) handleVerify(writer http.ResponseWriter, request 
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if reason := s.consumeStreamToken(command.Token, command.Operation, command.StreamID); reason != "" {
+	if reason := s.consumeStreamToken(request.Context(), command.Token, command.Operation, command.StreamID); reason != "" {
 		s.logger.Info("stream authorization rejected", "reason", reason, "token", command.Token, "operation", command.Operation, "stream_id", command.StreamID)
 		writeHTTPError(writer, http.StatusForbidden, "forbidden")
 		return
@@ -233,7 +232,7 @@ func (s *infrastructureServer) handleVerify(writer http.ResponseWriter, request 
 	writer.WriteHeader(http.StatusOK)
 }
 
-func (s *infrastructureServer) consumeStreamToken(value, operation, streamID string) string {
+func (s *infrastructureServer) consumeStreamToken(ctx context.Context, value, operation, streamID string) string {
 	s.live.mu.Lock()
 	s.rtspPullMu.Lock()
 	s.tokens.mu.Lock()
@@ -241,6 +240,22 @@ func (s *infrastructureServer) consumeStreamToken(value, operation, streamID str
 	defer s.rtspPullMu.Unlock()
 	defer s.tokens.mu.Unlock()
 	now := s.live.sip.now()
+	// 推流凭据的流标识就是凭据本身；数据库原子消费保证只有一次认证成功，消费事实重启后仍然有效。
+	if operation == "publish" {
+		if value != streamID {
+			return "publish_identity_mismatch"
+		}
+		deviceID, err := s.sources.consumePushCredential(ctx, value, now)
+		if err != nil {
+			s.logger.Error("push credential consume failed", "error", err)
+			return "credential_store_failed"
+		}
+		if deviceID == "" {
+			return "push_credential_unavailable"
+		}
+		s.tokens.pushRuns[deviceID] = pushRun{streamID: value, verifiedAt: now}
+		return ""
+	}
 	token, ok := s.tokens.tokens[value]
 	var reason string
 	switch {
@@ -248,30 +263,13 @@ func (s *infrastructureServer) consumeStreamToken(value, operation, streamID str
 		reason = "token_not_found"
 	case !now.Before(token.expiresAt):
 		reason = "token_expired"
-	case token.operation != operation:
-		reason = "operation_mismatch"
 	case token.streamID != streamID:
 		reason = "stream_id_mismatch"
 	}
 	if reason != "" {
 		return reason
 	}
-	if operation == "publish" {
-		if value != streamID {
-			return "publish_identity_mismatch"
-		}
-		var deviceID string
-		for id, run := range s.tokens.pushRuns {
-			if run.streamID == value && run.verifiedAt.IsZero() {
-				deviceID = id
-				break
-			}
-		}
-		if deviceID == "" {
-			return "push_run_not_issued"
-		}
-		s.tokens.pushRuns[deviceID] = pushRun{streamID: value, verifiedAt: now}
-	} else if !s.streamRunningLocked(streamID) {
+	if !s.streamRunningLocked(streamID) {
 		return "source_not_running"
 	}
 	delete(s.tokens.tokens, value)

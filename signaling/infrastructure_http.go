@@ -37,7 +37,7 @@ func newInfrastructureServer(
 	media *mediaServerHTTPClient,
 	logger *slog.Logger,
 ) *infrastructureServer {
-	tokens := &streamTokens{tokens: make(map[string]streamToken), pushRuns: make(map[string]pushRun)}
+	tokens := &streamTokens{tokens: make(map[string]streamToken), prepared: make(map[string]time.Time), pushRuns: make(map[string]pushRun)}
 	live.tokens = tokens
 	return &infrastructureServer{
 		httpListen: httpListen, logger: logger, live: live, media: media,
@@ -65,6 +65,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /internal/verify", s.handleVerify)
 	routes.HandleFunc("GET /api/push-devices", s.handlePushDeviceList)
 	routes.HandleFunc("POST /api/push-devices", s.handlePushDeviceCreate)
+	routes.HandleFunc("POST /api/push-devices/credentials", s.handlePushCredentialPrepare)
 	routes.HandleFunc("GET /api/push-devices/{id}", s.handlePushDeviceGet)
 	routes.HandleFunc("PATCH /api/push-devices/{id}", s.handlePushDevicePatch)
 	routes.HandleFunc("DELETE /api/push-devices/{id}", s.handlePushDeviceDelete)

@@ -141,15 +141,37 @@ export function sourceStatus(source) {
   return { label: "未启动", tone: "neutral", group: "offline", detail: "需要时开始拉流" };
 }
 
-// 推流设备：verified 只说明推流授权已被使用、推流运行已登记，不代表音视频健康。
+// 推流设备：publishing 只说明接入地址已通过认证、推流运行已登记，不代表音视频健康。
+const PUSH_STATUS = {
+  publishing: { label: "推流中", tone: "success", group: "online" },
+  pending: { label: "待接入", tone: "pending", group: "offline" },
+  used: { label: "地址已使用", tone: "neutral", group: "offline", detail: "当前没有推流，重新生成地址后可再次接入" },
+  expired: { label: "地址已过期", tone: "warn", group: "attention", detail: "重新生成地址后可接入" },
+  none: { label: "未生成地址", tone: "neutral", group: "offline", detail: "生成接入地址后设备才能推流" },
+};
+
 export function pushStatus(device) {
-  if (device.state === "verified") {
-    return { label: "已接入", tone: "success", group: "online", detail: device.verified_at ? `推流授权已验证 ${formatDuration(Date.now() - Date.parse(device.verified_at))}` : "推流授权已验证" };
+  const status = PUSH_STATUS[device.state] || PUSH_STATUS.none;
+  if (device.state === "publishing") {
+    return { ...status, detail: `已接入 ${formatDuration(Date.now() - Date.parse(device.used_at))}` };
   }
-  if (device.state === "issued") {
-    return { label: "等待推流", tone: "pending", group: "offline", detail: device.expires_at ? `地址 ${new Date(device.expires_at).toLocaleTimeString("zh-CN", { hour12: false })} 前首次连接有效` : "" };
+  if (device.state === "pending") {
+    return { ...status, detail: `${formatClock(device.expires_at)} 前首次接入有效` };
   }
-  return { label: "未推流", tone: "neutral", group: "offline", detail: "签发推流地址后设备才能推流" };
+  return status;
+}
+
+export function formatClock(value) {
+  return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+// 推流设备按所选协议展示的接入地址；未指定协议时为空，由调用方展示全部三种。
+export function pushURLs(device) {
+  if (!device.token) {
+    return [];
+  }
+  return [["rtmp", "RTMP", device.rtmp_url], ["rtsp", "RTSP", device.rtsp_url], ["whip", "WHIP", device.whip_url]]
+    .filter(([value]) => !device.protocol || value === device.protocol);
 }
 
 // 前端统一展示对象。key 在三类资源间唯一；protocol 是显示用协议名，filter 是协议筛选值。
@@ -167,12 +189,12 @@ export function unifiedDevices() {
     ...store.pushDevices.map(device => ({
       key: `push:${device.device_id}`, kind: "push", id: device.device_id, name: device.name,
       protocol: PUSH_PROTOCOLS[device.protocol] || "未指定", filter: device.protocol ? `${device.protocol}-push` : "push-unspecified",
-      mode: "推流", endpoint: device.state === "verified" ? "推流已接入" : device.state === "issued" ? "已签发，等待推流" : "签发地址时生成", raw: device, status: pushStatus(device),
+      mode: "推流", endpoint: pushURLs(device)[0]?.[2] || "未生成地址", raw: device, status: pushStatus(device),
     })),
   ].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }
 
-// 当前可以证明正在运行的媒体流：GB 点播 streaming（仅限已获取通道的设备）、RTSP 会话 created、推流 verified。
+// 当前可以证明正在运行的媒体流：GB 点播 streaming（仅限已获取通道的设备）、RTSP 会话 created、推流 publishing。
 // 播放目标沿用 whep.js 的 target 结构。
 export function runningStreams() {
   const streams = [];
@@ -192,7 +214,7 @@ export function runningStreams() {
     }
   }
   for (const device of store.pushDevices) {
-    if (device.state === "verified") {
+    if (device.state === "publishing") {
       streams.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol] || "推流", streamID: device.token, deviceID: device.device_id, name: device.name, detail: "推流", target: { push_device_id: device.device_id } });
     }
   }

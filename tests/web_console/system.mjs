@@ -13,7 +13,7 @@ async function expected() {
     lives += list.filter(channel => channel.live?.state === "streaming").length;
   }
   const pulls = sources.filter(source => source.session?.state === "created").length;
-  const pushing = pushes.filter(device => device.state === "verified").length;
+  const pushing = pushes.filter(device => device.state === "publishing").length;
   return {
     total: devices.length + sources.length + pushes.length,
     online: devices.filter(item => item.online).length + sources.filter(source => ["created", "starting", "stopping"].includes(source.session?.state)).length + pushing,

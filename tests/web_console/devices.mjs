@@ -1,5 +1,5 @@
 // 设备管理（真实接口）：三类资源合并、五种接入协议创建与持久化、旧推流设备显示"未指定"、搜索筛选、
-// RTSP 编辑与密码语义、签发只显示所选协议地址、删除与失败提示。RTSP 密码与推流协议通过 SQLite 核对（WEB_CONSOLE_DB）。
+// RTSP 编辑与密码语义、推流添加时显示真实一次性地址（确认后生效、取消不创建）、删除与失败提示。RTSP 密码与推流协议通过 SQLite 核对（WEB_CONSOLE_DB）。
 import { execFileSync } from "node:child_process";
 import { base, shots, check, clickText, text, setInput, toasts, api, waitFor, summary } from "./lib.mjs";
 
@@ -75,10 +75,29 @@ export default async function (b) {
     await openAdd();
     await pick(value);
     check(`${label} 推流只要求名称`, await q("!document.querySelector('#device-dialog [name=url]') && !document.querySelector('#device-dialog [name=device_id]') && !document.querySelector('#device-dialog [name=password]')"));
+    check(`${label} 推流添加前显示一个所选协议地址`, await waitFor(b, "document.querySelectorAll('#device-dialog .url-value').length === 1", 3000));
+    const shown = await q("document.querySelector('#device-dialog .url-value').textContent");
+    const token = shown.split("/").pop();
+    check(`${label} 地址形态`, shown.startsWith({ rtmp: "rtmp://127.0.0.1:21935/live/", rtsp: "rtsp://127.0.0.1:28554/", whip: "http://127.0.0.1:28080/publish/whip/" }[value]), shown);
+    check(`${label} 说明确认后生效、5 分钟`, (await q(text("#device-dialog"))).includes("确定添加」后地址才生效，有效期 5 分钟"));
+    if (value === "rtmp") {
+      const verify = await api("/internal/verify", { method: "POST", body: { token, operation: "publish", stream_id: token } });
+      check("确认前地址不能用于发布", verify.status === 403, String(verify.status));
+      await b.shot(`${shots}/devices-add-push.png`);
+      await q("document.querySelector('#device-dialog .btn:not(.primary)').click()");
+      check("取消添加不创建设备", !(await api("/api/push-devices")).body.devices.some(item => item.token === token) && sql(`SELECT COUNT(*) FROM push_devices WHERE credential = '${token}'`) === "0");
+      await openAdd();
+      await pick(value);
+      await waitFor(b, "document.querySelectorAll('#device-dialog .url-value').length === 1", 3000);
+      check("重新打开生成新地址", (await q("document.querySelector('#device-dialog .url-value').textContent")) !== shown);
+    }
+    const confirmed = await q("document.querySelector('#device-dialog .url-value').textContent");
     await q(setInput("#device-dialog [name=name]", `测试 ${label} 推流`));
     await submit();
     const created = (await api("/api/push-devices")).body.devices.find(item => item.name === `测试 ${label} 推流`);
     check(`${label} 推流设备协议已持久化`, created?.protocol === value && sql(`SELECT protocol FROM push_devices WHERE device_id = '${created.device_id}'`) === value);
+    check(`${label} 确认后地址与添加页一致且待接入`, created?.state === "pending" && created[`${value}_url`] === confirmed
+      && Math.abs(Date.parse(created.expires_at) - Date.now() - 300000) < 5000, JSON.stringify(created));
   }
   await waitFor(b, `(${row("测试 WHIP 推流")})`, 5000);
   check("推流设备显示所选协议", (await rowText("测试 RTMP 推流")).includes("RTMP") && (await rowText("测试 WHIP 推流")).includes("WHIP") && (await rowText("测试 RTSP 推流")).includes("推流"));
@@ -110,7 +129,8 @@ export default async function (b) {
   // 按类型的操作
   check("GB 操作：详情 / 通道 / 删除", (await q(`(${row("园区东门 NVR")}).querySelector('.text-actions').innerText`)).replace(/\s+/g, " ").trim() === "详情 通道 删除");
   check("RTSP 操作含编辑与开始拉流", (await q(`(${row("测试 RTSP 源")}).querySelector('.text-actions').innerText`)).includes("开始拉流"));
-  check("推流操作含签发地址", (await q(`(${row("测试 RTMP 推流")}).querySelector('.text-actions').innerText`)).includes("签发地址"));
+  check("推流操作：详情 / 编辑 / 删除（未推流不显示预览，不再有签发）", (await q(`(${row("测试 RTMP 推流")}).querySelector('.text-actions').innerText`)).replace(/\s+/g, " ").trim() === "详情 编辑 删除");
+  check("推流行状态为待接入并显示地址", (await rowText("测试 RTMP 推流")).includes("待接入") && (await rowText("测试 RTMP 推流")).includes("rtmp://"));
 
   // 编辑 RTSP：URL / 新密码 / 留空保留 / 清除
   await rowAction("测试 RTSP 源", "edit"); await b.sleep(200);
@@ -145,24 +165,9 @@ export default async function (b) {
     await q("document.getElementById('device-dialog').close()");
   }
 
-  // 签发：只显示所选协议地址；撤销
-  await waitFor(b, `(${row("测试 WHIP 推流")})`, 3000);
-  await rowAction("测试 WHIP 推流", "issue"); await b.sleep(800);
-  const issued = await q("[...document.querySelectorAll('#issue-dialog .url-value')].map(e => e.textContent)");
-  check("签发只显示 WHIP 地址", issued.length === 1 && issued[0].includes("/publish/whip/"), JSON.stringify(issued));
-  check("签发说明不宣称协议限制", (await q(text("#issue-dialog"))).includes("当前不会限制推流协议"));
-  await b.shot(`${shots}/devices-issue.png`);
-  await q(clickText("#issue-dialog .btn", "完成"));
-  check("签发后状态为等待推流", await waitFor(b, `(${row("测试 WHIP 推流")})?.innerText.includes('等待推流')`, 5000));
-  await rowAction("测试 WHIP 推流", "stop");
-  await confirm();
-  check("撤销签发后回到未推流", await waitFor(b, `(${row("测试 WHIP 推流")})?.innerText.includes('未推流')`, 5000));
   if (LEGACY) {
-    const legacyName = (await api(`/api/push-devices/${LEGACY}`)).body.name;
-    await rowAction(legacyName, "issue"); await b.sleep(800);
-    check("未指定协议签发显示三种地址", await q("document.querySelectorAll('#issue-dialog .url-value').length") === 3);
-    await q(clickText("#issue-dialog .btn", "完成"));
-    await api(`/api/push-devices/${LEGACY}/stop`, { method: "POST" });
+    const legacy = (await api(`/api/push-devices/${LEGACY}`)).body;
+    check("旧推流设备没有地址时显示未生成地址", legacy.state !== "none" || (await rowText(legacy.name)).includes("未生成地址"));
   }
   await b.shot(`${shots}/devices-1440.png`);
 

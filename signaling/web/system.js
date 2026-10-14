@@ -113,7 +113,7 @@ export function mountOverview(root, ctx) {
             ? emptyState({ icon: "video", title: "当前没有运行中的视频源", text: "国标点播、开始拉流或推流设备接入后会出现在这里。" })
             : h("div", { class: "event-list" }, streams.slice(0, 8).map(stream => h("div", { class: "event" },
               h("span", { class: "feed-icon" }, icon("camera")),
-              h("div", { class: "what" }, h("strong", {}, stream.name), h("span", {}, `${stream.protocol} · ${stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "RTSP 拉流" : "推流已接入"}`)),
+              h("div", { class: "what" }, h("strong", {}, stream.name), h("span", {}, `${stream.protocol} · ${stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "RTSP 拉流" : "推流"}`)),
               h("button", { class: "link", type: "button", dataset: { key: `play:${stream.streamID}` }, onclick: () => ctx.playInCenter(playItem(stream)) }, "预览")))))),
     ]);
   }
@@ -138,7 +138,7 @@ export function mountStreams(root, ctx) {
     h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, "视频资源"), h("p", {}, "统一查看各接入方式当前正在运行、可以播放的视频源。")),
       h("div", { class: "actions" }, h("a", { class: "btn primary", href: "#monitor" }, icon("video"), "打开实时监控"))),
-    h("div", { class: "notice", style: "margin-bottom:18px" }, icon("info"), "视频源是媒体资源，不等同于 GB28181 设备的注册状态；推流设备的“已接入”表示推流授权已验证，画面以实际预览为准。"),
+    h("div", { class: "notice", style: "margin-bottom:18px" }, icon("info"), "视频源是媒体资源，不等同于 GB28181 设备的注册状态；推流设备的“推流中”表示接入地址已通过认证，画面以实际预览为准。"),
     h("div", { class: "card" },
       h("div", { class: "toolbar" }, h("div", { class: "toolbar-left" }, filter), h("div", { class: "toolbar-right" }, count)),
       body, foot)));
@@ -162,7 +162,7 @@ export function mountStreams(root, ctx) {
         h("td", { class: "c-name" }, h("div", { class: "cell-title" }, h("strong", {}, stream.name), h("span", { class: "table-sub mono", title: stream.streamID }, stream.streamID))),
         h("td", { class: "c-proto" }, protoTag(stream.protocol)),
         h("td", { class: "c-mode" }, stream.kind === "gb" ? "国标点播" : stream.kind === "rtsp" ? "RTSP 拉流" : "主动推流"),
-        h("td", { class: "c-status" }, badge(stream.kind === "push" ? "已接入" : "运行中", "success")),
+        h("td", { class: "c-status" }, badge(stream.kind === "push" ? "推流中" : "运行中", "success")),
         h("td", { class: "c-actions" }, h("div", { class: "text-actions" },
           h("button", { type: "button", dataset: { key: `play:${stream.streamID}` }, onclick: () => ctx.playInCenter(playItem(stream)) }, "加入监控"),
           h("a", { href: deviceHash(stream.kind, stream.deviceID) }, "播放地址")))))))),
@@ -205,7 +205,7 @@ export function mountStatus(root) {
           line("在线 / 运行中接入对象", h("strong", {}, `${online} / ${devices.length}`)),
           line("国标设备在线", h("strong", {}, `${gb.filter(device => device.raw.online).length} / ${gb.length}`)),
           line("RTSP 拉流中", h("strong", {}, `${streams.filter(stream => stream.kind === "rtsp").length} / ${rtsp.length}`)),
-          line("推流已接入", h("strong", {}, `${streams.filter(stream => stream.kind === "push").length} / ${push.length}`)),
+          line("推流中", h("strong", {}, `${streams.filter(stream => stream.kind === "push").length} / ${push.length}`)),
           line("国标点播", h("strong", {}, String(streams.filter(stream => stream.kind === "gb").length))))),
       ...UNSUPPORTED.map(([title, items]) => h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, title)),
         h("div", { class: "card-body" }, items.map(item => line(item, h("span", { class: "unavailable" }, "暂不支持"))))))),

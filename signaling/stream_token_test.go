@@ -91,7 +91,7 @@ func TestPushDevicesPersistWithoutRuntimeState(t *testing.T) {
 		if err != nil || restored.deviceID != id || restored.name != "Camera" {
 			t.Fatalf("restored device=%+v err=%v", restored, err)
 		}
-		if response := restarted.pushDeviceResponseLocked(restored); response.State != "idle" || response.Token != "" {
+		if response := restarted.pushDeviceResponseLocked(restored, time.Now()); (id == issuedID) != (response.State == "pending") || (id == verifiedID) != (response.State == "used") {
 			t.Fatalf("runtime restored: %+v", response)
 		}
 	}
@@ -104,6 +104,7 @@ func TestPushDatabaseFailureKeepsCurrentRun(t *testing.T) {
 	s := testInfrastructure(t)
 	deviceID := createPushDevice(t, s)
 	value := requestPushToken(t, s, deviceID)
+	verifyToken(t, s, value, "publish", value, http.StatusOK)
 	if err := s.sources.close(); err != nil {
 		t.Fatal(err)
 	}
@@ -112,9 +113,6 @@ func TestPushDatabaseFailureKeepsCurrentRun(t *testing.T) {
 	}
 	if s.tokens.pushRuns[deviceID].streamID != value {
 		t.Fatal("failed delete removed active run")
-	}
-	if _, ok := s.tokens.tokens[value]; !ok {
-		t.Fatal("failed delete revoked publication token")
 	}
 }
 
@@ -200,7 +198,7 @@ func createPushDevice(t *testing.T, s *infrastructureServer) string {
 	t.Helper()
 	response := apiRequest(t, s.handler(), "POST", "/api/push-devices", `{"name":"Camera"}`, http.StatusCreated)
 	var device pushDeviceResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &device); err != nil || !validUUIDv4(device.DeviceID) || device.State != "idle" {
+	if err := json.Unmarshal(response.Body.Bytes(), &device); err != nil || !validUUIDv4(device.DeviceID) || device.State != "pending" {
 		t.Fatalf("invalid push device: %s", response.Body.String())
 	}
 	return device.DeviceID
@@ -225,7 +223,6 @@ func TestPushDeviceRegistrationAndPublishAuthorization(t *testing.T) {
 	s := testInfrastructure(t)
 	deviceID := createPushDevice(t, s)
 	value := requestPushToken(t, s, deviceID)
-	apiRequest(t, s.handler(), "POST", "/api/push-devices/"+deviceID+"/publish", "", http.StatusConflict)
 	apiRequest(t, s.handler(), "POST", "/api/play", `{"source":{"push_device_id":"`+deviceID+`"}}`, http.StatusConflict)
 	verifyToken(t, s, value, "play", value, http.StatusForbidden)
 	verifyToken(t, s, value, "publish", "wrong-id", http.StatusForbidden)
@@ -239,7 +236,7 @@ func TestPushDeviceRegistrationAndPublishAuthorization(t *testing.T) {
 	}
 	verifyToken(t, s, result.Token, "play", value, http.StatusOK)
 	device := apiRequest(t, s.handler(), "PATCH", "/api/push-devices/"+deviceID, `{"name":"Renamed"}`, http.StatusOK)
-	if !strings.Contains(device.Body.String(), `"state":"verified"`) || !strings.Contains(device.Body.String(), `"name":"Renamed"`) {
+	if !strings.Contains(device.Body.String(), `"state":"publishing"`) || !strings.Contains(device.Body.String(), `"name":"Renamed"`) {
 		t.Fatal(device.Body.String())
 	}
 	apiRequest(t, s.handler(), "GET", "/api/push-devices", "", http.StatusOK)
@@ -279,20 +276,21 @@ func TestConcurrentVerificationConsumesExactlyOnce(t *testing.T) {
 
 func TestTokenExpiryDoesNotExpireVerifiedRun(t *testing.T) {
 	s := testInfrastructure(t)
-	s.tokenTTL = time.Second
+	now := time.Now()
+	s.live.sip.now = func() time.Time { return now }
 	deviceID := createPushDevice(t, s)
 	first := requestPushToken(t, s, deviceID)
-	expiresAt := s.tokens.tokens[first].expiresAt
-	s.live.sip.now = func() time.Time { return expiresAt }
+	expiresAt := now.Add(pushCredentialTTL)
+	now = expiresAt
 	verifyToken(t, s, first, "publish", first, http.StatusForbidden)
 	second := requestPushToken(t, s, deviceID)
 	if second == first {
 		t.Fatal("expired push identity reused")
 	}
 	verifyToken(t, s, second, "publish", second, http.StatusOK)
-	s.tokens.expire(expiresAt.Add(time.Hour))
+	now = now.Add(time.Hour)
 	device := apiRequest(t, s.handler(), "GET", "/api/push-devices/"+deviceID, "", http.StatusOK)
-	if !strings.Contains(device.Body.String(), `"state":"verified"`) {
+	if !strings.Contains(device.Body.String(), `"state":"publishing"`) {
 		t.Fatalf("TTL ended an admitted run: %s", device.Body.String())
 	}
 }

@@ -13,29 +13,66 @@ import (
 	"github.com/google/uuid"
 )
 
+// 推流设备状态：none 为旧设备尚无接入地址；pending 为地址可首次使用；used 为地址已被消费且当前没有推流；
+// expired 为地址未使用已过期；publishing 为推流已通过认证（是否有画面以实际播放为准）。
 type pushDeviceResponse struct {
-	DeviceID   string       `json:"device_id"`
-	Name       string       `json:"name"`
-	Protocol   pushProtocol `json:"protocol"`
-	State      string       `json:"state"`
-	Token      string       `json:"token,omitempty"`
-	ExpiresAt  time.Time    `json:"expires_at,omitzero"`
-	VerifiedAt time.Time    `json:"verified_at,omitzero"`
+	DeviceID  string       `json:"device_id"`
+	Name      string       `json:"name"`
+	Protocol  pushProtocol `json:"protocol"`
+	State     string       `json:"state"`
+	ExpiresAt time.Time    `json:"expires_at,omitzero"`
+	UsedAt    time.Time    `json:"used_at,omitzero"`
+	pushURLs
 }
 
-func (s *infrastructureServer) pushDeviceResponseLocked(device pushDevice) pushDeviceResponse {
-	response := pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "idle"}
-	if run, ok := s.tokens.pushRuns[device.deviceID]; ok {
-		response.Token = run.streamID
-		if run.verifiedAt.IsZero() {
-			response.State = "issued"
-			response.ExpiresAt = s.tokens.tokens[run.streamID].expiresAt
-		} else {
-			response.State = "verified"
-			response.VerifiedAt = run.verifiedAt
-		}
+type pushURLs struct {
+	Token   string `json:"token,omitempty"`
+	RTMPURL string `json:"rtmp_url,omitempty"`
+	RTSPURL string `json:"rtsp_url,omitempty"`
+	WHIPURL string `json:"whip_url,omitempty"`
+}
+
+// 接入地址由凭据和媒体服务器地址重建，数据库只保存凭据。
+func (s *infrastructureServer) pushURLs(credential string) pushURLs {
+	server := s.media.server
+	return pushURLs{
+		Token:   credential,
+		RTMPURL: (&url.URL{Scheme: "rtmp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtmpPort))), Path: "/live/" + credential}).String(),
+		RTSPURL: (&url.URL{Scheme: "rtsp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtspPort))), Path: "/" + credential}).String(),
+		WHIPURL: (&url.URL{Scheme: "http", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.httpPort))), Path: "/publish/whip/" + credential}).String(),
+	}
+}
+
+func (s *infrastructureServer) pushDeviceResponseLocked(device pushDevice, now time.Time) pushDeviceResponse {
+	response := pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "none"}
+	if device.credential == "" {
+		return response
+	}
+	response.ExpiresAt, response.UsedAt, response.pushURLs = device.expiresAt, device.usedAt, s.pushURLs(device.credential)
+	switch run, running := s.tokens.pushRuns[device.deviceID]; {
+	case running && run.streamID == device.credential:
+		response.State = "publishing"
+	case !device.usedAt.IsZero():
+		response.State = "used"
+	case !now.Before(device.expiresAt):
+		response.State = "expired"
+	default:
+		response.State = "pending"
 	}
 	return response
+}
+
+func (s *infrastructureServer) writePushDevice(writer http.ResponseWriter, request *http.Request, deviceID string, status int) {
+	device, err := s.sources.getPushDevice(request.Context(), deviceID)
+	if err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	s.tokens.mu.Lock()
+	response := s.pushDeviceResponseLocked(device, s.live.sip.now())
+	s.tokens.mu.Unlock()
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, status, response)
 }
 
 func (s *infrastructureServer) handlePushDeviceList(writer http.ResponseWriter, request *http.Request) {
@@ -44,31 +81,77 @@ func (s *infrastructureServer) handlePushDeviceList(writer http.ResponseWriter, 
 		s.writeDeviceError(writer, err)
 		return
 	}
+	now := s.live.sip.now()
 	s.tokens.mu.Lock()
-	s.tokens.expireLocked(s.live.sip.now())
 	response := make([]pushDeviceResponse, 0, len(devices))
 	for _, device := range devices {
-		response = append(response, s.pushDeviceResponseLocked(device))
+		response = append(response, s.pushDeviceResponseLocked(device, now))
 	}
 	s.tokens.mu.Unlock()
+	writer.Header().Set("Cache-Control", "no-store")
 	writeJSON(writer, http.StatusOK, map[string]any{"devices": response})
 }
 
+// 添加推流设备前预生成接入凭据，让添加页面在确认前展示真实地址。凭据只记在内存中等待确认，
+// 发布认证只认数据库中的凭据，因此确认前不能发布；取消添加时它在确认期限后丢弃。
+func (s *infrastructureServer) handlePushCredentialPrepare(writer http.ResponseWriter, request *http.Request) {
+	value, err := newStreamToken()
+	if err != nil {
+		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
+		return
+	}
+	now := s.live.sip.now()
+	s.tokens.mu.Lock()
+	s.tokens.expireLocked(now)
+	s.tokens.prepared[value] = now.Add(pushCredentialTTL)
+	s.tokens.mu.Unlock()
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, s.pushURLs(value))
+}
+
+// 创建时 token 为预生成的凭据（确认添加）；旧客户端不带 token 时直接生成。凭据从创建成功起 5 分钟内有效。
 func (s *infrastructureServer) handlePushDeviceCreate(writer http.ResponseWriter, request *http.Request) {
 	var command struct {
 		Name     string       `json:"name"`
 		Protocol pushProtocol `json:"protocol"`
+		Token    string       `json:"token"`
 	}
 	if !decodeJSON(writer, request, &command) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	device := pushDevice{deviceID: uuid.NewString(), name: command.Name, protocol: command.Protocol}
-	if err := s.sources.createPushDevice(request.Context(), device); err != nil {
+	device := pushDevice{deviceID: uuid.NewString(), name: command.Name, protocol: command.Protocol, credential: command.Token}
+	s.tokens.mu.Lock()
+	now := s.live.sip.now()
+	s.tokens.expireLocked(now)
+	if device.credential != "" {
+		if _, ok := s.tokens.prepared[device.credential]; !ok {
+			s.tokens.mu.Unlock()
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_credential")
+			return
+		}
+	} else {
+		var err error
+		if device.credential, err = newStreamToken(); err != nil {
+			s.tokens.mu.Unlock()
+			writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
+			return
+		}
+	}
+	device.expiresAt = pushCredentialDeadline(now)
+	err := s.sources.createPushDevice(request.Context(), device)
+	if err == nil {
+		delete(s.tokens.prepared, device.credential)
+	}
+	response := s.pushDeviceResponseLocked(device, now)
+	s.tokens.mu.Unlock()
+	if err != nil {
 		s.writeDeviceError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusCreated, pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "idle"})
+	s.logger.Info("push device created", "device_id", device.deviceID, "protocol", device.protocol, "expires_at", device.expiresAt)
+	writer.Header().Set("Cache-Control", "no-store")
+	writeJSON(writer, http.StatusCreated, response)
 }
 
 func (s *infrastructureServer) handlePushDeviceGet(writer http.ResponseWriter, request *http.Request) {
@@ -77,16 +160,7 @@ func (s *infrastructureServer) handlePushDeviceGet(writer http.ResponseWriter, r
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	device, err := s.sources.getPushDevice(request.Context(), deviceID)
-	if err != nil {
-		s.writeDeviceError(writer, err)
-		return
-	}
-	s.tokens.mu.Lock()
-	s.tokens.expireLocked(s.live.sip.now())
-	response := s.pushDeviceResponseLocked(device)
-	s.tokens.mu.Unlock()
-	writeJSON(writer, http.StatusOK, response)
+	s.writePushDevice(writer, request, deviceID, http.StatusOK)
 }
 
 func (s *infrastructureServer) handlePushDevicePatch(writer http.ResponseWriter, request *http.Request) {
@@ -103,68 +177,39 @@ func (s *infrastructureServer) handlePushDevicePatch(writer http.ResponseWriter,
 		s.writeDeviceError(writer, err)
 		return
 	}
-	device, err := s.sources.getPushDevice(request.Context(), deviceID)
-	if err != nil {
-		s.writeDeviceError(writer, err)
-		return
-	}
-	s.tokens.mu.Lock()
-	s.tokens.expireLocked(s.live.sip.now())
-	response := s.pushDeviceResponseLocked(device)
-	s.tokens.mu.Unlock()
-	writeJSON(writer, http.StatusOK, response)
+	s.writePushDevice(writer, request, deviceID, http.StatusOK)
 }
 
+// 重新生成接入地址：旧凭据立即失效，新凭据从现在起 5 分钟有效。正在推流时拒绝，不隐式停止现有发布。
 func (s *infrastructureServer) handlePushPublish(writer http.ResponseWriter, request *http.Request) {
 	deviceID := request.PathValue("id")
 	if !validUUIDv4(deviceID) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	s.sourceOperationMu.Lock()
-	if _, err := s.sources.getPushDevice(request.Context(), deviceID); err != nil {
-		s.sourceOperationMu.Unlock()
-		s.writeDeviceError(writer, err)
-		return
-	}
-	s.tokens.mu.Lock()
-	now := s.live.sip.now()
-	s.tokens.expireLocked(now)
-	if _, exists := s.tokens.pushRuns[deviceID]; exists {
-		s.tokens.mu.Unlock()
-		s.sourceOperationMu.Unlock()
-		writeHTTPError(writer, http.StatusConflict, "conflict")
-		return
-	}
 	value, err := newStreamToken()
 	if err != nil {
-		s.tokens.mu.Unlock()
-		s.sourceOperationMu.Unlock()
 		writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
 		return
 	}
-	expiresAt := now.Add(s.tokenTTL)
-	s.tokens.tokens[value] = streamToken{operation: "publish", streamID: value, expiresAt: expiresAt}
-	s.tokens.pushRuns[deviceID] = pushRun{streamID: value}
+	s.sourceOperationMu.Lock()
+	s.tokens.mu.Lock()
+	if _, publishing := s.tokens.pushRuns[deviceID]; publishing {
+		s.tokens.mu.Unlock()
+		s.sourceOperationMu.Unlock()
+		writeHTTPError(writer, http.StatusConflict, "publishing")
+		return
+	}
+	expiresAt := pushCredentialDeadline(s.live.sip.now())
+	err = s.sources.renewPushCredential(request.Context(), deviceID, value, expiresAt)
 	s.tokens.mu.Unlock()
 	s.sourceOperationMu.Unlock()
-	server := s.media.server
-	result := struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
-		RTMPURL   string    `json:"rtmp_url"`
-		RTSPURL   string    `json:"rtsp_url"`
-		WHIPURL   string    `json:"whip_url"`
-	}{
-		Token: value, ExpiresAt: expiresAt,
-		RTMPURL: (&url.URL{Scheme: "rtmp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtmpPort))), Path: "/live/" + value}).String(),
-		RTSPURL: (&url.URL{Scheme: "rtsp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtspPort))), Path: "/" + value}).String(),
-		WHIPURL: (&url.URL{Scheme: "http", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.httpPort))), Path: "/publish/whip/" + value}).String(),
+	if err != nil {
+		s.writeDeviceError(writer, err)
+		return
 	}
-	s.logger.Info("push URLs issued", "device_id", deviceID, "token", value, "expires_at", expiresAt,
-		"rtmp_url", result.RTMPURL, "rtsp_url", result.RTSPURL, "whip_url", result.WHIPURL)
-	writer.Header().Set("Cache-Control", "no-store")
-	writeJSON(writer, http.StatusCreated, result)
+	s.logger.Info("push credential renewed", "device_id", deviceID, "expires_at", expiresAt)
+	s.writePushDevice(writer, request, deviceID, http.StatusCreated)
 }
 
 func (s *infrastructureServer) stopPushDevice(ctx context.Context, deviceID string, remove bool) error {
