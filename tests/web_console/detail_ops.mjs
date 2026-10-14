@@ -36,6 +36,20 @@ export default async function (b) {
   check("停止点播后后端无 live", await waitFor(b, "fetch('/api/devices/" + GB + "/channels').then(r => r.json()).then(j => !j.channels[0].live)", 10000));
   check("界面回到未点播", await waitFor(b, "document.querySelector('.channel-list').innerText.includes('未点播')", 6000));
 
+  // 管理点播期间离开：上游请求可以成功，迟到的 finally/update 不能重新挂回旧详情。
+  await q(`window.__delayLive = true; const priorFetch = window.fetch; window.fetch = async (url, options) => {
+    if (window.__delayLive && String(url).endsWith('/channels/${CHANNEL}/play')) await new Promise(resolve => setTimeout(resolve, 1500));
+    return priorFetch(url, options);
+  }`);
+  await q(`document.querySelector('[data-key="live:${CHANNEL}"]').click()`);
+  await q("location.hash = '#devices'");
+  await b.sleep(3000);
+  check("点播迟到完成不覆盖新路由页面", await q("location.hash === '#devices' && document.querySelector('.page h1').textContent === '设备管理' && !document.querySelector('.detail-player')"));
+  check("离页只撤销详情所有权，不撤销已提交上游点播", (await liveOf())?.state === "streaming");
+  await q("window.__delayLive = false");
+  const lateLive = await liveOf();
+  if (lateLive) await api(`/api/lives/${lateLive.live_id}`, { method: "DELETE" });
+
   // RTSP：添加即自动拉流；地址不可达时会话结束，配置保留，显示连接失败并可重试
   const created = await api("/api/sources", { method: "POST", body: { stream_name: "详情测试 RTSP", url: "rtsp://127.0.0.1:9/none" } });
   const sourceID = created.body.source_id;

@@ -1,100 +1,114 @@
-// 设备详情播放地址（真实接口与真实媒体）：签发、共用一次性 token 的实际效果、刷新、过期、
-// 乱序与媒体流变化、GB 点播前不签发、RTSP 拉流按会话签发。需要 PUSH_DEVICE（正在推流的推流设备）。
+// 详情本页 WHEP：显式播放、真实双轨进展、GB 按需点播、关闭与迟到请求清理。
+// 五协议共用一次性授权仍由真实 ffprobe 连接验证，不展示签发地址面板。
 import { execFileSync } from "node:child_process";
-import { base, shots, check, clickText, text, toasts, api, waitFor, summary } from "./lib.mjs";
-
+import { readFileSync } from "node:fs";
+import { base, shots, check, api, waitFor, summary } from "./lib.mjs";
 const GB = "34020000001320000101";
 const CHANNEL = "34020000001310000001";
 const PUSH = process.env.PUSH_DEVICE;
-
-// 用 ffprobe 实际发起一次播放连接，返回是否成功拿到视频流信息。
 function probe(url) {
   try {
     const transport = url.startsWith("rtsp://") ? ["-rtsp_transport", "tcp"] : [];
-    const out = execFileSync("ffprobe", ["-v", "error", ...transport, "-rw_timeout", "4000000", "-select_streams", "v", "-show_entries", "stream=codec_name", "-of", "csv=p=0", url], { timeout: 12000, stdio: ["ignore", "pipe", "pipe"] }).toString();
-    return out.includes("h264");
-  } catch {
-    return false;
-  }
+    return execFileSync("ffprobe", ["-v", "error", ...transport, "-rw_timeout", "4000000", "-select_streams", "v",
+      "-show_entries", "stream=codec_name", "-of", "csv=p=0", url], { timeout: 12000, stdio: ["ignore", "pipe", "pipe"] }).toString().includes("h264");
+  } catch { return false; }
 }
-
 export default async function (b) {
   const q = js => b.eval(js);
-  const urls = () => q("[...document.querySelectorAll('.urls-panel .url-value')].map(e => e.textContent)");
-  const token = url => url.match(/\/([0-9a-f]{64})(?:\.flv|\/index\.m3u8)?$/)?.[1];
-  await b.viewport(1440, 900);
-
-  // 推流设备：签发 5 个地址，全部共用一个 token
-  const stream = (await api(`/api/push-devices/${PUSH}`)).body.token;
-  await b.goto(base + `#devices/push/${PUSH}`, 1500);
-  check("推流中设备打开详情即签发 5 个地址", await waitFor(b, "document.querySelectorAll('.urls-panel .url-value').length === 5", 5000));
-  let list = await urls();
-  check("地址属于当前媒体流", list.every(url => url.includes(`/${stream}/`)));
-  check("五个地址共用一个 token（与当前服务端一致）", new Set(list.map(token)).size === 1 && token(list[0]));
-  check("界面说明共用授权且不展示 token 字段", (await q(text(".urls-panel"))).includes("共用同一个一次性授权") && !(await q(text(".urls-panel"))).toLowerCase().includes("token"));
-  check("面板无多余的 null / undefined 文本", !/\b(null|undefined)\b/.test(await q(text(".urls-panel"))));
-  check("显示组级倒计时", /\d+s\s*内可发起新连接/.test(await q(text(".urls-meta"))));
-  await b.shot(`${shots}/detail-push-playback.png`);
-
-  // 共用 token 的实际效果：使用 FLV 后，同组 RTSP 地址被拒绝
-  check("同组 HTTP-FLV 地址可播放", probe(list[2]));
-  check("同组 RTSP 地址随之失效（共用授权）", !probe(list[0]));
-  await q(clickText(".urls-panel .card-head .btn", "全部刷新"));
-  await waitFor(b, `(() => { const u = document.querySelector('.urls-panel .url-value')?.textContent; return u && !u.includes(${JSON.stringify(token(list[0]))}); })()`, 5000);
-  const refreshed = await urls();
-  check("全部刷新得到新 token", token(refreshed[0]) !== token(list[0]) && (await q(toasts)).includes("已重新申请播放地址"));
-  check("刷新后的 RTSP 地址可播放", probe(refreshed[0]));
-
-  // 复制：成功与失败
-  await q("navigator.clipboard.writeText = async () => {}");
-  await q("document.querySelector('.urls-panel .copy-btn').click()"); await b.sleep(150);
-  check("复制成功提示", (await q(toasts)).includes("已复制 RTSP 播放地址"));
-  await q("navigator.clipboard.writeText = async () => { throw new Error('denied'); }; document.execCommand = () => false");
-  await q("document.querySelectorAll('.urls-panel .copy-btn')[1].click()"); await b.sleep(150);
-  check("复制失败提示", (await q(toasts)).includes("复制失败"));
-
-  // 重新进入详情签发新地址
-  await b.goto(base + "#devices", 600);
-  await b.goto(base + `#devices/push/${PUSH}`, 400);
-  await waitFor(b, "document.querySelectorAll('.urls-panel .url-value').length === 5", 5000);
-  check("重新进入详情得到新地址", token((await urls())[0]) !== token(refreshed[0]));
-
-  // 乱序：慢响应期间离开到另一台设备，旧响应不能写入新页面
-  await q("window.__delay = 0; const original = window.fetch; window.fetch = (url, options) => String(url).includes('/api/play') ? new Promise(resolve => setTimeout(() => resolve(original(url, options)), window.__delay)) : original(url, options)");
-  await q("window.__delay = 2000");
-  await q(clickText(".urls-panel .card-head .btn", "全部刷新"));
-  await q(`location.hash = '#devices/gb/${GB}'`);
-  await b.sleep(2600);
-  check("离开后旧响应未写入 GB 详情", (await urls()).length === 0 && (await q(text(".urls-panel"))).includes("媒体未就绪"));
-
-  // GB：打开详情不点播；点播后按 live 签发；停止后清空
-  check("GB 未点播时不创建 live", !(await api(`/api/devices/${GB}/channels`)).body.channels[0].live);
-  await q("window.__delay = 0");
-  await q(clickText(".urls-panel .btn", "开始点播"));
-  check("点播后签发地址", await waitFor(b, "document.querySelectorAll('.urls-panel .url-value').length === 5", 15000));
-  const live = (await api(`/api/devices/${GB}/channels`)).body.channels[0].live;
-  check("地址属于该通道的 live", (await urls()).every(url => url.includes(`/${live.live_id}/`)));
-  // signaling 的 streaming 早于媒体侧完成 PS 解析，稍等首个关键帧后再实际播放。
-  await b.sleep(2000);
-  check("GB 点播 RTSP 地址可播放", probe((await urls())[0]));
-  await b.shot(`${shots}/detail-gb-playback.png`);
-
-  // 慢响应期间媒体流结束：迟到的地址不展示
-  await q("window.__delay = 1500");
-  await q(clickText(".urls-panel .card-head .btn", "全部刷新"));
-  await api(`/api/lives/${live.live_id}`, { method: "DELETE" });
-  await b.sleep(3500);
-  check("停止点播后不保留旧地址", (await urls()).length === 0 && (await q(text(".urls-panel"))).includes("开始点播"));
-  await q("window.__delay = 0");
-
-  // 申请时媒体流已结束：错误态（服务端 409 not_running）
-  await api(`/api/push-devices/${PUSH}/stop`, { method: "POST" });
-  await b.goto(base + "#devices", 300);
-  await q(`location.hash = '#devices/push/${PUSH}'`);
-  await b.sleep(400);
-  const failed = await q(text(".urls-panel"));
-  console.log("INFO 推流停止后打开详情：", failed.replace(/\n/g, " ").slice(0, 120));
-  check("媒体流结束后显示未就绪或申请失败，不展示地址", (await urls()).length === 0 && (failed.includes("设备未推流") || failed.includes("申请失败")));
-  check("快照更新后显示设备未推流", await waitFor(b, "document.querySelector('.urls-panel').innerText.includes('设备未推流')", 6000));
+  const injected = await b.beforeLoad(`{
+    window.__pcs = []; window.__deletes = []; window.__playRequests = 0; window.__delay = 0;
+    const Peer = window.RTCPeerConnection;
+    window.RTCPeerConnection = class extends Peer { constructor(...args) { super(...args); window.__pcs.push(this); } };
+    const original = window.fetch;
+    window.fetch = async (url, options = {}) => {
+      if (String(url).includes('/api/play') || String(url).endsWith('/play')) {
+        window.__playRequests += 1;
+        if (window.__delay) await new Promise(resolve => setTimeout(resolve, window.__delay));
+      }
+      const response = await original(url, options);
+      if (options.method === 'DELETE' && String(url).includes('/whep/')) window.__deletes.push(response.status);
+      return response;
+    };
+  }`);
+  const open = () => q("window.__pcs.filter(pc => pc.signalingState !== 'closed').length");
+  const frames = () => q("document.querySelector('.detail-player video')?.getVideoPlaybackQuality().totalVideoFrames || 0");
+  const play = () => q("document.querySelector('[data-key=detail-play]').click()");
+  const close = () => q("document.querySelector('.detail-player [aria-label=关闭画面]').click()");
+  const liveOf = async () => (await api(`/api/devices/${GB}/channels`)).body.channels.find(item => item.channel_id === CHANNEL)?.live;
+  const logStart = process.env.MEDIA_LOG ? readFileSync(process.env.MEDIA_LOG, "utf8").split("\n").length - 1 : 0;
+  try {
+    const oldLive = await liveOf();
+    if (oldLive) await api(`/api/lives/${oldLive.live_id}`, { method: "DELETE" });
+    await b.viewport(1440, 900);
+    await b.goto(base + `#devices/push/${PUSH}`, 2000);
+    check("打开详情不自动签发或播放", await open() === 0 && await q("window.__playRequests") === 0);
+    check("详情不展示五地址或倒计时", await q("!document.querySelector('.urls-panel') && !document.querySelector('[data-countdown]')"));
+    check("详情提供本页播放", await q("!document.querySelector('[data-key=detail-play]').disabled"));
+    // API 独立授权不消费本页播放器自己的授权。
+    const ticket = (await api("/api/play", { method: "POST", body: { source: { push_device_id: PUSH } } })).body;
+    const keys = ["rtsp_url", "rtmp_url", "flv_url", "hls_url", "whep_url"];
+    const token = url => url.match(/\/([0-9a-f]{64})(?:\.flv|\/index\.m3u8)?$/)?.[1];
+    check("服务端五协议仍共用一次性授权", keys.every(key => ticket[key]) && new Set(keys.map(key => token(ticket[key]))).size === 1 && Boolean(token(ticket.rtsp_url)));
+    check("独立 HTTP-FLV 授权实际可播放", probe(ticket.flv_url));
+    check("同组 RTSP 已消费授权被拒绝", !probe(ticket.rtsp_url));
+    const fresh = (await api("/api/play", { method: "POST", body: { source: { push_device_id: PUSH } } })).body;
+    check("独立新授权 RTSP 实际可播放", token(fresh.rtsp_url) !== token(ticket.rtsp_url) && probe(fresh.rtsp_url));
+    await play();
+    check("本页 WHEP 真正解码且不跳监控", await waitFor(b, "document.querySelector('.detail-player video')?.getVideoPlaybackQuality().totalVideoFrames > 10", 15000)
+      && await q("location.hash") === `#devices/push/${PUSH}` && await open() === 1);
+    const samples = await q(`(async () => { let samples = 0; for (const pc of window.__pcs.filter(pc => pc.signalingState !== 'closed'))
+      for (const r of (await pc.getStats()).values()) if (r.type === 'inbound-rtp' && r.kind === 'audio') samples += r.totalSamplesReceived || 0; return samples; })()`);
+    check("本页双轨与音频样本进展", samples > 0 && await q("document.querySelector('.detail-player video').srcObject.getTracks().length") === 2);
+    const before = await frames();
+    await b.sleep(1000);
+    check("轮询不重建或打断播放器", await frames() > before && await open() === 1);
+    await b.shot(`${shots}/detail-push-whep.png`);
+    await close();
+    check("关闭本页画面发送 DELETE 且关闭连接", await waitFor(b, "window.__pcs.every(pc => pc.signalingState === 'closed') && window.__deletes.length === 1", 5000)
+      && [200, 204, 404].includes(await q("window.__deletes[0]")));
+    check("关闭画面不停止上游推流", (await api(`/api/push-devices/${PUSH}`)).body.state === "publishing");
+    await q("window.__delay = 1800");
+    await play();
+    await b.sleep(100);
+    await close();
+    await b.sleep(2200);
+    check("连接中关闭后迟到请求不恢复画面", await open() === 0 && await q("document.querySelectorAll('.detail-player video').length") === 0);
+    await q("window.__delay = 0");
+    await play();
+    await b.sleep(100);
+    await q(`location.hash = '#devices/gb/${GB}'`);
+    await b.sleep(2600);
+    check("切设备释放旧 viewer 且没有迟到画面", await open() === 0 && await q("document.querySelectorAll('.detail-player video').length") === 0);
+    check("GB 打开详情不点播", !(await liveOf()));
+    await play();
+    check("GB 点击本页播放完成点播和真实解码", await waitFor(b, "document.querySelector('.detail-player video')?.getVideoPlaybackQuality().totalVideoFrames > 10", 20000)
+      && (await liveOf())?.state === "streaming" && await open() === 1);
+    await b.shot(`${shots}/detail-gb-whep.png`);
+    await close();
+    check("关闭 GB 画面保留共享上游", await open() === 0 && (await liveOf())?.state === "streaming");
+    await play();
+    check("同一上游再次播放使用新 viewer", await waitFor(b, "document.querySelector('.detail-player video')?.getVideoPlaybackQuality().totalVideoFrames > 5", 15000));
+    const live = await liveOf();
+    await api(`/api/lives/${live.live_id}`, { method: "DELETE" });
+    check("媒体结束后显示 ended 并释放连接", await waitFor(b, "!!document.querySelector('.detail-player .tile.is-ended') && window.__pcs.every(pc => pc.signalingState === 'closed')", 10000));
+    const count = await q("window.__pcs.length");
+    await b.sleep(3000);
+    check("结束后不自动重连", await q("window.__pcs.length") === count && !(await liveOf()));
+    await q("location.hash = '#devices'");
+    await b.sleep(700);
+    check("离开详情回收所有播放器", await open() === 0 && await q("document.querySelectorAll('video').length") === 0);
+    if (process.env.MEDIA_LOG) {
+      const lines = readFileSync(process.env.MEDIA_LOG, "utf8").split("\n").slice(logStart);
+      const owned = new Set(lines.map(line => line.match(/whep session created (\w+)/)?.[1]).filter(Boolean));
+      for (const line of lines) { const id = line.match(/whep session shutdown (\w+)/)?.[1]; if (id) owned.delete(id); }
+      check("服务端本轮 WHEP 会话全部关闭", owned.size === 0, String(owned.size));
+    }
+  } finally {
+    await q("location.hash = '#devices'");
+    await b.sleep(400);
+    const live = await liveOf();
+    if (live) await api(`/api/lives/${live.live_id}`, { method: "DELETE" });
+    await b.removeBeforeLoad(injected);
+  }
   summary();
 }

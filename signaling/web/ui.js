@@ -144,6 +144,7 @@ export function errorMessage(error) {
     device_store_failed: "设备数据暂时无法保存，请稍后重试",
     live_stop_failed: "点播暂时无法停止，请稍后重试", live_start_failed: "设备暂时无法连接，请稍后重试",
     invalid_request: "输入有误，请检查后重试", conflict: "资源正在使用，请稍后重试", not_running: "媒体流未运行",
+    media_not_ready: "媒体尚未就绪，请等待接入完成",
     whep_create_404: "播放链接已失效，请重新播放", whep_create_409: "媒体尚未就绪，请稍后重新播放",
     whep_create_403: "播放授权已失效，请重新播放", whep_create_400: "浏览器与服务器无法协商音视频编码",
     whep_create_500: "播放服务暂时无法创建会话，请稍后重试", source_not_running: "媒体流未运行",

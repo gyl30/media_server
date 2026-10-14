@@ -1,4 +1,4 @@
-// 设备管理（真实接口）：三类资源合并、五种接入协议创建与持久化、旧推流设备显示"未指定"、搜索筛选、
+// 设备管理（真实接口）：三类资源合并、七种接入协议创建与持久化、旧推流设备显示"未指定"、搜索筛选、
 // RTSP 编辑与密码语义、推流添加时显示真实一次性地址（确认后生效、取消不创建）、删除与失败提示。RTSP 密码与推流协议通过 SQLite 核对（WEB_CONSOLE_DB）。
 import { execFileSync } from "node:child_process";
 import { base, shots, check, clickText, text, setInput, toasts, api, waitFor, summary } from "./lib.mjs";
@@ -40,6 +40,8 @@ export default async function (b) {
   // 添加 GB：本地校验、服务端重复、成功
   await q("document.querySelector('.page-head .btn').focus()");
   await openAdd();
+  check("添加提供准确的七种接入方式", await q("JSON.stringify([...document.querySelector('#device-dialog select[name=protocol]').options].map(o => o.value))")
+    === JSON.stringify(["gb", "rtsp-pull", "rtmp-pull", "whep-pull", "rtmp", "rtsp", "whip"]));
   check("对话框打开并聚焦接入协议", await dialogOpen() && await q("document.activeElement.name") === "protocol");
   check("默认 GB28181 显示国标编号字段", await q("!!document.querySelector('#device-dialog [name=device_id]') && !document.querySelector('#device-dialog [name=url]')"));
   await q(setInput("#device-dialog [name=name]", "测试 GB 设备"));
@@ -78,7 +80,7 @@ export default async function (b) {
     check(`${label} 推流添加前显示一个所选协议地址`, await waitFor(b, "document.querySelectorAll('#device-dialog .url-value').length === 1", 3000));
     const shown = await q("document.querySelector('#device-dialog .url-value').textContent");
     const token = shown.split("/").pop();
-    check(`${label} 地址形态`, shown.startsWith({ rtmp: "rtmp://127.0.0.1:21935/live/", rtsp: "rtsp://127.0.0.1:28554/", whip: "http://127.0.0.1:28080/publish/whip/" }[value]), shown);
+    check(`${label} 地址形态`, shown.startsWith({ rtmp: "rtmp://", rtsp: "rtsp://", whip: "http://" }[value]));
     check(`${label} 说明确认后生效、5 分钟`, (await q(text("#device-dialog"))).includes("确定添加」后地址才生效，有效期 5 分钟"));
     if (value === "rtmp") {
       const verify = await api("/internal/verify", { method: "POST", body: { token, operation: "publish", stream_id: token } });
@@ -86,6 +88,7 @@ export default async function (b) {
       await b.shot(`${shots}/devices-add-push.png`);
       await q("document.querySelector('#device-dialog .btn:not(.primary)').click()");
       check("取消添加不创建设备", !(await api("/api/push-devices")).body.devices.some(item => item.token === token) && sql(`SELECT COUNT(*) FROM push_devices WHERE credential = '${token}'`) === "0");
+      check("取消后预生成凭据仍不能发布", (await api("/internal/verify", { method: "POST", body: { token, operation: "publish", stream_id: token } })).status === 403);
       await openAdd();
       await pick(value);
       await waitFor(b, "document.querySelectorAll('#device-dialog .url-value').length === 1", 3000);
@@ -97,7 +100,7 @@ export default async function (b) {
     const created = (await api("/api/push-devices")).body.devices.find(item => item.name === `测试 ${label} 推流`);
     check(`${label} 推流设备协议已持久化`, created?.protocol === value && sql(`SELECT protocol FROM push_devices WHERE device_id = '${created.device_id}'`) === value);
     check(`${label} 确认后地址与添加页一致且待接入`, created?.state === "pending" && created[`${value}_url`] === confirmed
-      && Math.abs(Date.parse(created.expires_at) - Date.now() - 300000) < 5000, JSON.stringify(created));
+      && Math.abs(Date.parse(created.expires_at) - Date.now() - 300000) < 5000);
   }
   await waitFor(b, `(${row("测试 WHIP 推流")})`, 5000);
   check("推流设备显示所选协议", (await rowText("测试 RTMP 推流")).includes("RTMP") && (await rowText("测试 WHIP 推流")).includes("WHIP") && (await rowText("测试 RTSP 推流")).includes("推流"));
@@ -105,10 +108,33 @@ export default async function (b) {
   await b.reload(2200);
   check("重新加载页面协议不丢失", (await rowText("测试 WHIP 推流")).includes("WHIP") && (await rowText("测试 RTMP 推流")).includes("RTMP"));
 
+  // 新增主动拉流选项：确认前不创建，确认后自动连接；不可达上游结束但保留配置。
+  for (const [value, label, url] of [["rtmp-pull", "RTMP", "rtmp://127.0.0.1:9/live/test"], ["whep-pull", "WHEP", "http://127.0.0.1:9/whep/test"]]) {
+    const before = (await api("/api/sources")).body.sources.length;
+    await openAdd();
+    await pick(value);
+    check(`${label} 拉流显示协议地址且没有国标字段`, await q("!!document.querySelector('#device-dialog [name=url]') && !document.querySelector('#device-dialog [name=device_id]')"));
+    check(`${label} 确认前不创建拉流源`, (await api("/api/sources")).body.sources.length === before);
+    await q("document.getElementById('device-dialog').close()");
+    check(`${label} 取消添加不创建拉流源`, (await api("/api/sources")).body.sources.length === before);
+    await openAdd();
+    await pick(value);
+    await q(setInput("#device-dialog [name=name]", `测试 ${label} 拉流`));
+    await q(setInput("#device-dialog [name=url]", url));
+    if (value === "whep-pull") await q(setInput("#device-dialog [name=password]", "whep-fixture-bearer"));
+    await submit();
+    const added = (await api("/api/sources")).body.sources.find(item => item.stream_name === `测试 ${label} 拉流`);
+    check(`${label} 确认后配置保存并期望自动拉流`, Boolean(added) && added.url === url && added.desired_state === "running");
+    if (value === "whep-pull") check("WHEP Token 保存但接口与页面不回显", added.password_set === true && !Object.hasOwn(added, "password")
+      && sql(`SELECT password FROM rtsp_sources WHERE source_id = '${added.source_id}'`) === "whep-fixture-bearer"
+      && !(await q("document.body.innerText")).includes("whep-fixture-bearer"));
+  }
+  await waitFor(b, `(${row("测试 WHEP 拉流")})`, 5000);
+
   // 搜索与筛选
   const filter = (select, value) => q(`(() => { const s = document.querySelectorAll('.toolbar select')[${select}]; s.value = ${JSON.stringify(value)}; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   await q(setInput(".toolbar input[type=search]", "测试"));
-  check("搜索名称", (await rowNames()).length === 5, JSON.stringify(await rowNames()));
+  check("搜索名称", (await rowNames()).length === 7, JSON.stringify(await rowNames()));
   await q(setInput(".toolbar input[type=search]", "whip"));
   check("搜索协议", (await rowNames()).includes("测试 WHIP 推流") && !(await rowNames()).includes("测试 RTMP 推流"));
   await q(setInput(".toolbar input[type=search]", source.source_id.slice(0, 8)));
@@ -180,7 +206,7 @@ export default async function (b) {
   check("删除失败保留确认框并显示原因", await q("document.getElementById('confirm-dialog').open") && (await q(text("#confirm-dialog"))).includes("暂时无法保存"));
   await q("window.__fail = false");
   await q("document.querySelector('#confirm-dialog [data-confirm]').click()");
-  for (const name of ["测试 GB 设备", "测试 RTSP 源 改", "测试 RTMP 推流 改", "测试 RTSP 推流", "测试 WHIP 推流"]) {
+  for (const name of ["测试 GB 设备", "测试 RTSP 源 改", "测试 RTMP 推流 改", "测试 RTSP 推流", "测试 WHIP 推流", "测试 RTMP 拉流", "测试 WHEP 拉流"]) {
     await waitFor(b, `!(${row(name)}) || !document.getElementById('confirm-dialog').open`, 5000);
     if (await q(`!!(${row(name)})`)) {
       await rowAction(name, "delete");

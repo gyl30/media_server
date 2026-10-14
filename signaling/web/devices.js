@@ -134,7 +134,7 @@ export function playItem(device, channel = null) {
   if (device.kind === "gb") {
     return {
       kind: "gb", deviceID: device.id, key: `gb:${device.id}:${channel.channel_id}`, protocol: "GB28181", label: `${device.name} · ${channel.name || channel.channel_id}`,
-      target: { device_id: device.id, channel_id: channel.channel_id, live_id: channel.live?.state === "streaming" ? channel.live.live_id : undefined },
+      target: { device_id: device.id, channel_id: channel.channel_id },
     };
   }
   return {
@@ -237,7 +237,7 @@ const PUSH_HELP = {
 export function openDeviceDialog(existing = null) {
   const dialog = document.getElementById("device-dialog");
   const raw = existing?.raw;
-  // choice：gb / rtsp-pull / rtmp-pull / rtmp / rtsp / whip；推流设备编辑时为当前协议（未指定为空串）。
+  // choice：gb / rtsp-pull / rtmp-pull / whep-pull / rtmp / rtsp / whip；推流编辑时为当前协议。
   let choice = existing ? (existing.kind === "rtsp" ? `${pullProtocol(raw.url)}-pull` : raw.protocol) : "gb";
   let busy = false;
   // 添加推流设备时预生成的接入凭据；三种协议的地址共用它，切换协议不重新生成。

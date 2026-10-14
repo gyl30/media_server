@@ -1,25 +1,36 @@
 // Minimal headless-Chrome driver over CDP (Node 22 global WebSocket). 用法：WEB_CONSOLE_URL=http://127.0.0.1:29090/ node tests/web_console/cdp.mjs tests/web_console/<脚本>.mjs
 import { spawn } from "node:child_process";
-import { writeFileSync, mkdtempSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const port = 9333;
+const port = Number(process.env.WEB_CONSOLE_CDP_PORT || 9333);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid WEB_CONSOLE_CDP_PORT");
 const profile = mkdtempSync(join(tmpdir(), "msc-chrome-"));
-const chrome = spawn("google-chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });
-
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+let chrome;
+let browser;
+const logs = [];
+try {
+let startError;
+chrome = spawn("google-chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
+  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });
+chrome.on("error", error => { startError = error; });
 let version;
 for (let attempt = 0; attempt < 50 && !version; attempt++) {
+  if (startError) throw startError;
+  if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error("owned Chrome exited during startup");
   try { version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); } catch { await sleep(200); }
 }
-const browser = new WebSocket(version.webSocketDebuggerUrl);
-await new Promise(resolve => browser.addEventListener("open", resolve, { once: true }));
+if (!version?.webSocketDebuggerUrl) throw new Error("owned Chrome DevTools startup timed out");
+browser = new WebSocket(version.webSocketDebuggerUrl);
+await new Promise((resolve, reject) => {
+  browser.addEventListener("open", resolve, { once: true });
+  browser.addEventListener("error", () => reject(new Error("Chrome DevTools connection failed")), { once: true });
+});
 let nextID = 0;
 const pending = new Map();
-const logs = [];
 browser.addEventListener("message", event => {
   const message = JSON.parse(event.data);
   if (message.id && pending.has(message.id)) {
@@ -96,7 +107,6 @@ const api = {
   },
 };
 
-try {
   const script = await import(pathToFileURL(resolve(process.argv[2])).href);
   await script.default(api);
 } catch (error) {
@@ -105,6 +115,16 @@ try {
 } finally {
   console.log("---- browser logs ----");
   for (const line of logs) console.log(line);
-  browser.close();
-  chrome.kill();
+  browser?.close();
+  // 只回收本 harness spawn 的 Chrome；启动失败也走这里，不按端口或名称杀进程。
+  if (chrome?.pid && chrome.exitCode === null && chrome.signalCode === null) {
+    chrome.kill("SIGTERM");
+    for (let attempt = 0; attempt < 50 && chrome.exitCode === null && chrome.signalCode === null; attempt++) await sleep(100);
+    if (chrome.exitCode === null && chrome.signalCode === null) {
+      chrome.kill("SIGKILL");
+      await new Promise(resolve => chrome.once("exit", resolve));
+    }
+  }
+  if (process.exitCode) console.log("FAILED_PROFILE:", profile);
+  else rmSync(profile, { recursive: true, force: true });
 }

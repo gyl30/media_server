@@ -1,4 +1,4 @@
-// 设备详情：按 GB28181、RTSP 拉流、推流设备分别展示信息与操作，共用页面布局与播放地址面板。
+// 设备详情：信息、接入操作与本页独立 WHEP 播放器；打开页面不会自动点播或播放。
 import { api } from "/api.js";
 import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, pushURLs, formatClock, sourceReady, PUSH_PROTOCOLS } from "/store.js";
 import {
@@ -7,19 +7,22 @@ import {
 import {
   openDeviceDialog, deleteDevice, editState, startSource, stopSource, stopPush, renewPushURL, pushURLRows, playItem,
 } from "/devices.js";
-import { createPlaybackPanel } from "/playback.js";
+import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/player.js";
 
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 const LIVE_LABEL = { preparing: "正在点播", inviting: "正在点播", stopping: "正在停止", cleanup_pending: "正在清理" };
 
 export function mountDetail(root, ctx, kind, id) {
+  let mounted = true;
   const pending = new Set();
   let channelID = "";
   const head = h("div", { class: "detail-head" });
   const left = h("div", { class: "detail-col" });
   const right = h("div", { class: "detail-col" });
-  const playback = createPlaybackPanel();
-  right.append(playback.element);
+  let player = null;
+  const playbackHead = h("div", { class: "card-head" });
+  const playbackBody = h("div", { class: "card-body" });
+  right.append(h("section", { class: "card detail-player", "aria-label": "视频播放" }, playbackHead, playbackBody));
   const page = h("div", { class: "page" }, head, h("div", { class: "detail-grid" }, left, right));
   root.replaceChildren(page);
 
@@ -28,8 +31,11 @@ export function mountDetail(root, ctx, kind, id) {
   const mountedAt = Date.now();
 
   function update() {
+    // 管理点播的迟到完成可以保留上游，但不能把已经离开的详情重新写回路由容器。
+    if (!mounted) return;
     const device = find();
     if (!device) {
+      closePlayer();
       const confirmed = store.loaded && store.updatedAt >= mountedAt;
       if (!confirmed && !refreshing()) {
         void refresh();
@@ -54,7 +60,7 @@ export function mountDetail(root, ctx, kind, id) {
     replaceKeepingFocus(left, [infoCard(device),
       kind === "gb" ? channelCard(device) : null,
       kind === "push" ? publishCard(device) : null].filter(Boolean));
-    playback.update(playbackState(device));
+    renderPlayback(device);
   }
 
   function headContent(device) {
@@ -115,7 +121,7 @@ export function mountDetail(root, ctx, kind, id) {
     }
     return h("section", { class: "card" },
       h("div", { class: "card-head" }, h("div", {}, h("h2", {}, `通道列表${device.channels ? ` · ${channels.length}` : ""}`),
-        h("div", { class: "sub" }, "选择通道查看播放地址；打开详情不会自动点播"))),
+        h("div", { class: "sub" }, "选择通道后点击播放；打开详情不会自动点播"))),
       content);
   }
 
@@ -215,60 +221,63 @@ export function mountDetail(root, ctx, kind, id) {
         raw.token ? h("p", { class: "muted tiny" }, protocolNote) : null));
   }
 
-  // 只有可证明正在运行的媒体流才申请播放地址；否则给出该设备当前可做的下一步。
-  function playbackState(device) {
-    const raw = device.raw;
-    if (kind === "gb") {
-      const channel = (device.channels || []).find(item => item.channel_id === channelID);
-      const title = channel ? `${device.name} · ${channel.name || channel.channel_id}` : device.name;
-      const actions = playAction(raw.online && channel?.status === "ON" ? playItem(device, channel) : null);
-      if (channel?.live?.state === "streaming") {
-        return { title, actions, stream: { id: channel.live.live_id, source: { live_id: channel.live.live_id } } };
-      }
-      return { title, actions, notReady: gbNotReady(device, channel) };
-    }
-    if (kind === "rtsp") {
-      if (sourceReady(raw)) {
-        return { title: device.name, actions: playAction(playItem(device)), stream: { id: raw.session.stream_id, source: { source_id: id } } };
-      }
-      const text = raw.session ? "正在接入上游，媒体源建立后可以播放。"
-        : raw.desired_state === "running" ? "连接失败或上游已结束。请检查来源地址与认证信息，修改后会自动重新拉流，或点击「重试连接」。"
-        : "拉流已停止。点击「重试连接」重新拉流。";
-      return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text }) };
-    }
-    if (raw.state === "publishing") {
-      return { title: device.name, actions: playAction(playItem(device)), stream: { id: raw.token, source: { push_device_id: id } } };
-    }
-    return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: "film", title: "媒体未就绪 · 设备未推流", text: "设备使用推流地址连接后，这里才会生成播放地址。" }) };
-  }
-
-  // GB 通道在线即可预览（实时监控按现有流程点播）；RTSP / 推流需要运行中的媒体流。
-  function playAction(item) {
-    return [h("button", { class: "btn sm primary", type: "button", disabled: !item, dataset: { key: "play-center" },
-      onclick: () => ctx.playInCenter(item) }, icon("play", "sm"), "实时监控预览")];
-  }
-
-  function gbNotReady(device, channel) {
-    if (!device.raw.online) {
-      return emptyState({ icon: "wifi-off", title: "媒体未就绪 · 设备离线", text: "设备注册上线后，可选择通道并开始点播。" });
-    }
-    if (!channel) {
-      return emptyState({ icon: "layers", title: device.channels ? "没有可选通道" : "正在获取通道…" });
-    }
-    if (channel.status !== "ON") {
-      return emptyState({ icon: "wifi-off", title: "媒体未就绪 · 通道离线", text: "该通道当前不可点播，请检查前端摄像机。" });
-    }
-    if (channel.live) {
-      return emptyState({ icon: "clock", title: "点播进行中…", text: "媒体流就绪后会自动申请播放地址。" });
-    }
-    const busy = pending.has(channel.channel_id);
-    return emptyState({
-      icon: "film", title: "媒体未就绪", text: "该通道当前没有运行中的媒体流。打开详情不会自动点播，需要时请手动开始。",
-      action: h("button", { class: "btn primary", type: "button", disabled: busy, "aria-busy": String(busy), dataset: { key: "start-live" },
-        onclick: () => void startLive(channel) }, busy ? null : icon("play", "sm"), "开始点播"),
+  function closePlayer() {
+    const closing = player;
+    player = null;
+    if (closing) void closing.preview.closeViewer().then(error => {
+      if (error) toast(errorMessage({ code: "whep_delete_500" }), "danger");
     });
   }
 
+  function renderPlayback(device) {
+    const channel = (device.channels || []).find(item => item.channel_id === channelID);
+    const item = kind === "gb" ? device.raw.online && channel?.status === "ON" ? playItem(device, channel) : null
+      : (kind === "rtsp" ? sourceReady(device.raw) : device.raw.state === "publishing") ? playItem(device) : null;
+    // 选择另一个通道只释放原 viewer；同一个目标的媒体结束由播放器显示，不自动恢复。
+    if (player && kind === "gb" && player.key !== `gb:${id}:${channelID}`) closePlayer();
+    if (player) {
+      if (item) player.target = item.target;
+      endIfStreamChanged(player);
+    }
+    replaceKeepingFocus(playbackHead, [h("div", {}, h("h2", {}, "视频播放"), h("div", { class: "sub" }, channel?.name || device.name)),
+      h("button", { class: "btn sm primary", type: "button", disabled: !item || Boolean(player), dataset: { key: "detail-play" },
+        onclick: () => {
+          const next = createPlayer(item, () => {
+            if (player === next) renderPlayer(next, { onClose: () => { closePlayer(); update(); } });
+          });
+          player = next;
+          renderPlayback(device);
+          startPlayer(next);
+        } }, icon("play", "sm"), "播放")]);
+    if (player) {
+      renderPlayer(player, { onClose: () => { closePlayer(); update(); } });
+      if (playbackBody.firstChild !== player.element) playbackBody.replaceChildren(player.element);
+    } else {
+      playbackBody.replaceChildren(emptyState({ icon: item ? "play" : "film", title: item ? "点击播放预览视频" : "媒体未就绪",
+        text: item ? "本页播放使用独立 WHEP 连接；关闭画面不停止设备点播或拉流。"
+          : kind === "push" ? "设备未推流。使用接入地址连接后可以播放。"
+          : kind === "gb" ? "设备和通道在线后可点击播放，按需点播；打开详情不会自动点播。"
+          : "上游媒体就绪后可以播放；连接失败时检查来源地址，或重试连接。" }));
+    }
+  }
+
+  const onPageHide = () => {
+    const closing = player;
+    player = null;
+    closing?.preview.closeForPageHide();
+    const device = find();
+    if (device) renderPlayback(device);
+  };
+  const onFullscreen = () => { if (player) renderPlayer(player, { onClose: () => { closePlayer(); update(); } }); };
+  window.addEventListener("pagehide", onPageHide);
+  document.addEventListener("fullscreenchange", onFullscreen);
+
   update();
-  return { update, unmount: () => playback.destroy() };
+  return { update, unmount() {
+    mounted = false;
+    window.removeEventListener("pagehide", onPageHide);
+    document.removeEventListener("fullscreenchange", onFullscreen);
+    closePlayer();
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  } };
 }

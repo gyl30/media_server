@@ -1,29 +1,11 @@
 // 实时监控：统一设备列表 + 单画面 / 四分屏视频工作区。
-// 每个画面对象独占自己的 <video>、WHEPPreview 和 DOM 节点；布局切换只移动画面节点，WHEPPreview 的状态回调
-// 绑定画面对象而不是槽位编号。关闭画面只释放该画面的 WHEP 会话，不停止上游点播或拉流。
-import { WHEPPreview } from "/whep.js";
-import { store, unifiedDevices, deviceHash, channelsOf, syncChannels, loadChannels, sourceReady } from "/store.js";
+// 每个画面是一个播放器（player.js）；布局切换只移动画面节点，播放器的状态回调绑定画面对象而不是槽位编号。
+import { store, unifiedDevices, syncChannels, loadChannels, sourceReady } from "/store.js";
 import { h, icon, protoTag, toast, errorMessage, replaceKeepingFocus } from "/ui.js";
+import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/player.js";
 import { playItem } from "/devices.js";
 
-const STATE_LABEL = { preparing: "正在准备", negotiating: "正在建立 WHEP 连接", streaming: "播放中", stopping: "正在关闭", failed: "播放失败", ended: "已结束" };
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
-
-// 当前目标对应的运行中媒体流 ID 及该事实的数据时间；用于发现画面所播放的媒体流已结束或换代。
-// GB 通道来自按需请求的通道缓存，时间取该缓存的请求时刻，而不是列表快照时间。
-function currentStream(target) {
-  if (target.source_id) {
-    const session = store.sources.find(source => source.source_id === target.source_id)?.session;
-    return { id: session?.state === "created" && session.media_ready ? session.stream_id : "", at: store.updatedAt };
-  }
-  if (target.push_device_id) {
-    const device = store.pushDevices.find(item => item.device_id === target.push_device_id);
-    return { id: device?.state === "publishing" ? device.token : "", at: store.updatedAt };
-  }
-  const cache = store.channels.get(target.device_id);
-  const channel = (cache?.channels || []).find(item => item.channel_id === target.channel_id);
-  return { id: channel?.live?.state === "streaming" ? channel.live.live_id : "", at: cache?.at ?? 0 };
-}
 
 // 设备是否可直接预览及原因。GB 通道在线即可预览：预览时按现有流程发起点播（用户显式操作）。
 function previewable(device) {
@@ -55,20 +37,6 @@ export function mountVideo(root, ctx) {
   const stage = h("div", { class: "grid-wrap" }, grid);
   const playerArea = h("section", { class: "card player-area", "aria-label": "监控画面" });
   const closeAllButton = h("button", { class: "btn", type: "button", onclick: () => closeAll() }, icon("x"), "关闭全部画面");
-
-  const video = {
-    isActive: tile => slots.indexOf(tile) === active,
-    activate(tile) {
-      active = slots.indexOf(tile);
-      renderGrid();
-    },
-    close,
-    retry(tile) {
-      tile.streamingAt = 0;
-      void tile.preview.start(tile.target, tile.label).catch(() => {});
-    },
-    renderBar,
-  };
 
   playerArea.append(
     h("div", { class: "player-toolbar" },
@@ -138,50 +106,11 @@ export function mountVideo(root, ctx) {
   }
 
   function renderTile(tile, index = slots.indexOf(tile)) {
-    const stop = handler => event => { event.stopPropagation(); handler(); };
-    const failed = tile.state === "failed" || tile.state === "ended";
-    tile.element.className = `tile is-${tile.state}${index === active ? " is-active" : ""}`;
-    tile.element.setAttribute("aria-label", `画面 ${index + 1}：${tile.label}，${STATE_LABEL[tile.state] || tile.state}`);
-    tile.top.replaceChildren(h("span", { class: `live-dot${tile.state === "streaming" ? " on" : failed ? " err" : ""}` }),
-      h("span", { class: "name", title: tile.label }, tile.label), protoTag(tile.protocol),
-      h("span", { class: "tile-state" }, STATE_LABEL[tile.state] || tile.state),
-      h("button", { type: "button", class: "tile-btn", "aria-label": "关闭画面", title: "关闭画面（只释放本画面）", onclick: stop(() => close(tile)) }, icon("x", "sm")));
-    if (failed) {
-      tile.center.replaceChildren(icon("alert", "lg"), h("span", {}, errorMessage({ code: tile.error })), h("p", {}, "不会自动重连。可以重试，或关闭该画面。"),
-        h("div", { class: "inline" },
-          h("button", { type: "button", class: "btn sm", onclick: stop(() => video.retry(tile)) }, icon("refresh", "sm"), "重试"),
-          h("button", { type: "button", class: "btn sm", onclick: stop(() => close(tile)) }, "关闭")));
-    } else if (tile.state === "streaming" && tile.gesture) {
-      tile.center.replaceChildren(h("button", { type: "button", class: "btn primary", onclick: stop(() => void tile.video.play().catch(() => {})) }, icon("play", "sm"), "点击播放"));
-    } else if (tile.state !== "streaming") {
-      tile.center.replaceChildren(h("span", { class: "spinner", "aria-hidden": "true" }), h("span", {}, `${STATE_LABEL[tile.state] || "正在连接"}…`));
-    } else {
-      tile.center.replaceChildren();
-    }
-    const fullscreen = document.fullscreenElement === tile.element;
-    tile.bottom.replaceChildren(h("span", { class: "slot-number" }, String(index + 1).padStart(2, "0")), h("span", { class: "meta" }),
-      h("button", { type: "button", class: "tile-btn", "aria-label": tile.video.muted ? "打开声音" : "静音", title: tile.video.muted ? "打开声音" : "静音",
-        disabled: tile.state !== "streaming", onclick: stop(() => { tile.video.muted = !tile.video.muted; renderTile(tile); }) },
-      icon(tile.video.muted ? "volume-off" : "volume", "sm")),
-      h("a", { class: "tile-btn", href: deviceHash(tile.kind, tile.deviceID), "aria-label": "设备详情", title: "设备详情（离开实时监控，关闭全部画面）", onclick: event => event.stopPropagation() }, icon("info", "sm")),
-      h("button", { type: "button", class: "tile-btn", "aria-label": fullscreen ? "退出全屏" : "全屏", title: fullscreen ? "退出全屏（Esc）" : "全屏",
-        onclick: stop(() => (document.fullscreenElement ? document.exitFullscreen() : tile.element.requestFullscreen()).catch(() => {})) },
-      icon(fullscreen ? "minimize" : "maximize", "sm")));
+    renderPlayer(tile, { slot: index + 1, active: index === active, detailLink: true, onClose: () => close(tile) });
   }
 
   function createTile(item) {
-    const tile = { ...item, state: "preparing", error: "", gesture: false, streamingAt: 0 };
-    tile.video = h("video", { autoplay: true, playsinline: true, muted: true });
-    tile.video.muted = true;
-    tile.top = h("div", { class: "tile-top" });
-    tile.center = h("div", { class: "tile-center" });
-    tile.bottom = h("div", { class: "tile-bottom" });
-    tile.element = h("div", { class: "tile", role: "group", onclick: () => video.activate(tile) }, tile.video, tile.top, tile.center, tile.bottom);
-    tile.preview = new WHEPPreview(tile.video, update => {
-      tile.state = update.state;
-      tile.error = update.error;
-      tile.gesture = update.needsPlaybackGesture;
-      if (update.state === "streaming" && !tile.streamingAt) tile.streamingAt = Date.now();
+    const tile = createPlayer(item, () => {
       // 已关闭的画面不再属于任何槽位，关闭过程中的状态回调不再渲染。
       if (slots.includes(tile)) {
         renderTile(tile);
@@ -189,9 +118,9 @@ export function mountVideo(root, ctx) {
         renderList();
       }
     });
-    tile.video.addEventListener("playing", () => {
-      tile.gesture = false;
-      if (slots.includes(tile)) renderTile(tile);
+    tile.element.addEventListener("click", () => {
+      active = slots.indexOf(tile);
+      renderGrid();
     });
     return tile;
   }
@@ -291,7 +220,7 @@ export function mountVideo(root, ctx) {
       if (next !== undefined) active = next;
     }
     renderGrid();
-    void tile.preview.start(tile.target, tile.label).catch(() => {});
+    startPlayer(tile);
   }
 
   function close(tile) {
@@ -356,14 +285,7 @@ export function mountVideo(root, ctx) {
       // 展开中的在线 GB 设备和正在播放的 GB 设备随轮询同步通道；其余设备不请求。
       syncChannels([...new Set([...[...expanded].filter(id => store.devices.some(device => device.device_id === id && device.online)),
         ...tiles().filter(tile => tile.target.device_id).map(tile => tile.target.device_id)])]);
-      // 画面播放的媒体流已结束或换代（以开始播放之后取得的数据为准）时结束该画面，不自动重连。
-      for (const tile of tiles()) {
-        const session = tile.preview.current;
-        const stream = currentStream(tile.target);
-        if (session?.streamID && tile.streamingAt && stream.at > tile.streamingAt && stream.id !== session.streamID) {
-          void tile.preview.end(session);
-        }
-      }
+      tiles().forEach(endIfStreamChanged);
       renderList();
     },
     unmount() {
