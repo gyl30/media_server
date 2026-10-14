@@ -215,3 +215,17 @@ export function replaceKeepingFocus(container, nodes) {
     container.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus({ preventScroll: true });
   }
 }
+
+export function copyButton(value, label) {
+  const button = h("button", { type: "button", class: "btn xs copy-btn", "aria-label": `复制${label}` }, icon("copy", "sm"), "复制");
+  button.addEventListener("click", async () => {
+    const ok = await copyText(value);
+    toast(ok ? `已复制${label}` : "复制失败，请手动选中地址复制", ok ? "success" : "danger");
+    if (ok) {
+      button.classList.add("copied");
+      button.replaceChildren(icon("check", "sm"), "已复制");
+      window.setTimeout(() => { button.classList.remove("copied"); button.replaceChildren(icon("copy", "sm"), "复制"); }, 1600);
+    }
+  });
+  return button;
+}

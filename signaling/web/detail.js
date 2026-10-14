@@ -2,9 +2,10 @@
 import { api } from "/api.js";
 import { store, unifiedDevices, refresh, refreshing } from "/store.js";
 import {
-  h, icon, badge, protoTag, emptyState, toast, confirmAction, errorMessage, copyText, formatAgo, replaceKeepingFocus,
+  h, icon, badge, protoTag, emptyState, toast, confirmAction, errorMessage, copyButton, formatAgo, replaceKeepingFocus,
 } from "/ui.js";
 import { openDeviceDialog, deleteDevice, editState } from "/devices.js";
+import { createPlaybackPanel } from "/playback.js";
 
 export function mountDetail(root, ctx, kind, id) {
   const pending = new Set();
@@ -13,6 +14,8 @@ export function mountDetail(root, ctx, kind, id) {
   const head = h("div", { class: "detail-head" });
   const left = h("div", { class: "detail-col" });
   const right = h("div", { class: "detail-col" });
+  const playback = createPlaybackPanel();
+  right.append(playback.element);
   const page = h("div", { class: "page" }, head, h("div", { class: "detail-grid" }, left, right));
   root.replaceChildren(page);
 
@@ -66,6 +69,54 @@ export function mountDetail(root, ctx, kind, id) {
     replaceKeepingFocus(left, [infoCard(device),
       kind === "gb" ? channelCard(device) : null,
       kind === "push" ? publishCard(device) : null].filter(Boolean));
+    playback.update(playbackState(device));
+  }
+
+  // 只有可证明正在运行的媒体流才申请播放地址；否则给出该设备当前可做的下一步。
+  function playbackState(device) {
+    const raw = device.raw;
+    if (kind === "gb") {
+      const channel = (device.channels || []).find(item => item.channel_id === channelID);
+      const title = channel ? `${device.name} · ${channel.name || channel.channel_id}` : device.name;
+      if (channel?.live?.state === "streaming") {
+        return { title, stream: { id: channel.live.live_id, source: { live_id: channel.live.live_id } } };
+      }
+      return { title, notReady: gbNotReady(device, channel) };
+    }
+    if (kind === "rtsp") {
+      if (raw.session?.state === "created") {
+        return { title: device.name, stream: { id: raw.session.stream_id, source: { source_id: id } } };
+      }
+      const starting = raw.session ? "平台正在处理拉流会话，就绪后会自动申请播放地址。"
+        : raw.desired_state === "running" ? "已请求取流，但当前没有运行中的拉流会话。请检查摄像机地址与认证信息后重新取流。"
+        : "平台尚未连接这个 RTSP 源。开始取流后才会生成播放地址。";
+      return { title: device.name, notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text: starting }) };
+    }
+    if (raw.state === "verified") {
+      return { title: device.name, stream: { id: raw.token, source: { push_device_id: id } } };
+    }
+    return { title: device.name, notReady: emptyState({ icon: "film", title: "媒体未就绪 · 设备未推流", text: "设备使用推流地址连接并开始推流后，这里才会生成播放地址。" }) };
+  }
+
+  function gbNotReady(device, channel) {
+    if (!device.raw.online) {
+      return emptyState({ icon: "wifi-off", title: "媒体未就绪 · 设备离线", text: "设备注册上线后，可选择通道并开始点播。" });
+    }
+    if (!channel) {
+      return emptyState({ icon: "layers", title: "没有可选通道", text: "设备尚未上报通道。" });
+    }
+    if (channel.status !== "ON") {
+      return emptyState({ icon: "wifi-off", title: "媒体未就绪 · 通道离线", text: "该通道当前不可点播，请检查前端摄像机。" });
+    }
+    if (channel.live) {
+      return emptyState({ icon: "clock", title: "点播进行中…", text: "媒体流就绪后会自动申请播放地址。" });
+    }
+    const busy = pending.has(`channel:${channel.channel_id}`);
+    return emptyState({
+      icon: "film", title: "媒体未就绪", text: "该通道当前没有运行中的媒体流。打开详情不会自动点播，需要时请手动开始。",
+      action: h("button", { class: "btn primary", type: "button", disabled: busy, "aria-busy": String(busy), dataset: { key: "start-live" },
+        onclick: () => void startLive(channel) }, busy ? null : icon("play", "sm"), "开始点播"),
+    });
   }
 
   function headContent(device) {
@@ -244,19 +295,5 @@ export function mountDetail(root, ctx, kind, id) {
   }
 
   update();
-  return { update, unmount() {} };
-}
-
-export function copyButton(value, label) {
-  const button = h("button", { type: "button", class: "btn xs copy-btn", "aria-label": `复制${label}` }, icon("copy", "sm"), "复制");
-  button.addEventListener("click", async () => {
-    const ok = await copyText(value);
-    toast(ok ? `已复制${label}` : "复制失败，请手动选中地址复制", ok ? "success" : "danger");
-    if (ok) {
-      button.classList.add("copied");
-      button.replaceChildren(icon("check", "sm"), "已复制");
-      window.setTimeout(() => { button.classList.remove("copied"); button.replaceChildren(icon("copy", "sm"), "复制"); }, 1600);
-    }
-  });
-  return button;
+  return { update, unmount: () => playback.destroy() };
 }
