@@ -22,6 +22,8 @@ type pushDeviceResponse struct {
 	State     string       `json:"state"`
 	ExpiresAt time.Time    `json:"expires_at,omitzero"`
 	UsedAt    time.Time    `json:"used_at,omitzero"`
+	// 推流中且最近一次媒体对账显示媒体源已注册。
+	MediaReady bool `json:"media_ready"`
 	pushURLs
 }
 
@@ -52,6 +54,7 @@ func (s *infrastructureServer) pushDeviceResponseLocked(device pushDevice, now t
 	switch run, running := s.tokens.pushRuns[device.deviceID]; {
 	case running && run.streamID == device.credential:
 		response.State = "publishing"
+		response.MediaReady = s.mediaReady(run.streamID)
 	case !device.usedAt.IsZero():
 		response.State = "used"
 	case !now.Before(device.expiresAt):

@@ -13,8 +13,7 @@ export default async function (b) {
   const ticket = (await api("/api/play", { method: "POST", body: { source: { push_device_id: PUSH } } })).body;
   const source = (await api("/api/sources", { method: "POST", body: { stream_name: "拉流测试 源", url: ticket.rtsp_url } })).body;
   await b.goto(base + `#devices/rtsp/${source.source_id}`, 1500);
-  check("未取流时不签发", (await urls()).length === 0 && (await q(text(".urls-panel"))).includes("开始拉流后才会生成播放地址"));
-  await q(clickText(".detail-head .btn", "开始拉流"));
+  check("添加即自动拉流", source.desired_state === "running" && Boolean(source.session), JSON.stringify(source));
   check("取流成功后签发地址", await waitFor(b, "document.querySelectorAll('.urls-panel .url-value').length === 5", 15000));
   const session = (await api("/api/sources")).body.sources.find(item => item.source_id === source.source_id).session;
   check("地址属于拉流会话的媒体流", session?.state === "created" && (await urls()).every(url => url.includes(`/${session.stream_id}/`)));

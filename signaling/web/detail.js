@@ -1,6 +1,6 @@
 // 设备详情：按 GB28181、RTSP 拉流、推流设备分别展示信息与操作，共用页面布局与播放地址面板。
 import { api } from "/api.js";
-import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, pushURLs, formatClock, PUSH_PROTOCOLS } from "/store.js";
+import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, pushURLs, formatClock, sourceReady, PUSH_PROTOCOLS } from "/store.js";
 import {
   h, icon, badge, protoTag, emptyState, toast, confirmAction, errorMessage, formatAgo, replaceKeepingFocus,
 } from "/ui.js";
@@ -67,8 +67,8 @@ export function mountDetail(root, ctx, kind, id) {
       h("div", { class: "head-actions" },
         kind === "rtsp" && !source.session
           ? h("button", { class: "btn primary", type: "button", dataset: { key: "start" }, onclick: () => void startSource(device) },
-            icon("play", "sm"), source.desired_state === "running" ? "重新拉流" : "开始拉流") : null,
-        kind === "rtsp" && (source.session || source.desired_state === "running")
+            icon("refresh", "sm"), "重试连接") : null,
+        kind === "rtsp" && source.session
           ? h("button", { class: "btn danger-subtle", type: "button", dataset: { key: "stop" }, onclick: () => stopSource(device) }, icon("square", "sm"), "停止拉流") : null,
         kind !== "gb" ? h("button", { class: "btn", type: "button", disabled: !editable.ok, title: editable.reason, dataset: { key: "edit" },
           onclick: () => openDeviceDialog(device) }, icon("edit", "sm"), "编辑") : null,
@@ -85,7 +85,7 @@ export function mountDetail(root, ctx, kind, id) {
         ["最近心跳", raw.last_seen ? formatAgo(Date.parse(raw.last_seen)) : "—"],
         ["通道数量", raw.online ? (device.channels ? `${channels.length} 个，在线 ${channels.filter(channel => channel.status === "ON").length} 个` : "正在获取…") : "设备不在线"]);
     } else if (kind === "rtsp") {
-      fields.push(["拉流状态", `${device.status.label}${device.status.detail ? ` · ${device.status.detail}` : ""}`], ["期望状态", raw.desired_state === "running" ? "拉流" : "停止"],
+      fields.push(["拉流状态", `${device.status.label}${device.status.detail ? ` · ${device.status.detail}` : ""}`], ["接入意图", raw.desired_state === "running" ? "自动拉流" : "已停止"],
         ["来源地址", h("span", { class: "mono" }, raw.url), true],
         ["认证", raw.username ? `用户名 ${raw.username} · 密码不回显` : "未设置"], ["当前媒体流", raw.session ? h("span", { class: "mono" }, raw.session.stream_id) : "—"],
         ["资源标识", h("span", { class: "mono" }, device.id), true]);
@@ -228,12 +228,12 @@ export function mountDetail(root, ctx, kind, id) {
       return { title, actions, notReady: gbNotReady(device, channel) };
     }
     if (kind === "rtsp") {
-      if (raw.session?.state === "created") {
+      if (sourceReady(raw)) {
         return { title: device.name, actions: playAction(playItem(device)), stream: { id: raw.session.stream_id, source: { source_id: id } } };
       }
-      const text = raw.session ? "拉流会话正在处理，就绪后会自动申请播放地址。"
-        : raw.desired_state === "running" ? "已请求拉流，但当前没有运行中的会话。请检查来源地址与认证信息后重新拉流。"
-        : "尚未开始拉流。开始拉流后才会生成播放地址。";
+      const text = raw.session ? "正在接入上游，媒体源建立后可以播放。"
+        : raw.desired_state === "running" ? "连接失败或上游已结束。请检查来源地址与认证信息，修改后会自动重新拉流，或点击「重试连接」。"
+        : "拉流已停止。点击「重试连接」重新拉流。";
       return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text }) };
     }
     if (raw.state === "publishing") {

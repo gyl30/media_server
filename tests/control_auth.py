@@ -58,7 +58,7 @@ def main():
         results["receiver create"] = status(base + "/gb28181/receiver/create", "secret", receiver)
         listing = urllib.request.Request(base + "/receivers", headers={"Authorization": "Bearer secret"})
         with urllib.request.urlopen(listing, timeout=3) as response:
-            assert json.load(response) == {"receivers": [{"stream_id": receiver["stream_id"]}]}
+            assert json.load(response) == {"receivers": [{"stream_id": receiver["stream_id"], "ready": False}]}
         results["wrong id delete"] = status(base + "/receivers/delete", "secret", {"stream_id": "wrong-id"})
         results["receiver delete"] = status(base + "/receivers/delete", "secret", {"stream_id": receiver["stream_id"]})
         results["receiver repeat delete"] = status(base + "/receivers/delete", "secret", {"stream_id": receiver["stream_id"]})
@@ -70,7 +70,7 @@ def main():
             pull = {"stream_id": "control-auth-pull", "url": f"rtsp://127.0.0.1:{upstream.getsockname()[1]}/source"}
             results["pull create"] = status(base + "/rtsp/pull/create", "secret", pull)
             with urllib.request.urlopen(listing, timeout=3) as response:
-                assert json.load(response) == {"receivers": [{"stream_id": pull["stream_id"]}]}
+                assert json.load(response) == {"receivers": [{"stream_id": pull["stream_id"], "ready": False}]}
             results["pull unified delete"] = status(base + "/receivers/delete", "secret", {"stream_id": pull["stream_id"]})
             results["pull repeat delete"] = status(base + "/receivers/delete", "secret", {"stream_id": pull["stream_id"]})
     finally:

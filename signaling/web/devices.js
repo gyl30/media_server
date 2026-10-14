@@ -1,6 +1,6 @@
 // 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除。
 import { api } from "/api.js";
-import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, PUSH_PROTOCOLS } from "/store.js";
+import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, sourceReady, PUSH_PROTOCOLS } from "/store.js";
 import {
   h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus, copyButton,
 } from "/ui.js";
@@ -118,13 +118,9 @@ function rowActions(device, ctx) {
   if (device.kind === "gb") {
     links.push(action("通道", "channels", () => ctx.openMonitorDevice(device.id)));
   } else if (device.kind === "rtsp") {
-    const source = device.raw;
-    const editable = editState(device);
-    links.push(action("编辑", "edit", () => openDeviceDialog(device), { disabled: !editable.ok, title: editable.reason }));
-    links.push(source.session || source.desired_state === "running"
-      ? action("停止拉流", "stop", () => stopSource(device), { neg: true })
-      : action("开始拉流", "start", () => startSource(device)));
-    if (source.session?.state === "created") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
+    links.push(action("编辑", "edit", () => openDeviceDialog(device)));
+    if (!device.raw.session) links.push(action("重试连接", "start", () => startSource(device)));
+    if (sourceReady(device.raw)) links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
   } else {
     links.push(action("编辑", "edit", () => openDeviceDialog(device)));
     if (device.raw.state === "publishing") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
@@ -147,13 +143,10 @@ export function playItem(device, channel = null) {
   };
 }
 
-// GB28181 没有修改接口；RTSP 源取流期间不可修改（与服务端约束一致）。
+// GB28181 没有修改接口；拉流源修改连接参数后服务端用新配置重新拉流。
 export function editState(device) {
   if (device.kind === "gb") {
     return { ok: false, reason: "GB28181 设备暂不支持编辑" };
-  }
-  if (device.kind === "rtsp" && device.raw.session) {
-    return { ok: false, reason: "停止拉流后可编辑" };
   }
   return { ok: true, reason: "" };
 }
@@ -161,7 +154,7 @@ export function editState(device) {
 export async function startSource(device) {
   try {
     await api.startSource(device.id);
-    toast("已请求开始拉流", "success");
+    toast("已重新发起连接", "success");
   } catch (error) {
     toast(errorMessage(error), "danger");
   }
@@ -299,7 +292,7 @@ export function openDeviceDialog(existing = null) {
       if (existing && raw.username) {
         nodes.push(h("label", { class: "check" }, fields.clear, "清除已保存的密码（保留用户名）"));
       }
-      if (!existing) nodes.push(h("p", { class: "muted tiny" }, "创建后默认未拉流，需要时点击列表中的「开始拉流」。"));
+      nodes.push(h("p", { class: "muted tiny" }, existing ? "修改地址或认证信息后会按新配置重新拉流，正在观看的用户会断开。" : "确定添加后自动开始拉流；连接失败时设备仍保留，可修改地址或重试连接。"));
     } else if (!existing) {
       nodes.push(h("div", { class: "explainer" }, h("strong", {}, `${PUSH_PROTOCOLS[choice]} 推流接入`), h("p", {}, PUSH_HELP[choice])));
       if (prepared) {
@@ -424,7 +417,7 @@ async function save(choice, existing, name, fields, prepared) {
       Object.assign(payload, { username, password });
     }
     await api.createSource(payload);
-    return "已添加 RTSP 拉流源";
+    return "已添加 RTSP 拉流源，正在连接";
   }
   // 沿用现有 PATCH 语义：密码留空不发送（保留）；填写则覆盖；勾选清除或清空用户名则发送空串清除。
   payload.username = username;

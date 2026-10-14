@@ -41,6 +41,7 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	results := make(chan error, 2)
 	go func() { results <- server.serve(runContext) }()
 	go func() { results <- infrastructure.serve(runContext) }()
+	go infrastructure.resumeSources(runContext)
 	first := <-results
 	cancel()
 	second := <-results

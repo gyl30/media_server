@@ -34,9 +34,11 @@ type sourceResponse struct {
 	Session      *sourceSessionResponse `json:"session,omitempty"`
 }
 
+// media_ready 来自最近一次媒体对账：媒体服务器已为该会话注册媒体源（轨道已确定）。
 type sourceSessionResponse struct {
-	StreamID string `json:"stream_id"`
-	State    string `json:"state"`
+	StreamID   string `json:"stream_id"`
+	State      string `json:"state"`
+	MediaReady bool   `json:"media_ready"`
 }
 
 func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, request *http.Request) {
@@ -53,7 +55,14 @@ func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, requ
 	writeJSON(writer, http.StatusOK, map[string]any{"sources": response})
 }
 
+// 创建即按期望状态 running 自动拉流；拉流失败时配置保留，界面显示连接失败并允许重试。
 func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, request *http.Request) {
+	if !s.beginSourceControl() {
+		writeHTTPError(writer, http.StatusServiceUnavailable, "server_shutdown")
+		return
+	}
+	defer s.endSourceControl()
+
 	var payload sourceCreateRequest
 	if !decodeJSON(writer, request, &payload) || payload.StreamName == "" || !validRTSPSourceURL(payload.URL) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
@@ -67,7 +76,7 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 	}
 	source := rtspSource{
 		sourceID: uuid.NewString(), streamName: payload.StreamName, url: payload.URL,
-		desiredState: sourceDesiredStopped,
+		desiredState: sourceDesiredRunning,
 	}
 	if username != nil {
 		source.username = *username
@@ -79,10 +88,20 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 		s.writeSourceError(writer, "create", source.sourceID, err)
 		return
 	}
+	if _, err := s.startSource(request.Context(), source.sourceID); err != nil {
+		s.logger.Warn("source start after create failed", "source_id", source.sourceID, "stream_name", source.streamName, "error", err)
+	}
 	writeJSON(writer, http.StatusCreated, s.makeSourceResponse(source))
 }
 
+// 修改连接参数时，期望运行的源用新配置重新拉流（新的 stream_id，即新的 source generation）。
 func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, request *http.Request) {
+	if !s.beginSourceControl() {
+		writeHTTPError(writer, http.StatusServiceUnavailable, "server_shutdown")
+		return
+	}
+	defer s.endSourceControl()
+
 	sourceID := request.PathValue("source_id")
 	var payload sourcePatchRequest
 	if !validUUIDv4(sourceID) || !decodeJSON(writer, request, &payload) ||
@@ -106,6 +125,15 @@ func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, req
 		s.writeSourceError(writer, "patch", sourceID, err)
 		return
 	}
+	if source.desiredState == sourceDesiredRunning && (urlValue != nil || username != nil || password != nil) {
+		if err := s.stopSource(request.Context(), sourceID, sourceDesiredRunning); err != nil {
+			s.writeSourceSessionError(writer, "patch", sourceID, source.streamName, err)
+			return
+		}
+		if _, err := s.startSource(request.Context(), sourceID); err != nil {
+			s.logger.Warn("source restart after patch failed", "source_id", sourceID, "stream_name", source.streamName, "error", err)
+		}
+	}
 	writeJSON(writer, http.StatusOK, s.makeSourceResponse(source))
 }
 
@@ -121,7 +149,7 @@ func (s *infrastructureServer) handleSourceDelete(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := s.stopSource(request.Context(), sourceID); err != nil {
+	if err := s.stopSource(request.Context(), sourceID, sourceDesiredStopped); err != nil {
 		s.writeSourceSessionError(writer, "delete", sourceID, "", err)
 		return
 	}
@@ -163,7 +191,7 @@ func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceRespo
 		} else if !session.createConfirmed {
 			state = "unresolved"
 		}
-		response.Session = &sourceSessionResponse{StreamID: session.streamID, State: state}
+		response.Session = &sourceSessionResponse{StreamID: session.streamID, State: state, MediaReady: state == "created" && s.mediaReady(session.streamID)}
 	}
 	return response
 }

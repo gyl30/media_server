@@ -43,7 +43,12 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	if err := json.Unmarshal(response.Body.Bytes(), &source); err != nil {
 		t.Fatal(err)
 	}
+	if source.DesiredState != sourceDesiredRunning || source.Session == nil || source.Session.State != "created" {
+		t.Fatalf("create did not start pulling: %s", response.Body.String())
+	}
 	body := `{"source_id":"` + source.SourceID + `"}`
+	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
+	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/stop", "", http.StatusNoContent)
 	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
 	start := apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/start", "", http.StatusCreated)
 	var session struct {

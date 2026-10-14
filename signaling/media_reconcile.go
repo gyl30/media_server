@@ -29,9 +29,14 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 		return err
 	}
 	running := make(map[string]struct{}, len(receivers))
+	ready := make(map[string]struct{})
 	for _, receiver := range receivers {
 		running[receiver.StreamID] = struct{}{}
+		if receiver.Ready {
+			ready[receiver.StreamID] = struct{}{}
+		}
 	}
+	s.readyStreams.Store(&ready)
 
 	ended := make(map[*liveSession]struct{})
 	for _, session := range lives {

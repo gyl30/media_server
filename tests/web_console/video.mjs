@@ -99,7 +99,7 @@ export default async function (b) {
   await b.sleep(3000);
   check("进入实时监控不自动播放", await openPCs() === 0 && (await states()) === "empty,empty,empty,empty");
   const directory = await q(text(".directory"));
-  check("统一设备列表显示协议与状态", directory.includes("GB28181") && directory.includes("RTMP") && directory.includes("RTSP") && directory.includes("未拉流"));
+  check("统一设备列表显示协议与状态", directory.includes("GB28181") && directory.includes("RTMP") && directory.includes("RTSP") && directory.includes("已停止"));
   check("未展开时不请求 GB 通道", (await q("window.__channelRequests.length")) === 0);
 
   // 展开 GB 设备才请求通道；收起后不再请求

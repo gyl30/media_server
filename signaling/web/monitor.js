@@ -2,7 +2,7 @@
 // 每个画面对象独占自己的 <video>、WHEPPreview 和 DOM 节点；布局切换只移动画面节点，WHEPPreview 的状态回调
 // 绑定画面对象而不是槽位编号。关闭画面只释放该画面的 WHEP 会话，不停止上游点播或拉流。
 import { WHEPPreview } from "/whep.js";
-import { store, unifiedDevices, deviceHash, channelsOf, syncChannels, loadChannels } from "/store.js";
+import { store, unifiedDevices, deviceHash, channelsOf, syncChannels, loadChannels, sourceReady } from "/store.js";
 import { h, icon, protoTag, toast, errorMessage, replaceKeepingFocus } from "/ui.js";
 import { playItem } from "/devices.js";
 
@@ -14,7 +14,7 @@ const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 function currentStream(target) {
   if (target.source_id) {
     const session = store.sources.find(source => source.source_id === target.source_id)?.session;
-    return { id: session?.state === "created" ? session.stream_id : "", at: store.updatedAt };
+    return { id: session?.state === "created" && session.media_ready ? session.stream_id : "", at: store.updatedAt };
   }
   if (target.push_device_id) {
     const device = store.pushDevices.find(item => item.device_id === target.push_device_id);
@@ -28,7 +28,7 @@ function currentStream(target) {
 // 设备是否可直接预览及原因。GB 通道在线即可预览：预览时按现有流程发起点播（用户显式操作）。
 function previewable(device) {
   if (device.kind === "rtsp") {
-    return device.raw.session?.state === "created" ? "" : device.raw.session ? "拉流会话处理中" : "未拉流";
+    return sourceReady(device.raw) ? "" : device.status.label;
   }
   return device.raw.state === "publishing" ? "" : device.status.label;
 }

@@ -123,22 +123,32 @@ function gbStatus(device) {
   };
 }
 
-// RTSP 拉流：desired_state 是配置，session 是运行事实；created 表示媒体服务器已建立拉流会话。
+// 主动拉流：desired_state 是持久化的接入意图，session 是运行事实；created 表示媒体服务器已建立拉流会话，
+// media_ready 表示媒体源已确定轨道（来自媒体对账，最多滞后一个对账周期）。
 const SESSION_STATUS = {
-  created: { label: "拉流中", tone: "success", group: "online", detail: "拉流会话已建立" },
   starting: { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" },
   stopping: { label: "正在停止", tone: "pending", group: "online", detail: "" },
   unresolved: { label: "正在清理", tone: "warn", group: "attention", detail: "会话结果待确认" },
 };
 
+export function sourceReady(source) {
+  return source.session?.state === "created" && source.session.media_ready;
+}
+
 export function sourceStatus(source) {
+  if (sourceReady(source)) {
+    return { label: "拉流中", tone: "success", group: "online", detail: "媒体源已建立" };
+  }
+  if (source.session?.state === "created") {
+    return { label: "接入中", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
+  }
   if (source.session) {
     return SESSION_STATUS[source.session.state] || SESSION_STATUS.unresolved;
   }
   if (source.desired_state === "running") {
-    return { label: "未连接", tone: "warn", group: "attention", detail: "已请求拉流，当前没有运行中的会话" };
+    return { label: "连接失败或已结束", tone: "danger", group: "attention", detail: "上游不可达、认证失败或已断开，可修改地址或重试连接" };
   }
-  return { label: "未启动", tone: "neutral", group: "offline", detail: "需要时开始拉流" };
+  return { label: "已停止", tone: "neutral", group: "offline", detail: "拉流已手动停止" };
 }
 
 // 推流设备：publishing 只说明接入地址已通过认证、推流运行已登记，不代表音视频健康。
@@ -209,7 +219,7 @@ export function runningStreams() {
     }
   }
   for (const source of store.sources) {
-    if (source.session?.state === "created") {
+    if (sourceReady(source)) {
       streams.push({ kind: "rtsp", protocol: "RTSP", streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: "RTSP 拉流", target: { source_id: source.source_id } });
     }
   }

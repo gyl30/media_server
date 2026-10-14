@@ -98,6 +98,7 @@ func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, streamID str
 
 type mediaReceiver struct {
 	StreamID string `json:"stream_id"`
+	Ready    bool   `json:"ready"`
 }
 
 func (c *mediaServerHTTPClient) listReceivers(ctx context.Context) ([]mediaReceiver, error) {

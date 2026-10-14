@@ -1,4 +1,4 @@
-// 设备详情的管理操作（真实接口）：GB 点播 / 停止、RTSP 开始 / 停止取流、推流接入地址查看 / 复制 / 重新生成。
+// 设备详情的管理操作（真实接口）：GB 点播 / 停止、RTSP 自动拉流失败后重试与停止、推流接入地址查看 / 复制 / 重新生成。
 import { base, shots, check, clickText, text, toasts, api, waitFor, summary } from "./lib.mjs";
 import { execFileSync } from "node:child_process";
 
@@ -36,21 +36,19 @@ export default async function (b) {
   check("停止点播后后端无 live", await waitFor(b, "fetch('/api/devices/" + GB + "/channels').then(r => r.json()).then(j => !j.channels[0].live)", 10000));
   check("界面回到未点播", await waitFor(b, "document.querySelector('.channel-list').innerText.includes('未点播')", 6000));
 
-  // RTSP：开始取流（地址不可达）与停止
+  // RTSP：添加即自动拉流；地址不可达时会话结束，配置保留，显示连接失败并可重试
   const created = await api("/api/sources", { method: "POST", body: { stream_name: "详情测试 RTSP", url: "rtsp://127.0.0.1:9/none" } });
   const sourceID = created.body.source_id;
+  check("创建即自动拉流", created.body.desired_state === "running" && Boolean(created.body.session), JSON.stringify(created.body));
   await b.goto(base + `#devices/rtsp/${sourceID}`, 1500);
-  check("RTSP 详情显示未启动", (await q(text(".detail-head"))).includes("未启动"), await q("location.hash + ' ' + document.querySelector('#view').innerText.slice(0, 120)"));
-  await q(clickText(".detail-head .btn", "开始拉流"));
-  // 不可达地址：服务端短暂建立会话后结束，期望状态保持 running、没有会话。
-  check("接口：拉流结束后无会话", await waitFor(b, `fetch('/api/sources').then(r => r.json()).then(j => j.sources.some(s => s.source_id === '${sourceID}' && s.desired_state === 'running' && !s.session))`, 15000));
-  check("界面显示未连接并提供重新取流与停止", await waitFor(b, "document.querySelector('.detail-head').innerText.includes('未连接')", 6000)
-    && (await q(text(".detail-head"))).includes("重新拉流") && (await q(text(".detail-head"))).includes("停止拉流"));
+  check("接口：拉流结束后无会话且配置保留", await waitFor(b, `fetch('/api/sources').then(r => r.json()).then(j => j.sources.some(s => s.source_id === '${sourceID}' && s.desired_state === 'running' && !s.session))`, 15000));
+  check("界面显示连接失败并提供重试连接，不提供开始拉流", await waitFor(b, "document.querySelector('.detail-head').innerText.includes('连接失败或已结束')", 6000)
+    && (await q(text(".detail-head"))).includes("重试连接") && !(await q(text(".page"))).includes("开始拉流"));
+  await q(clickText(".detail-head .btn", "重试连接"));
+  check("重试后重新发起会话", await waitFor(b, `document.querySelector('#toasts')?.innerText.includes('已重新发起连接')`, 5000));
+  check("会话再次结束后显示连接失败", await waitFor(b, `fetch('/api/sources').then(r => r.json()).then(j => j.sources.some(s => s.source_id === '${sourceID}' && !s.session))
+    .then(ended => ended && document.querySelector('.page').innerText.includes('连接失败或已结束'))`, 15000));
   await b.shot(`${shots}/detail-rtsp-unconnected.png`);
-  await q(clickText(".detail-head .btn", "停止拉流"));
-  await confirm();
-  await b.sleep(1500);
-  check("停止后期望状态为 stopped", (await api("/api/sources")).body.sources.find(item => item.source_id === sourceID).desired_state === "stopped");
   await api(`/api/sources/${sourceID}`, { method: "DELETE" });
 
   // 推流：详情显示同一地址与状态；待接入时不提供重新生成；过期后重新生成，旧地址失效

@@ -18,18 +18,26 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	streamID, err := s.startSource(request.Context(), sourceID)
+	if err != nil {
+		s.writeSourceSessionError(writer, "start", sourceID, "", err)
+		return
+	}
+	writeJSON(writer, http.StatusCreated, map[string]string{"stream_id": streamID})
+}
+
+// startSource 把期望状态设为 running 并在媒体服务器上建立拉流会话；调用方已进入 source control。
+func (s *infrastructureServer) startSource(ctx context.Context, sourceID string) (string, error) {
 	s.sourceOperationMu.Lock()
-	source, err := s.sources.setDesiredState(request.Context(), sourceID, sourceDesiredRunning)
+	source, err := s.sources.setDesiredState(ctx, sourceID, sourceDesiredRunning)
 	if err != nil {
 		s.sourceOperationMu.Unlock()
-		s.writeSourceError(writer, "start", sourceID, err)
-		return
+		return "", err
 	}
 	session, err := s.reserveRTSPPull(sourceID, source.streamName)
 	s.sourceOperationMu.Unlock()
 	if err != nil {
-		s.writeSourceSessionError(writer, "start", sourceID, source.streamName, err)
-		return
+		return "", err
 	}
 
 	command := rtspPullCreateRequest{
@@ -39,7 +47,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		command.Username = &source.username
 		command.Password = &source.password
 	}
-	if err := s.media.createRTSPPull(request.Context(), command); err != nil {
+	if err := s.media.createRTSPPull(ctx, command); err != nil {
 		var rejection *mediaServerHTTPRejection
 		ambiguousCreate := !errors.As(err, &rejection)
 		cleanupConfirmed := !ambiguousCreate
@@ -57,8 +65,7 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		} else {
 			s.finishUnconfirmedRTSPPull(session)
 		}
-		s.writeSourceSessionError(writer, "start", sourceID, source.streamName, err)
-		return
+		return "", err
 	}
 	if !s.finishRTSPPull(session) {
 		cleanupContext, cancel := s.media.timeoutContext()
@@ -67,15 +74,13 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 		if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
 			s.logger.Warn("orphan rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
 		}
-		writeHTTPError(writer, http.StatusConflict, "conflict")
-		return
+		return "", errRTSPPullStopping
 	}
 
-	currentSource, sourceErr := s.sources.get(request.Context(), sourceID)
+	currentSource, sourceErr := s.sources.get(ctx, sourceID)
 	if sourceErr != nil {
 		if !errors.Is(sourceErr, errSourceNotFound) {
-			s.writeSourceSessionError(writer, "start", sourceID, source.streamName, sourceErr)
-			return
+			return "", sourceErr
 		}
 		if s.removeRTSPPull(session) {
 			cleanupContext, cancel := s.media.timeoutContext()
@@ -85,18 +90,36 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 				s.logger.Warn("deleted source rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
 			}
 		}
-		writeHTTPError(writer, http.StatusConflict, "conflict")
-		return
+		return "", errSourceConflict
 	}
 	if currentSource.desiredState == sourceDesiredStopped {
-		if err := s.stopSource(request.Context(), sourceID); err != nil {
-			s.writeSourceSessionError(writer, "stop", sourceID, source.streamName, err)
-			return
+		if err := s.stopSource(ctx, sourceID, sourceDesiredStopped); err != nil {
+			return "", err
 		}
-		writeHTTPError(writer, http.StatusConflict, "conflict")
+		return "", errSourceConflict
+	}
+	return session.streamID, nil
+}
+
+// resumeSources 在启动时按持久化的期望状态恢复拉流；失败只记录，界面显示连接失败并允许重试。
+func (s *infrastructureServer) resumeSources(ctx context.Context) {
+	if !s.beginSourceControl() {
 		return
 	}
-	writeJSON(writer, http.StatusCreated, map[string]string{"stream_id": session.streamID})
+	defer s.endSourceControl()
+	sources, err := s.sources.list(ctx)
+	if err != nil {
+		s.logger.Warn("resume sources failed", "error", err)
+		return
+	}
+	for _, source := range sources {
+		if source.desiredState != sourceDesiredRunning {
+			continue
+		}
+		if _, err := s.startSource(ctx, source.sourceID); err != nil {
+			s.logger.Warn("resume source failed", "source_id", source.sourceID, "stream_name", source.streamName, "error", err)
+		}
+	}
 }
 
 func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, request *http.Request) {
@@ -111,17 +134,18 @@ func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, requ
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := s.stopSource(request.Context(), sourceID); err != nil {
+	if err := s.stopSource(request.Context(), sourceID, sourceDesiredStopped); err != nil {
 		s.writeSourceSessionError(writer, "stop", sourceID, "", err)
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string) error {
+// stopSource 结束当前拉流会话并记录期望状态；修改配置后重新拉流时期望状态保持 running。
+func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string, desired sourceDesiredState) error {
 	for {
 		s.sourceOperationMu.Lock()
-		if _, err := s.sources.setDesiredState(ctx, sourceID, sourceDesiredStopped); err != nil {
+		if _, err := s.sources.setDesiredState(ctx, sourceID, desired); err != nil {
 			s.sourceOperationMu.Unlock()
 			return err
 		}

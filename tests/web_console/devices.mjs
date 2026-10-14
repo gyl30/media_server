@@ -128,7 +128,8 @@ export default async function (b) {
 
   // 按类型的操作
   check("GB 操作：详情 / 通道 / 删除", (await q(`(${row("园区东门 NVR")}).querySelector('.text-actions').innerText`)).replace(/\s+/g, " ").trim() === "详情 通道 删除");
-  check("RTSP 操作含编辑与开始拉流", (await q(`(${row("测试 RTSP 源")}).querySelector('.text-actions').innerText`)).includes("开始拉流"));
+  check("RTSP 不提供开始拉流；不可达时提供重试连接", await waitFor(b, `(${row("测试 RTSP 源")}).querySelector('.text-actions').innerText.includes("重试连接")`, 15000)
+    && !(await q(`(${row("测试 RTSP 源")}).querySelector('.text-actions').innerText`)).includes("开始拉流"));
   check("推流操作：详情 / 编辑 / 删除（未推流不显示预览，不再有签发）", (await q(`(${row("测试 RTMP 推流")}).querySelector('.text-actions').innerText`)).replace(/\s+/g, " ").trim() === "详情 编辑 删除");
   check("推流行状态为待接入并显示地址", (await rowText("测试 RTMP 推流")).includes("待接入") && (await rowText("测试 RTMP 推流")).includes("rtmp://"));
 

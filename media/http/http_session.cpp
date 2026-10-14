@@ -15,6 +15,7 @@
 #include "media/http/http_session.h"
 #include "media/net/worker_context.h"
 #include "media/http/rtsp_pull_http.h"
+#include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
@@ -24,14 +25,15 @@ namespace media_server
 namespace
 {
 
-// 控制面对账使用：列出仍在运行的输入会话。
+// 控制面对账使用：列出仍在运行的输入会话；ready 表示该会话的媒体源已确定轨道并注册。
 boost::beast::http::response<boost::beast::http::string_body> make_receiver_list_response(
     const boost::beast::http::request<boost::beast::http::string_body>& request)
 {
     boost::json::array receivers;
     for (const auto& receiver : session_registry::instance().receivers())
     {
-        receivers.push_back(boost::json::object{{"stream_id", receiver}});
+        const bool ready = stream_registry::instance().find(receiver) != nullptr;
+        receivers.push_back(boost::json::object{{"stream_id", receiver}, {"ready", ready}});
     }
     boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::ok, request.version());
     response.set(boost::beast::http::field::server, "media_server");
