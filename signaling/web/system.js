@@ -21,14 +21,18 @@ function loadingOrError(root) {
   return true;
 }
 
-// GB 点播状态来自通道列表：页面只为尚无缓存的在线设备请求一次，不随轮询全量刷新。
-function loadMissingChannels() {
-  const missing = store.devices.filter(device => device.online && !store.channels.has(device.device_id)).map(device => device.device_id);
-  if (missing.length) void loadChannels(missing);
+// GB 点播状态来自通道列表：每次打开页面为在线设备取一次，之后由手动刷新更新，不随轮询逐台请求。
+function onlineChannelsOnce() {
+  let done = false;
+  return () => {
+    if (done || !store.loaded) return;
+    done = true;
+    const online = store.devices.filter(device => device.online).map(device => device.device_id);
+    if (online.length) void loadChannels(online);
+  };
 }
 
 function summaryOf() {
-  loadMissingChannels();
   const devices = unifiedDevices();
   const streams = runningStreams();
   const kinds = ["gb", "rtsp", "push"].map(kind => {
@@ -40,6 +44,7 @@ function summaryOf() {
 }
 
 export function mountOverview(root, ctx) {
+  const ensureChannels = onlineChannelsOnce();
   const body = h("div");
   root.replaceChildren(h("div", { class: "page" },
     h("div", { class: "page-head" },
@@ -50,6 +55,7 @@ export function mountOverview(root, ctx) {
     body));
 
   function update() {
+    ensureChannels();
     if (loadingOrError(body)) {
       return;
     }
@@ -108,6 +114,7 @@ export function mountOverview(root, ctx) {
 }
 
 export function mountStreams(root, ctx) {
+  const ensureChannels = onlineChannelsOnce();
   let kind = "all";
   const filter = h("div", { class: "segmented", role: "group", "aria-label": "按来源筛选" });
   const body = h("div");
@@ -117,7 +124,7 @@ export function mountStreams(root, ctx) {
     h("div", { class: "card table-card" }, h("div", { class: "toolbar" }, filter), body)));
 
   function update() {
-    loadMissingChannels();
+    ensureChannels();
     const all = store.loaded ? runningStreams() : [];
     replaceKeepingFocus(filter, [["all", "全部"], ["gb", "GB28181"], ["rtsp", "RTSP 拉流"], ["push", "推流"]].map(([value, label]) => h("button", {
       type: "button", class: kind === value ? "is-active" : "", "aria-pressed": String(kind === value), dataset: { key: `kind:${value}` },
@@ -153,6 +160,7 @@ export function mountStreams(root, ctx) {
 const UNSUPPORTED = ["CPU 使用率", "内存占用", "网络连接数", "入站 / 出站带宽", "播放会话数", "各媒体流轨道与码率"];
 
 export function mountStatus(root) {
+  const ensureChannels = onlineChannelsOnce();
   const body = h("div");
   root.replaceChildren(h("div", { class: "page" },
     h("div", { class: "page-head" }, h("div", {}, h("h1", {}, "运行状态"),
@@ -160,6 +168,7 @@ export function mountStatus(root) {
     body));
 
   function update() {
+    ensureChannels();
     if (loadingOrError(body)) {
       return;
     }

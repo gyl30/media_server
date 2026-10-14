@@ -4,7 +4,7 @@ import { store, subscribe, refresh, refreshing, stopRefresh, unifiedDevices, loa
 import { h, icon, toast, formatClock, errorMessage } from "/ui.js";
 import { mountDevices } from "/devices.js";
 import { mountDetail } from "/detail.js";
-import { mountVideo } from "/video.js";
+import { mountVideo } from "/monitor.js";
 import { mountOverview, mountStreams, mountStatus } from "/system.js";
 
 const PAGES = [

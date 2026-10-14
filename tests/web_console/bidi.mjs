@@ -46,7 +46,7 @@ try {
     if (response.type === "exception") throw new Error(`evaluate: ${response.exceptionDetails.text}`);
     return response.result.value;
   };
-  for (const route of ["overview", "devices", "devices/gb/34020000001320000101", "video", "streams", "status"]) {
+  for (const route of ["overview", "devices", "devices/gb/34020000001320000101", "monitor", "resources", "status"]) {
     await send("browsingContext.navigate", { context, url: `${base}#${route}`, wait: "complete" });
     await sleep(2500);
     const overflow = await evaluate("document.documentElement.scrollWidth - innerWidth");
@@ -54,7 +54,7 @@ try {
     const { data } = await send("browsingContext.captureScreenshot", { context });
     writeFileSync(`${shots}/firefox-${route.split("/")[0]}.png`, Buffer.from(data, "base64"));
   }
-  await send("browsingContext.navigate", { context, url: `${base}#video`, wait: "complete" });
+  await send("browsingContext.navigate", { context, url: `${base}#monitor`, wait: "complete" });
   await sleep(2500);
   await evaluate("[...document.querySelectorAll('.tree-node')].find(node => node.textContent.includes('直播间 OBS')).click()");
   await sleep(8000);

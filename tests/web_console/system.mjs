@@ -32,7 +32,7 @@ export default async function (b) {
   await b.shot(`${shots}/overview.png`);
 
   // 媒体流
-  await q("location.hash = '#streams'");
+  await q("location.hash = '#resources'");
   await b.sleep(800);
   check("媒体流行数与接口一致", await q("document.querySelectorAll('.table tbody tr').length") === want.streams);
   check("不展示轨道 / 观看数等虚构列", !(await q(text(".table thead"))).includes("观看"));
@@ -68,15 +68,15 @@ export default async function (b) {
   const slow = await b.beforeLoad("{ const original = window.fetch; window.fetch = (url, options) => String(url).startsWith('/api/') ? new Promise(resolve => setTimeout(() => resolve(original(url, options)), 3000)) : original(url, options); }");
   await b.goto(base + "#devices", 0);
   await b.reload(800);
-  check("首次加载显示骨架", await q("!!document.querySelector('.table-card .skeleton')"));
+  check("首次加载显示骨架", await q("!!document.querySelector('.card .skeleton')"));
   await b.shot(`${shots}/devices-loading.png`);
   await b.removeBeforeLoad(slow);
   const fail = await b.beforeLoad("{ const original = window.fetch; window.fetch = (url, options) => String(url).startsWith('/api/') && !window.__allow ? Promise.reject(new TypeError('Failed to fetch')) : original(url, options); }");
   await b.reload(1500);
-  check("首次加载失败显示错误与重试", (await q(text(".table-card"))).includes("设备列表暂时无法加载"));
+  check("首次加载失败显示错误与重试", (await q(text(".card"))).includes("设备列表暂时无法加载"));
   await b.shot(`${shots}/devices-error.png`);
   await q("window.__allow = true");
-  await q(clickText(".table-card .btn", "重试"));
+  await q(clickText(".card .btn", "重试"));
   check("重试后加载成功", await waitFor(b, `document.querySelectorAll('.table tbody tr').length === ${want.total}`, 5000));
   await b.removeBeforeLoad(fail);
   summary();

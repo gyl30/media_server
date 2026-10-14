@@ -7,12 +7,12 @@ export default async function (b) {
   await b.goto(base + `#devices/push/${PUSH}`, 2500);
   check("详情页提供在视频中心播放", await q("!document.querySelector('[data-key=play-center]').disabled"));
   await q("document.querySelector('[data-key=play-center]').click()");
-  check("跳转到视频中心并播放这一路", await waitFor(b, "location.hash === '#monitor' && document.querySelectorAll('.tile.is-streaming').length === 1", 15000));
+  check("跳转到实时监控并播放这一路", await waitFor(b, "location.hash === '#monitor' && document.querySelectorAll('.tile.is-streaming').length === 1", 15000));
   check("只创建一个画面", await q("document.querySelectorAll('.grid-wrap .tile:not(.is-empty)').length") === 1);
   await b.sleep(1500);
   check("画面在解码", await q("document.querySelector('.tile.is-streaming video').getVideoPlaybackQuality().totalVideoFrames") > 10);
   await b.shot(`${shots}/video-single-real.png`);
-  await q(clickText(".stage .segmented button", "单画面"));
+  await q(clickText(".player-toolbar .segmented button", "单画面"));
   await b.sleep(1500);
   await b.shot(`${shots}/video-single-layout.png`);
   await b.viewport(390, 844);
