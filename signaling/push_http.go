@@ -14,16 +14,17 @@ import (
 )
 
 type pushDeviceResponse struct {
-	DeviceID   string    `json:"device_id"`
-	Name       string    `json:"name"`
-	State      string    `json:"state"`
-	Token      string    `json:"token,omitempty"`
-	ExpiresAt  time.Time `json:"expires_at,omitzero"`
-	VerifiedAt time.Time `json:"verified_at,omitzero"`
+	DeviceID   string       `json:"device_id"`
+	Name       string       `json:"name"`
+	Protocol   pushProtocol `json:"protocol"`
+	State      string       `json:"state"`
+	Token      string       `json:"token,omitempty"`
+	ExpiresAt  time.Time    `json:"expires_at,omitzero"`
+	VerifiedAt time.Time    `json:"verified_at,omitzero"`
 }
 
 func (s *infrastructureServer) pushDeviceResponseLocked(device pushDevice) pushDeviceResponse {
-	response := pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, State: "idle"}
+	response := pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "idle"}
 	if run, ok := s.tokens.pushRuns[device.deviceID]; ok {
 		response.Token = run.streamID
 		if run.verifiedAt.IsZero() {
@@ -55,18 +56,19 @@ func (s *infrastructureServer) handlePushDeviceList(writer http.ResponseWriter, 
 
 func (s *infrastructureServer) handlePushDeviceCreate(writer http.ResponseWriter, request *http.Request) {
 	var command struct {
-		Name string `json:"name"`
+		Name     string       `json:"name"`
+		Protocol pushProtocol `json:"protocol"`
 	}
 	if !decodeJSON(writer, request, &command) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	device := pushDevice{deviceID: uuid.NewString(), name: command.Name}
+	device := pushDevice{deviceID: uuid.NewString(), name: command.Name, protocol: command.Protocol}
 	if err := s.sources.createPushDevice(request.Context(), device); err != nil {
 		s.writeDeviceError(writer, err)
 		return
 	}
-	writeJSON(writer, http.StatusCreated, pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, State: "idle"})
+	writeJSON(writer, http.StatusCreated, pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "idle"})
 }
 
 func (s *infrastructureServer) handlePushDeviceGet(writer http.ResponseWriter, request *http.Request) {
@@ -90,19 +92,25 @@ func (s *infrastructureServer) handlePushDeviceGet(writer http.ResponseWriter, r
 func (s *infrastructureServer) handlePushDevicePatch(writer http.ResponseWriter, request *http.Request) {
 	deviceID := request.PathValue("id")
 	var command struct {
-		Name string `json:"name"`
+		Name     string        `json:"name"`
+		Protocol *pushProtocol `json:"protocol"`
 	}
 	if !validUUIDv4(deviceID) || !decodeJSON(writer, request, &command) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if err := s.sources.patchPushDevice(request.Context(), deviceID, command.Name); err != nil {
+	if err := s.sources.patchPushDevice(request.Context(), deviceID, command.Name, command.Protocol); err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	device, err := s.sources.getPushDevice(request.Context(), deviceID)
+	if err != nil {
 		s.writeDeviceError(writer, err)
 		return
 	}
 	s.tokens.mu.Lock()
 	s.tokens.expireLocked(s.live.sip.now())
-	response := s.pushDeviceResponseLocked(pushDevice{deviceID: deviceID, name: command.Name})
+	response := s.pushDeviceResponseLocked(device)
 	s.tokens.mu.Unlock()
 	writeJSON(writer, http.StatusOK, response)
 }

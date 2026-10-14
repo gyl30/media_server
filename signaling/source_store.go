@@ -86,6 +86,10 @@ func openSourceStore(ctx context.Context, path string) (*sourceStore, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)
 	}
+	if err := ensurePushProtocolColumn(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("upgrade push device table: %w", err)
+	}
 	return store, nil
 }
 
