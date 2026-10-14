@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -25,17 +24,8 @@ func TestRetiredGBControlRoutesAreAbsent(t *testing.T) {
 
 func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	s := testInfrastructure(t)
-	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path == "/pull/create" {
-			writer.WriteHeader(http.StatusCreated)
-		} else if request.URL.Path == "/receivers/delete" {
-			writer.WriteHeader(http.StatusNoContent)
-		} else {
-			writer.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	t.Cleanup(media.Close)
-	s.media.server.controlURL = media.URL
+	media := &fakePullMedia{}
+	media.serve(t, s)
 	handler := s.handler()
 	response := apiRequest(t, handler, "POST", "/api/sources",
 		`{"stream_name":"rtsp/preview","url":"rtsp://127.0.0.1/camera"}`, http.StatusCreated)
@@ -47,6 +37,11 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 		t.Fatalf("create did not start pulling: %s", response.Body.String())
 	}
 	body := `{"source_id":"` + source.SourceID + `"}`
+	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	media.ready = true
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
 	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/stop", "", http.StatusNoContent)
 	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
@@ -56,6 +51,10 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	}
 	if err := json.Unmarshal(start.Body.Bytes(), &session); err != nil || !validUUIDv4(session.StreamID) {
 		t.Fatalf("invalid start response: %s", start.Body.String())
+	}
+	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	response = apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
 	if !strings.Contains(response.Body.String(), "http://127.0.0.1:8080/play/whep/"+session.StreamID) {

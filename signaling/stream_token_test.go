@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+// 授权生命周期测试中的已注册媒体源；不替代 fake /receivers 对 readiness 转换的覆盖。
+func testRegisteredMediaStream(s *infrastructureServer, streamID string) {
+	ready := make(map[string]struct{})
+	if current := s.readyStreams.Load(); current != nil {
+		for id := range *current {
+			ready[id] = struct{}{}
+		}
+	}
+	ready[streamID] = struct{}{}
+	s.readyStreams.Store(&ready)
+}
+
 func TestPlaySelectsExactlyOneSource(t *testing.T) {
 	s := testInfrastructure(t)
 	id := "11111111-1111-4111-8111-111111111111"
@@ -38,6 +50,7 @@ func TestRTSPTerminationInvalidatesPlaybackTokens(t *testing.T) {
 			if err != nil || !s.finishRTSPPull(session) {
 				t.Fatalf("reserve/finish: %v", err)
 			}
+			testRegisteredMediaStream(s, session.streamID)
 			result, err := s.newPlaybackURLs(playSource{SourceID: sourceID})
 			if err != nil {
 				t.Fatal(err)
@@ -74,6 +87,7 @@ func TestPushDevicesPersistWithoutRuntimeState(t *testing.T) {
 	requestPushToken(t, s, issuedID)
 	verified := requestPushToken(t, s, verifiedID)
 	verifyToken(t, s, verified, "publish", verified, http.StatusOK)
+	testRegisteredMediaStream(s, verified)
 	if _, err := s.newPlaybackURLs(playSource{PushDeviceID: verifiedID}); err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +243,12 @@ func TestPushDeviceRegistrationAndPublishAuthorization(t *testing.T) {
 	verifyToken(t, s, value, "publish", value, http.StatusOK)
 	verifyToken(t, s, value, "publish", value, http.StatusForbidden)
 	apiRequest(t, s.handler(), "POST", "/api/push-devices/"+deviceID+"/publish", "", http.StatusConflict)
+	// 发布认证先于轨道注册；此时不得签发可播放地址，也不得增加 token。
+	apiRequest(t, s.handler(), "POST", "/api/play", `{"source":{"push_device_id":"`+deviceID+`"}}`, http.StatusConflict)
+	if len(s.tokens.tokens) != 0 {
+		t.Fatal("unregistered push issued a playback token")
+	}
+	testRegisteredMediaStream(s, value)
 	play := apiRequest(t, s.handler(), "POST", "/api/play", `{"source":{"push_device_id":"`+deviceID+`"}}`, http.StatusCreated)
 	var result playbackURLs
 	if err := json.Unmarshal(play.Body.Bytes(), &result); err != nil || result.StreamID != value || !validStreamToken(result.Token) {
@@ -315,6 +335,7 @@ func TestPushStopAndDeleteInvalidateAllRunTokens(t *testing.T) {
 			deviceID := createPushDevice(t, s)
 			value := requestPushToken(t, s, deviceID)
 			verifyToken(t, s, value, "publish", value, http.StatusOK)
+			testRegisteredMediaStream(s, value)
 			play, err := s.newPlaybackURLs(playSource{PushDeviceID: deviceID})
 			if err != nil {
 				t.Fatal(err)
@@ -378,6 +399,7 @@ func TestPlaybackURLsUseRealPortsAndIPv6(t *testing.T) {
 	deviceID := createPushDevice(t, s)
 	value := requestPushToken(t, s, deviceID)
 	verifyToken(t, s, value, "publish", value, http.StatusOK)
+	testRegisteredMediaStream(s, value)
 	play, err := s.newPlaybackURLs(playSource{PushDeviceID: deviceID})
 	if err != nil {
 		t.Fatal(err)

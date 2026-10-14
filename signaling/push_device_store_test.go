@@ -3,15 +3,93 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"modernc.org/sqlite"
 )
+
+// 独立连接没有共享 token mutex：SQLite 条件 UPDATE 仍只允许一次消费，重开后不能复用。
+func TestPushCredentialConcurrentConsumptionAcrossConnections(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "concurrent.db")
+	first, err := openSourceStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.close() })
+	second, err := openSourceStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.close() })
+	now := time.Now()
+	credential, err := newStreamToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := pushDevice{deviceID: uuid.NewString(), name: "Concurrent", protocol: pushProtocolRTMP, credential: credential, expiresAt: pushCredentialDeadline(now)}
+	if err := first.createPushDevice(t.Context(), device); err != nil {
+		t.Fatal(err)
+	}
+	type consumption struct {
+		deviceID string
+		err      error
+	}
+	results := make(chan consumption, 16)
+	start := make(chan struct{})
+	var wait sync.WaitGroup
+	for i := range 16 {
+		store := []*sourceStore{first, second}[i%2]
+		wait.Go(func() {
+			<-start
+			id, err := store.consumePushCredential(t.Context(), credential, now)
+			results <- consumption{deviceID: id, err: err}
+		})
+	}
+	close(start)
+	wait.Wait()
+	close(results)
+	successes := 0
+	for result := range results {
+		if result.err != nil {
+			var sqliteError *sqlite.Error
+			if !errors.As(result.err, &sqliteError) || sqliteError.Code() != 5 || result.deviceID != "" {
+				t.Fatal(result.err)
+			}
+			// 独立连接不承诺忙等待；SQLITE_BUSY 是失败消费，不是第二次授权成功。
+			continue
+		}
+		if result.deviceID != "" {
+			if result.deviceID != device.deviceID {
+				t.Fatal("consumed another device's credential")
+			}
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("successful database consumptions=%d", successes)
+	}
+	for _, store := range []*sourceStore{first, second} {
+		if id, err := store.consumePushCredential(t.Context(), credential, now); err != nil || id != "" {
+			t.Fatalf("retry reused consumed credential: id=%s err=%v", id, err)
+		}
+	}
+	reopened, err := openSourceStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.close() })
+	if id, err := reopened.consumePushCredential(t.Context(), credential, now); err != nil || id != "" {
+		t.Fatalf("reopen reused consumed credential: id=%s err=%v", id, err)
+	}
+}
 
 func decodePushDevice(t *testing.T, body string) pushDeviceResponse {
 	t.Helper()

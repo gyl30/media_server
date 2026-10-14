@@ -95,6 +95,7 @@ type playbackURLs struct {
 }
 
 var errSourceNotRunning = errors.New("source is not running")
+var errMediaNotReady = errors.New("media source is not ready")
 
 // Running-source locks precede token state for both admission and termination.
 func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs, error) {
@@ -122,6 +123,10 @@ func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs,
 	}
 	if streamID == "" || !s.streamRunningLocked(streamID) {
 		return playbackURLs{}, errSourceNotRunning
+	}
+	// 自动接入的拉流源和推流设备只为已注册的媒体源签发地址；GB 点播保留先签发、后接入的票据语义。
+	if source.LiveID == "" && !s.mediaReady(streamID) {
+		return playbackURLs{}, errMediaNotReady
 	}
 	value, err := newStreamToken()
 	if err != nil {
@@ -168,6 +173,10 @@ func (s *infrastructureServer) handlePlay(writer http.ResponseWriter, request *h
 		return
 	}
 	result, err := s.newPlaybackURLs(command.Source)
+	if errors.Is(err, errMediaNotReady) {
+		writeHTTPError(writer, http.StatusConflict, "media_not_ready")
+		return
+	}
 	if errors.Is(err, errSourceNotRunning) {
 		writeHTTPError(writer, http.StatusConflict, "not_running")
 		return

@@ -34,7 +34,8 @@ func TestWebManagementPageAndAssets(t *testing.T) {
 		"/": "text/html", "/app.js": "text/javascript", "/api.js": "text/javascript",
 		"/whep.js": "text/javascript", "/style.css": "text/css", "/ui.js": "text/javascript",
 		"/store.js": "text/javascript", "/devices.js": "text/javascript", "/detail.js": "text/javascript",
-		"/playback.js": "text/javascript", "/monitor.js": "text/javascript", "/system.js": "text/javascript",
+		"/monitor.js": "text/javascript", "/system.js": "text/javascript",
+		"/player.js": "text/javascript",
 		"/icons.svg": "image/svg+xml", "/favicon.svg": "image/svg+xml",
 	} {
 		t.Run(path, func(t *testing.T) {

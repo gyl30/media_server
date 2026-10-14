@@ -118,6 +118,11 @@ func TestSourceCreateStartsPullAndKeepsConfigOnFailure(t *testing.T) {
 	if current := listedSource(t, handler, failed.SourceID); current.Session.MediaReady {
 		t.Fatalf("media ready before tracks: %+v", current)
 	}
+	playBody := `{"source":{"source_id":"` + failed.SourceID + `"}}`
+	apiRequest(t, handler, "POST", "/api/play", playBody, http.StatusConflict)
+	if len(s.tokens.tokens) != 0 {
+		t.Fatal("unready source issued a playback token")
+	}
 	media.ready = true
 	if err := s.reconcileMedia(t.Context()); err != nil {
 		t.Fatal(err)
@@ -125,6 +130,16 @@ func TestSourceCreateStartsPullAndKeepsConfigOnFailure(t *testing.T) {
 	if current := listedSource(t, handler, failed.SourceID); !current.Session.MediaReady {
 		t.Fatalf("media not ready: %+v", current)
 	}
+	var play playbackURLs
+	if err := json.Unmarshal(apiRequest(t, handler, "POST", "/api/play", playBody, http.StatusCreated).Body.Bytes(), &play); err != nil {
+		t.Fatal(err)
+	}
+	// 已签发票据绑定运行代，而非轮询得到的 readiness 快照；媒体侧本地预检决定何时认证。
+	media.ready = false
+	if err := s.reconcileMedia(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	verifyToken(t, s, play.Token, "play", play.StreamID, http.StatusOK)
 }
 
 // 修改连接参数会用新配置和新的 stream_id 重新拉流并删除旧会话；只改名称不重新拉流。

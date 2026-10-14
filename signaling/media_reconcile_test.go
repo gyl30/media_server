@@ -175,6 +175,8 @@ func TestPushReconcileRegistrationGraceAndUnconsumedCredentials(t *testing.T) {
 	s.tokens.mu.Lock()
 	s.tokens.pushRuns[old] = pushRun{streamID: oldToken, verifiedAt: now.Add(-4 * time.Second)}
 	s.tokens.mu.Unlock()
+	// 已注册时签发的票据在后续对账发现接收会话消失时失效。
+	testRegisteredMediaStream(s, oldToken)
 	play, err := s.newPlaybackURLs(playSource{PushDeviceID: old})
 	if err != nil {
 		t.Fatal(err)
