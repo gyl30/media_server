@@ -2,8 +2,11 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <vector>
+#include <cstdint>
 #include <iostream>
 #include <optional>
+#include <algorithm>
 #include <exception>
 #include <stdexcept>
 #include <string_view>
@@ -14,6 +17,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/scope/scope_exit.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
@@ -23,6 +27,7 @@
 extern "C"
 {
 #include "flv-muxer.h"
+#include "flv-header.h"
 #include "flv-writer.h"
 }
 
@@ -75,6 +80,7 @@ void admission(std::string_view scenario)
     unsigned expected_muxers_created = muxers_created;
     std::exception_ptr failure;
     bool completed{};
+    const bool pending_output = scenario == "slow_close" || scenario == "pending_end" || scenario == "pending_stop" || scenario == "queue_overflow";
 
     auto source = std::make_shared<media_stream>(stream_id, worker);
     require(source->set_tracks(
@@ -193,6 +199,11 @@ void admission(std::string_view scenario)
             {
                 boost::beast::tcp_stream client(worker.io());
                 client.expires_after(3s);
+                client.socket().open(tcp::v4());
+                if (pending_output)
+                {
+                    client.socket().set_option(boost::asio::socket_base::receive_buffer_size(1024));
+                }
                 client.connect(ingress.local_endpoint());
                 std::string path = "/" + stream_id + "/" + token + ".flv";
                 if (scenario == "invalid_path")
@@ -202,8 +213,16 @@ void admission(std::string_view scenario)
                 http::request<http::string_body> request(http::verb::get, path, 11);
                 expected_writer_attempts = writer_attempts;
                 expected_muxers_created = muxers_created;
+                auto socket = ingress.accept();
+                if (pending_output)
+                {
+                    socket.set_option(boost::asio::socket_base::send_buffer_size(1024));
+                    boost::asio::socket_base::send_buffer_size send_buffer;
+                    socket.get_option(send_buffer);
+                    require(send_buffer.value() < 1024 * 1024, "test send buffer cannot force a pending media write");
+                }
                 auto session =
-                    std::make_shared<http_flv_session>(worker, boost::beast::tcp_stream(ingress.accept()), std::move(request), application_config);
+                    std::make_shared<http_flv_session>(worker, boost::beast::tcp_stream(std::move(socket)), std::move(request), application_config);
                 (attempt == 0 ? first_session : second_session) = session;
                 session->startup();
                 session.reset();
@@ -241,6 +260,70 @@ void admission(std::string_view scenario)
                         require(body.starts_with("FLV"), "HTTP-FLV initial header missing");
                     }
                     require(writer_audio == 1 && writer_video == 0, "HTTP-FLV used replacement tracks after authorization");
+                    if (scenario == "normal_media")
+                    {
+                        for (std::int64_t index = 0; index < 2; ++index)
+                        {
+                            source->publish({.track = 1,
+                                             .dts_ns = index * 20'000'000,
+                                             .pts_ns = index * 20'000'000,
+                                             .payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0x35 + index)});
+                        }
+                        while (parser.get().body().size() < 365U)
+                        {
+                            http::async_read_some(client, buffer, parser, yield[error]);
+                            require(!error, "HTTP-FLV media chunks failed");
+                        }
+                        const auto body = boost::beast::buffers_to_string(parser.get().body().data());
+                        const auto* bytes = reinterpret_cast<const std::uint8_t*>(body.data());
+                        std::size_t offset = 13;
+                        for (unsigned index = 0; index < 2; ++index)
+                        {
+                            flv_tag_header_t tag{};
+                            const auto header_bytes = flv_tag_header_read(&tag, bytes + offset, body.size() - offset);
+                            require(header_bytes == 11 && tag.type == 8 && tag.size == 161 && tag.timestamp == index * 20,
+                                    "HTTP-FLV tag boundary or timestamp changed");
+                            offset += static_cast<std::size_t>(header_bytes);
+                            require(std::all_of(
+                                        bytes + offset + 1, bytes + offset + tag.size, [index](std::uint8_t value) { return value == 0x35 + index; }),
+                                    "HTTP-FLV media payload or ordering changed");
+                            offset += tag.size;
+                            std::uint32_t previous_size{};
+                            require(flv_tag_size_read(bytes + offset, body.size() - offset, &previous_size) == 4 && previous_size == 11 + tag.size,
+                                    "HTTP-FLV previous tag size changed");
+                            offset += 4;
+                        }
+                        require(offset == body.size(), "HTTP-FLV unexpected trailing bytes");
+                    }
+                    if (pending_output)
+                    {
+                        const auto payload = std::make_shared<const std::vector<std::uint8_t>>(1024U * 1024U, 0x35);
+                        const auto frames = scenario == "queue_overflow" ? 6 : 1;
+                        for (int index = 0; index < frames; ++index)
+                        {
+                            source->publish({.track = 1, .dts_ns = index * 20'000'000LL, .pts_ns = index * 20'000'000LL, .payload = payload});
+                        }
+                        boost::asio::steady_timer wait(worker.io(), 20ms);
+                        wait.async_wait(yield);
+                        if (scenario != "queue_overflow")
+                        {
+                            require(!first_session.expired() && client.socket().available(error) < payload->size() && !error,
+                                    "slow client did not retain a pending media write");
+                        }
+                        if (scenario == "pending_end")
+                        {
+                            source->end();
+                        }
+                        if (scenario == "pending_stop")
+                        {
+                            worker.request_stop();
+                        }
+                        if (scenario == "queue_overflow")
+                        {
+                            require(first_session.expired(), "HTTP-FLV overflow did not terminate a slow viewer");
+                            require(stream_registry::instance().find(stream_id) == source, "slow viewer cleanup removed its media source");
+                        }
+                    }
                 }
                 else
                 {
@@ -362,7 +445,17 @@ int main(int argc, char** argv)
     try
     {
         require(argc <= 2, "unexpected test arguments");
-        for (const std::string_view scenario : {"invalid_path", "denied", "expired", "accepted", "writer_failure", "replacement"})
+        for (const std::string_view scenario : {"invalid_path",
+                                                "denied",
+                                                "expired",
+                                                "accepted",
+                                                "writer_failure",
+                                                "replacement",
+                                                "normal_media",
+                                                "slow_close",
+                                                "pending_end",
+                                                "pending_stop",
+                                                "queue_overflow"})
         {
             if (argc == 1 || scenario == argv[1])
             {
@@ -373,7 +466,9 @@ int main(int argc, char** argv)
         {
             require(std::string_view(argv[1]) == "invalid_path" || std::string_view(argv[1]) == "denied" || std::string_view(argv[1]) == "expired" ||
                         std::string_view(argv[1]) == "accepted" || std::string_view(argv[1]) == "writer_failure" ||
-                        std::string_view(argv[1]) == "replacement",
+                        std::string_view(argv[1]) == "replacement" || std::string_view(argv[1]) == "normal_media" ||
+                        std::string_view(argv[1]) == "slow_close" || std::string_view(argv[1]) == "pending_end" ||
+                        std::string_view(argv[1]) == "pending_stop" || std::string_view(argv[1]) == "queue_overflow",
                     "unknown scenario");
         }
         return 0;

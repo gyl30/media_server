@@ -197,30 +197,34 @@ bool http_flv_session::enqueue(std::vector<std::uint8_t> data)
     output_queue_.push_back(std::move(data));
     if (start_writer)
     {
-        const auto self = shared_from_this();
-        worker_.spawn([self](boost::asio::yield_context yield) { self->run_write(yield); });
+        start_write();
     }
     return true;
 }
 
-void http_flv_session::run_write(boost::asio::yield_context yield)
+void http_flv_session::start_write()
 {
-    while (!output_queue_.empty())
-    {
-        const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(output_queue_.front()));
-        boost::system::error_code error;
-        boost::asio::async_write(stream_, chunk, yield[error]);
-        if (error)
-        {
-            output_queue_.clear();
-            queued_output_bytes_ = 0;
-            shutdown();
-            return;
-        }
+    const auto self = shared_from_this();
+    const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(output_queue_.front()));
+    boost::asio::async_write(stream_,
+                             chunk,
+                             [self](boost::system::error_code error, std::size_t)
+                             {
+                                 if (error)
+                                 {
+                                     self->output_queue_.clear();
+                                     self->queued_output_bytes_ = 0;
+                                     self->shutdown();
+                                     return;
+                                 }
 
-        queued_output_bytes_ -= output_queue_.front().size();
-        output_queue_.pop_front();
-    }
+                                 self->queued_output_bytes_ -= self->output_queue_.front().size();
+                                 self->output_queue_.pop_front();
+                                 if (!self->output_queue_.empty())
+                                 {
+                                     self->start_write();
+                                 }
+                             });
 }
 
 void http_flv_session::on_end()

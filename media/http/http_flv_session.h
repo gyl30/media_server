@@ -45,7 +45,7 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
                             boost::asio::yield_context& yield,
                             std::string_view allow = {});
     [[nodiscard]] bool enqueue(std::vector<std::uint8_t> data);
-    void run_write(boost::asio::yield_context yield);
+    void start_write();
     static int writer_callback(void* param, const flv_vec_t* vectors, int count);
 
    private:
