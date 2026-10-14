@@ -18,6 +18,13 @@
 namespace media_server
 {
 
+// 本端 DTLS 角色：平台作为 WHIP/WHEP 服务端时由对端发起握手（server）；作为 WHEP 客户端且对端 setup:passive 时由本端发起（client）。
+enum class dtls_role
+{
+    server,
+    client,
+};
+
 struct dtls_srtp_keying_material
 {
     std::string profile;
@@ -36,7 +43,7 @@ class dtls_transport final
     ~dtls_transport();
 
    public:
-    bool startup(const dtls_certificate& certificate);
+    bool startup(const dtls_certificate& certificate, dtls_role role);
     bool handle_datagram(std::span<const std::uint8_t> packet);
     bool handle_timeout();
 

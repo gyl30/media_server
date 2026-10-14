@@ -202,7 +202,7 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (path == "/pull" || path.starts_with("/pull/"))
     {
-        write_string_response(request, media_server::handle_pull_request(request, worker_, *parsed), yield);
+        write_string_response(request, media_server::handle_pull_request(request, worker_, config_, *parsed), yield);
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))

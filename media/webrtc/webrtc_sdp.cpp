@@ -211,6 +211,29 @@ void on_fmtp(void* param, const char*, const char* value)
     }
 }
 
+// a=candidate:<foundation> <component> <transport> <priority> <address> <port> typ <type> ...
+void on_candidate(void* param, const char*, const char* value)
+{
+    if (param == nullptr || value == nullptr)
+    {
+        return;
+    }
+    const auto fields = split_words(value);
+    if (fields.size() < 8 || fields[1] != "1" || lower_copy(fields[2]) != "udp" || fields[6] != "typ")
+    {
+        return;
+    }
+    boost::system::error_code error;
+    const auto address = boost::asio::ip::make_address(std::string(fields[4]), error);
+    std::uint16_t port = 0;
+    const auto [pointer, parse_error] = std::from_chars(fields[5].data(), fields[5].data() + fields[5].size(), port);
+    if (error || parse_error != std::errc{} || pointer != fields[5].data() + fields[5].size() || port == 0)
+    {
+        return;
+    }
+    static_cast<webrtc_media_offer*>(param)->candidates.emplace_back(address, port);
+}
+
 std::optional<std::string_view> parameter_value(std::string_view parameters, std::string_view name)
 {
     std::size_t begin = 0;
@@ -642,6 +665,7 @@ std::optional<webrtc_media_offer> parse_media_offer(sdp_t* sdp, int index, const
         .formats = {},
         .payload_types = {},
         .codecs = {},
+        .candidates = {},
     };
 
     if (const char* maxptime = sdp_media_attribute_find(sdp, index, "maxptime"); maxptime != nullptr)
@@ -676,6 +700,7 @@ std::optional<webrtc_media_offer> parse_media_offer(sdp_t* sdp, int index, const
     sdp_media_attribute_list(sdp, index, "rtpmap", &on_rtpmap, &media);
     sdp_media_attribute_list(sdp, index, "fmtp", &on_fmtp, &media);
     sdp_media_attribute_list(sdp, index, "extmap", &on_extmap, &media);
+    sdp_media_attribute_list(sdp, index, "candidate", &on_candidate, &media);
     for (const auto payload_type : media.payload_types)
     {
         if ((payload_type == RTP_PAYLOAD_PCMU || payload_type == RTP_PAYLOAD_PCMA) &&
@@ -1192,6 +1217,97 @@ std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const w
         .audio_bitrate = std::nullopt,
         .audio_max_playback_rate = std::nullopt,
     };
+}
+
+std::string make_whep_pull_offer(const webrtc_answer_config& config)
+{
+    const auto address_type = config.address.is_v6() ? "IP6" : "IP4";
+    std::ostringstream offer;
+    offer << "v=0\r\n";
+    offer << "o=- 1 1 IN " << address_type << ' ' << config.address.to_string() << "\r\n";
+    offer << "s=media_server\r\n";
+    offer << "t=0 0\r\n";
+    offer << "a=group:BUNDLE 0 1\r\n";
+    const auto transport = [&offer, &config, address_type](std::string_view mid)
+    {
+        offer << "c=IN " << address_type << ' ' << config.address.to_string() << "\r\n";
+        offer << "a=mid:" << mid << "\r\n";
+        offer << "a=extmap:1 " << mid_extension_uri << "\r\n";
+        offer << "a=recvonly\r\n";
+        offer << "a=rtcp-mux\r\n";
+        offer << "a=ice-ufrag:" << config.ice_ufrag << "\r\n";
+        offer << "a=ice-pwd:" << config.ice_pwd << "\r\n";
+        offer << "a=fingerprint:sha-256 " << config.fingerprint << "\r\n";
+        offer << "a=setup:actpass\r\n";
+    };
+    // 各 H.264 profile 都允许 level 不对称，服务端按源的 profile 选择。
+    offer << "m=video " << config.port << " UDP/TLS/RTP/SAVPF 96 97 98 99\r\n";
+    transport("0");
+    for (const auto& [payload_type, profile] : {std::pair{96, "42e01f"}, std::pair{97, "42001f"}, std::pair{98, "4d001f"}, std::pair{99, "64001f"}})
+    {
+        offer << "a=rtpmap:" << payload_type << " H264/90000\r\n";
+        offer << "a=fmtp:" << payload_type << " level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=" << profile << "\r\n";
+    }
+    offer << "a=candidate:1 1 UDP 2130706431 " << config.address.to_string() << ' ' << config.port << " typ host\r\n";
+    offer << "a=end-of-candidates\r\n";
+    offer << "m=audio " << config.port << " UDP/TLS/RTP/SAVPF 111\r\n";
+    transport("1");
+    offer << "a=rtpmap:111 opus/48000/2\r\n";
+    offer << "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n";
+    return offer.str();
+}
+
+std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp)
+{
+    const auto answer = parse_webrtc_offer(sdp);
+    if (!answer || answer->bundle_mids.empty())
+    {
+        return std::nullopt;
+    }
+    const auto& transport_mid = answer->bundle_mids.front();
+    const auto transport =
+        std::find_if(answer->media.begin(), answer->media.end(), [&transport_mid](const webrtc_media_offer& media) { return media.mid == transport_mid; });
+    if (transport == answer->media.end() || transport->port == 0 || !transport->rtcp_mux || transport->ice_ufrag.empty() ||
+        transport->ice_pwd.empty() || transport->fingerprint.empty() || transport->candidates.empty())
+    {
+        return std::nullopt;
+    }
+
+    whep_pull_answer result{
+        .ice_ufrag = transport->ice_ufrag,
+        .ice_pwd = transport->ice_pwd,
+        .fingerprint = transport->fingerprint,
+        .setup = lower_copy(transport->setup),
+        .candidates = transport->candidates,
+        .video_payload_type = -1,
+        .audio_payload_type = std::nullopt,
+    };
+    for (const auto& media : answer->media)
+    {
+        const auto media_direction = lower_copy(media.direction);
+        if (media.port == 0 || !bundle_contains(*answer, media.mid) || (media_direction != "sendonly" && media_direction != "sendrecv"))
+        {
+            continue;
+        }
+        for (const auto& codec : media.codecs)
+        {
+            const auto encoding = lower_copy(codec.encoding_name);
+            if (lower_copy(media.type) == "video" && result.video_payload_type < 0 && encoding == "h264" && codec.clock_rate == 90'000U &&
+                has_parameter(codec.format_parameters, "packetization-mode", "1"))
+            {
+                result.video_payload_type = codec.payload_type;
+            }
+            else if (lower_copy(media.type) == "audio" && !result.audio_payload_type && encoding == "opus" && codec.clock_rate == 48'000U)
+            {
+                result.audio_payload_type = codec.payload_type;
+            }
+        }
+    }
+    if (result.video_payload_type < 0)
+    {
+        return std::nullopt;
+    }
+    return result;
 }
 
 }    // namespace media_server

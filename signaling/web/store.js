@@ -112,11 +112,12 @@ export function deviceHash(kind, id) {
 }
 
 export const PUSH_PROTOCOLS = { rtmp: "RTMP", rtsp: "RTSP", whip: "WHIP" };
-// 主动拉流的协议由来源 URL 决定，不单独保存。
-export const PULL_PROTOCOLS = { rtsp: "RTSP", rtmp: "RTMP" };
+// 主动拉流的协议由来源 URL 决定，不单独保存；WHEP 端点是 http:// 地址。
+export const PULL_PROTOCOLS = { rtsp: "RTSP", rtmp: "RTMP", whep: "WHEP" };
 
 export function pullProtocol(url) {
-  return url.slice(0, url.indexOf(":"));
+  const scheme = url.slice(0, url.indexOf(":"));
+  return scheme === "http" ? "whep" : scheme;
 }
 
 function gbStatus(device) {

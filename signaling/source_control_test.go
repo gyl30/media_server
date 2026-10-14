@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -206,6 +207,35 @@ func TestRTMPPullSourceValidationAndStart(t *testing.T) {
 		t.Fatalf("rtmp source: %+v %+v", source, media.created)
 	}
 	apiRequest(t, handler, "PATCH", "/api/sources/"+source.SourceID, `{"username":"admin"}`, http.StatusBadRequest)
+}
+
+// WHEP 拉流来源：端点为 http://，password 保存 Bearer token、不能带用户名；token 只发给媒体服务器，不出现在接口响应中。
+func TestWHEPPullSourceKeepsTokenPrivate(t *testing.T) {
+	s := testInfrastructure(t)
+	media := &fakePullMedia{}
+	media.serve(t, s)
+	handler := s.handler()
+	for _, body := range []string{
+		`{"stream_name":"bad","url":"https://10.0.0.1/whep"}`,
+		`{"stream_name":"bad","url":"http://10.0.0.1/whep","username":"admin","password":"x"}`,
+		`{"stream_name":"bad","url":"rtsp://10.0.0.1/live","password":"x"}`,
+	} {
+		apiRequest(t, handler, "POST", "/api/sources", body, http.StatusBadRequest)
+	}
+	response := apiRequest(t, handler, "POST", "/api/sources", `{"stream_name":"edge","url":"http://10.0.0.1:8080/whep/cam","password":"secret-bearer"}`, http.StatusCreated)
+	source := decodeSource(t, response.Body.Bytes())
+	if source.Session == nil || !source.PasswordSet || len(media.created) != 1 || media.created[0].Token == nil || *media.created[0].Token != "secret-bearer" ||
+		media.created[0].Username != nil || media.created[0].Password != nil {
+		t.Fatalf("whep source: %+v %+v", source, media.created)
+	}
+	list := apiRequest(t, handler, "GET", "/api/sources", "", http.StatusOK).Body.String()
+	if strings.Contains(response.Body.String(), "secret-bearer") || strings.Contains(list, "secret-bearer") {
+		t.Fatal("bearer token leaked in API response")
+	}
+	cleared := decodeSource(t, apiRequest(t, handler, "PATCH", "/api/sources/"+source.SourceID, `{"password":""}`, http.StatusOK).Body.Bytes())
+	if cleared.PasswordSet || len(media.created) != 2 || media.created[1].Token != nil {
+		t.Fatalf("token clear: %+v %+v", cleared, media.created)
+	}
 }
 
 // 媒体服务器尚未监听（例如 signaling 先于媒体服务器启动）时请求一定没有生效：不进入"结果未知"，显示连接失败并可重试。

@@ -33,6 +33,7 @@ type pullCreateRequest struct {
 	URL      string  `json:"url"`
 	Username *string `json:"username,omitempty"`
 	Password *string `json:"password,omitempty"`
+	Token    *string `json:"token,omitempty"`
 }
 
 type mediaServerHTTPRejection struct {

@@ -64,7 +64,7 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer, const webr
     dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
                                              [self](std::span<const std::uint8_t> packet)
                                              { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
-    if (!dtls_->startup(certificate))
+    if (!dtls_->startup(certificate, dtls_role::server))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
         return false;
@@ -364,7 +364,7 @@ bool whep_session::startup_media()
 {
     const auto& keying_material = *dtls_->srtp_keying_material();
     auto srtp = std::make_unique<srtp_transport>();
-    if (!srtp->startup(keying_material))
+    if (!srtp->startup(keying_material, dtls_role::server))
     {
         return false;
     }

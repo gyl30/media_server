@@ -19,7 +19,7 @@ class srtp_transport final
     ~srtp_transport();
 
    public:
-    bool startup(const dtls_srtp_keying_material& keying_material);
+    bool startup(const dtls_srtp_keying_material& keying_material, dtls_role role);
 
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtp(std::span<const std::uint8_t> packet);
     [[nodiscard]] std::optional<std::vector<std::uint8_t>> protect_rtcp(std::span<const std::uint8_t> packet);

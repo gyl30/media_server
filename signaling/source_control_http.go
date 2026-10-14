@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"syscall"
 )
 
@@ -44,7 +45,10 @@ func (s *infrastructureServer) startSource(ctx context.Context, sourceID string)
 	command := pullCreateRequest{
 		StreamID: session.streamID, URL: source.url,
 	}
-	if source.username != "" {
+	switch {
+	case strings.HasPrefix(source.url, string(pullProtocolWHEP)+"://") && source.password != "":
+		command.Token = &source.password
+	case source.username != "":
 		command.Username = &source.username
 		command.Password = &source.password
 	}

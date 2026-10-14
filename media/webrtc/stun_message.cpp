@@ -421,6 +421,49 @@ std::vector<std::uint8_t> make_stun_binding_success_response(const stun_binding_
     return packet;
 }
 
+std::vector<std::uint8_t> make_stun_binding_request(const std::array<std::uint8_t, 12>& transaction_id,
+                                                    std::string_view username,
+                                                    std::string_view password,
+                                                    std::uint32_t priority,
+                                                    std::uint64_t tie_breaker)
+{
+    auto packet = make_header(stun_binding_request_type, transaction_id);
+    append_attribute(packet, stun_attribute_username, std::span{reinterpret_cast<const std::uint8_t*>(username.data()), username.size()});
+    std::vector<std::uint8_t> value;
+    append_u32(value, priority);
+    append_attribute(packet, stun_attribute_priority, value);
+    value.clear();
+    append_u32(value, static_cast<std::uint32_t>(tie_breaker >> 32U));
+    append_u32(value, static_cast<std::uint32_t>(tie_breaker & 0xffffffffU));
+    append_attribute(packet, stun_attribute_ice_controlling, value);
+    append_attribute(packet, stun_attribute_use_candidate, {});
+    if (!append_integrity_and_fingerprint(packet, password))
+    {
+        return {};
+    }
+    return packet;
+}
+
+std::optional<std::array<std::uint8_t, 12>> parse_stun_binding_success_response(std::span<const std::uint8_t> packet, std::string_view password)
+{
+    if (!is_stun_message(packet) || read_u16(packet.data()) != stun_binding_success_response_type ||
+        static_cast<std::size_t>(read_u16(packet.data() + 2U)) != packet.size() - stun_header_size)
+    {
+        return std::nullopt;
+    }
+    const auto attributes = scan_stun_attributes(packet);
+    if (!attributes || !attributes->message_integrity_offset || !attributes->fingerprint_offset ||
+        !verify_message_integrity(packet, *attributes->message_integrity_offset, password) ||
+        *attributes->fingerprint_offset + 8U != packet.size() || !verify_fingerprint(packet, *attributes->fingerprint_offset))
+    {
+        spdlog::debug("stun reject binding success response");
+        return std::nullopt;
+    }
+    std::array<std::uint8_t, 12> transaction_id{};
+    std::copy_n(packet.data() + 8U, transaction_id.size(), transaction_id.begin());
+    return transaction_id;
+}
+
 std::vector<std::uint8_t> make_stun_binding_error_response(const stun_binding_request& request,
                                                            std::uint16_t error_code,
                                                            std::string_view reason,

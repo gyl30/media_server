@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 主动拉流的真实媒体验证：媒体服务器从上游拉流（RTMP / RTSP 播放输出、FFmpeg 独立 RTMP 服务器），
+# 主动拉流的真实媒体验证：媒体服务器从上游拉流（RTMP / RTSP / WHEP 播放输出、FFmpeg 独立 RTMP 服务器），
 # 再由独立 FFmpeg 从本服务器的 RTMP 输出解码音视频；上游结束后拉流会话随之结束。
 import json
 import socket
@@ -48,6 +48,91 @@ def wait_until(condition, timeout, message):
         time.sleep(0.1)
 
 
+class WhepProxy:
+    """转发 WHEP 请求到真实端点，可改写应答以构造 DTLS 指纹不符或 candidate 不可达；记录收到的 DELETE。"""
+
+    def __init__(self, upstream, rewrite, delay=0):
+        import http.server
+        import threading
+        proxy = self
+        self.deletes = []
+        self.authorization = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                proxy.authorization.append(self.headers.get("Authorization"))
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                request = urllib.request.Request(upstream, body, {"Content-Type": "application/sdp"})
+                with urllib.request.urlopen(request, timeout=3) as response:
+                    answer = rewrite(response.read().decode())
+                    location = response.headers["Location"]
+                time.sleep(delay)
+                self.send_response(201)
+                self.send_header("Content-Type", "application/sdp")
+                self.send_header("Location", "/resource" + location)
+                self.send_header("Content-Length", str(len(answer)))
+                self.end_headers()
+                self.wfile.write(answer.encode())
+
+            def do_DELETE(self):
+                proxy.authorization.append(self.headers.get("Authorization"))
+                proxy.deletes.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *_):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/whep"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+# 外部 WHEP 端点的失败路径：拒绝连接、HTTP 错误、非法应答、DTLS 指纹不符、candidate 不可达。
+# 每种情况下拉流会话都会结束；已经创建的外部资源会被 DELETE。
+def whep_failures(base, http_port, source, signaling, log):
+    import re
+    upstream = lambda: f"http://127.0.0.1:{http_port}/play/whep/{source}/{signaling.issue('play', source)}"
+    cases = [("refused", f"http://127.0.0.1:{free_ports(1)[0]}/whep", None),
+             ("not found", f"http://127.0.0.1:{http_port}/play/whep/{source}/{'0' * 64}", None)]
+    proxies = []
+    for name, rewrite in (("invalid sdp", lambda answer: "v=0\r\n"),
+                          ("dtls fingerprint", lambda answer: re.sub(r"a=fingerprint:sha-256 \S+", "a=fingerprint:sha-256 " + ":".join(["AB"] * 32), answer)),
+                          ("ice unreachable", lambda answer: re.sub(r"(a=candidate:\S+ 1 UDP \d+ 127\.0\.0\.1 )\d+", r"\g<1>9", answer))):
+        target = upstream()
+        proxy = WhepProxy(target, rewrite)
+        proxies.append((name, proxy))
+        cases.append((name, proxy.url, proxy))
+    try:
+        # 协商期间删除：迟到的 POST 结果不建立会话，刚创建的外部资源随即被 DELETE。
+        proxy = WhepProxy(upstream(), lambda answer: answer, delay=1.5)
+        proxies.append(("closed during negotiation", proxy))
+        pulled = str(uuid.uuid4())
+        assert post(base, "/pull/create", {"stream_id": pulled, "url": proxy.url, "token": "bearer-test"}) == 201
+        assert post(base, "/receivers/delete", {"stream_id": pulled}) == 204
+        wait_until(lambda: len(proxy.deletes) == 1, 8, lambda: "resource created during negotiation was not deleted")
+        assert pulled not in receivers(base) and "whep pull ice connected " + pulled not in log(), log()
+        print("WHEP pull closed during negotiation deletes late resource: PASS", flush=True)
+
+        for name, url, proxy in cases:
+            pulled = str(uuid.uuid4())
+            started = time.monotonic()
+            assert post(base, "/pull/create", {"stream_id": pulled, "url": url, "token": "bearer-test"}) == 201, name
+            wait_until(lambda: pulled not in receivers(base), 25, log)
+            if proxy is not None:
+                wait_until(lambda: len(proxy.deletes) == 1, 5, lambda: f"{name}: resource not deleted")
+                assert proxy.authorization == ["Bearer bearer-test"] * 2 and proxy.deletes[0].startswith("/resource/"), (proxy.authorization, proxy.deletes)
+            print(f"WHEP pull failure '{name}' ends session in {time.monotonic() - started:.1f}s: PASS", flush=True)
+    finally:
+        for _, proxy in proxies:
+            proxy.close()
+
+
 def main():
     server_bin, ffmpeg, mode = sys.argv[1:4]
     with tempfile.TemporaryDirectory(prefix="media-pull-decode-") as temporary:
@@ -81,7 +166,11 @@ def main():
                     wait_until(lambda: receivers(base).get(source), 10, log)
                     play = signaling.issue("play", source)
                     url = {"rtmp": f"rtmp://127.0.0.1:{rtmp_port}/{source}/{play}",
-                           "rtsp": f"rtsp://127.0.0.1:{rtsp_port}/{source}/{play}"}[mode]
+                           "rtsp": f"rtsp://127.0.0.1:{rtsp_port}/{source}/{play}",
+                           "whep": f"http://127.0.0.1:{http_port}/play/whep/{source}/{play}"}.get(mode, "")
+                if mode == "whep_failures":
+                    whep_failures(base, http_port, source, signaling, log)
+                    return
 
                 if mode == "rtmp_unsupported":
                     # MP3 音频不是内部支持的格式：拉流会话明确失败结束，不注册只含部分轨道的媒体源。

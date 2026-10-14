@@ -88,7 +88,7 @@ srtp_transport::srtp_transport() = default;
 
 srtp_transport::~srtp_transport() = default;
 
-bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
+bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material, dtls_role role)
 {
     static const bool initialized = srtp_init() == srtp_err_status_ok;
     if (!initialized)
@@ -100,14 +100,18 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material)
     spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
-    auto outbound_master_key = make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
+    // 本端写密钥用于发送，对端写密钥用于接收；DTLS 客户端写密钥是 client_write。
+    const bool server = role == dtls_role::server;
+    auto outbound_master_key = server ? make_master_key(keying_material.server_write_key, keying_material.server_write_salt)
+                                      : make_master_key(keying_material.client_write_key, keying_material.client_write_salt);
     if (!create_session(keying_material.profile, outbound_master_key, ssrc_any_outbound, state->outbound))
     {
         spdlog::debug("webrtc srtp outbound context create failed profile {}", keying_material.profile);
         return false;
     }
 
-    auto inbound_master_key = make_master_key(keying_material.client_write_key, keying_material.client_write_salt);
+    auto inbound_master_key = server ? make_master_key(keying_material.client_write_key, keying_material.client_write_salt)
+                                     : make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
     if (!create_session(keying_material.profile, inbound_master_key, ssrc_any_inbound, state->inbound))
     {
         spdlog::debug("webrtc srtp inbound context create failed profile {}", keying_material.profile);

@@ -1,3 +1,4 @@
+#include <array>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -7,6 +8,7 @@
 #include <boost/asio/ip/address.hpp>
 
 #include "media/webrtc/webrtc_sdp.h"
+#include "media/webrtc/stun_message.h"
 
 namespace
 {
@@ -137,6 +139,75 @@ void check_opus(const opus_case& item)
     }
     std::cout << item.name << ": PASS\n";
 }
+// 平台作为 WHEP 客户端：自己的 offer 能被平台 WHEP 输出接受，应答解析出 ICE/DTLS 参数、candidate 与负载类型。
+void check_whep_pull()
+{
+    webrtc_answer_config client;
+    client.address = boost::asio::ip::make_address("127.0.0.1");
+    client.port = 49002;
+    client.stream_id = "pull";
+    client.ice_ufrag = "pullufrag";
+    client.ice_pwd = "pull-password-not-a-real-credential";
+    client.fingerprint = "AA:BB";
+    const auto offer = parse_webrtc_offer(make_whep_pull_offer(client));
+    if (!offer || find_webrtc_transport(*offer) == nullptr || offer->media.size() != 2 || offer->media[0].direction != "recvonly" ||
+        offer->media[0].candidates.size() != 1 || offer->media[0].candidates[0].port() != 49002)
+    {
+        throw std::runtime_error("whep pull offer not acceptable");
+    }
+
+    const media_track video{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .channel_count = 0,
+                            .codec_config = {0, 0, 0, 1, 0x67, 0x64, 0x00, 0x1f}};
+    const media_track audio{.id = 2, .kind = media_kind::audio, .codec = codec_id::opus, .clock_rate = 48'000, .channel_count = 2, .codec_config = {}};
+    webrtc_answer_config server = client;
+    server.port = 49004;
+    server.ice_ufrag = "srvufrag";
+    const auto answer = make_webrtc_answer(*offer, {video, audio}, server);
+    if (!answer)
+    {
+        throw std::runtime_error("platform WHEP rejected pull offer");
+    }
+    const auto parsed = parse_whep_pull_answer(answer->sdp);
+    if (!parsed || parsed->ice_ufrag != "srvufrag" || parsed->setup != "passive" || parsed->candidates.size() != 1 ||
+        parsed->candidates[0] != boost::asio::ip::udp::endpoint(server.address, 49004) || parsed->video_payload_type != 99 ||
+        parsed->audio_payload_type != 111)
+    {
+        throw std::runtime_error("whep pull answer parse mismatch");
+    }
+
+    auto without_candidate = answer->sdp;
+    without_candidate.erase(without_candidate.find("a=candidate:"), without_candidate.find("a=end-of-candidates") - without_candidate.find("a=candidate:"));
+    auto vp8_only = answer->sdp;
+    vp8_only.replace(vp8_only.find("H264/90000"), 10, "VP8/90000");
+    for (const auto& invalid : {without_candidate, vp8_only, std::string("v=0\r\n")})
+    {
+        if (parse_whep_pull_answer(invalid))
+        {
+            throw std::runtime_error("invalid whep pull answer accepted");
+        }
+    }
+    std::cout << "WHEP pull offer/answer: PASS\n";
+}
+
+// controlling 方检查请求能被对端（平台 WHEP 输出使用的解析）认证，其成功响应能被本端按对端密码校验。
+void check_stun_controlling_round_trip()
+{
+    const std::array<std::uint8_t, 12> transaction{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+    const auto request = make_stun_binding_request(transaction, "srvufrag:cliufrag", "server-password", 2'130'706'431U, 0x0102030405060708ULL);
+    const auto parsed = parse_stun_binding_request(request, "srvufrag:cliufrag", "server-password");
+    if (!parsed || !parsed->use_candidate || !parsed->ice_controlling || parsed->ice_controlled || !parsed->priority ||
+        parsed->transaction_id != transaction || parse_stun_binding_request(request, "srvufrag:cliufrag", "wrong-password"))
+    {
+        throw std::runtime_error("controlling STUN request not accepted");
+    }
+    const auto response = make_stun_binding_success_response(*parsed, boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("127.0.0.1"), 5000), "server-password");
+    if (parse_stun_binding_success_response(response, "server-password") != transaction || parse_stun_binding_success_response(response, "wrong-password") ||
+        parse_stun_binding_success_response(request, "server-password"))
+    {
+        throw std::runtime_error("STUN success response verification failed");
+    }
+    std::cout << "STUN controlling check round trip: PASS\n";
+}
 }    // namespace
 
 int main()
@@ -178,6 +249,8 @@ int main()
             check(item);
         }
         std::cout << "H264 SDP selection: " << cases.size() << " cases PASS\n";
+        check_whep_pull();
+        check_stun_controlling_round_trip();
 
         // Chrome 默认 Opus fmtp 不带 maxaveragebitrate。
         const std::vector<opus_case> opus_cases{

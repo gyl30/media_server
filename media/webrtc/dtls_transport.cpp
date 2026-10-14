@@ -119,7 +119,7 @@ dtls_transport::dtls_transport(std::string remote_fingerprint, send_handler send
 {
 }
 
-bool dtls_transport::startup(const dtls_certificate& certificate)
+bool dtls_transport::startup(const dtls_certificate& certificate, dtls_role role)
 {
     ssl_context_ptr context(SSL_CTX_new(DTLS_method()));
     if (!context || SSL_CTX_set_min_proto_version(context.get(), DTLS1_2_VERSION) != 1 ||
@@ -173,9 +173,23 @@ bool dtls_transport::startup(const dtls_certificate& certificate)
     SSL_set0_rbio(ssl_.get(), read_bio);
     SSL_set0_wbio(ssl_.get(), write_bio);
     cleanup_bio.set_active(false);
-    SSL_set_accept_state(ssl_.get());
+    if (role == dtls_role::server)
+    {
+        SSL_set_accept_state(ssl_.get());
+        spdlog::debug("webrtc dtls transport started");
+        return true;
+    }
 
-    spdlog::debug("webrtc dtls transport started");
+    // 客户端立即发出 ClientHello，之后与服务端一样由收到的数据和超时重传推进握手。
+    SSL_set_connect_state(ssl_.get());
+    const auto result = SSL_do_handshake(ssl_.get());
+    if ((result <= 0 && SSL_get_error(ssl_.get(), result) != SSL_ERROR_WANT_READ) || !pump_outgoing())
+    {
+        spdlog::debug("webrtc dtls client hello failed");
+        reset();
+        return false;
+    }
+    spdlog::debug("webrtc dtls client transport started");
     return true;
 }
 

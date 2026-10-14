@@ -268,6 +268,7 @@ add_library(media_core STATIC
     media/webrtc/srtp_transport.cpp
     media/webrtc/webrtc_sdp.cpp
     media/webrtc/whip_session.cpp
+    media/webrtc/whep_pull_session.cpp
     media/webrtc/whip.cpp
     media/webrtc/whip_media_receiver.cpp
     media/webrtc/whep_session.cpp
@@ -459,7 +460,7 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} h265)
         set_tests_properties(rtmp_hevc_decode PROPERTIES TIMEOUT 60)
-        foreach(pull_mode rtmp rtmp_listen rtmp_unsupported rtsp)
+        foreach(pull_mode rtmp rtmp_listen rtmp_unsupported rtsp whep whep_failures)
             add_test(NAME pull_decode_${pull_mode}
                 COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pull_decode.py
                     $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} ${pull_mode})

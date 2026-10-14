@@ -9,11 +9,13 @@
 
 #include <boost/json.hpp>
 
+#include "config.h"
 #include "media/http/pull_http.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
 #include "media/rtsp/rtsp_pull_session.h"
 #include "media/rtmp/rtmp_pull_session.h"
+#include "media/webrtc/whep_pull_session.h"
 
 namespace media_server
 {
@@ -178,11 +180,11 @@ pull_http_response start_session(const pull_http_request& request, const std::st
     return make_empty_response(request, boost::beast::http::status::created);
 }
 
-pull_http_response handle_create(const pull_http_request& request, worker_context& worker)
+pull_http_response handle_create(const pull_http_request& request, worker_context& worker, const config& application_config)
 {
     const auto invalid = [&request]() { return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request"); };
     const auto object = parse_object(request.body());
-    if (!object || !has_only_fields(*object, {"stream_id", "url", "username", "password"}))
+    if (!object || !has_only_fields(*object, {"stream_id", "url", "username", "password", "token"}))
     {
         return invalid();
     }
@@ -190,7 +192,9 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
     const auto url_text = required_string(*object, "url");
     std::string username;
     std::string password;
-    if (!stream_id || !url_text || !optional_string(*object, "username", username) || !optional_string(*object, "password", password))
+    std::string token;
+    if (!stream_id || !url_text || !optional_string(*object, "username", username) || !optional_string(*object, "password", password) ||
+        !optional_string(*object, "token", token))
     {
         return invalid();
     }
@@ -201,6 +205,10 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
     }
 
     const auto protocol = url->get_protocol();
+    if (protocol != "http:" && object->if_contains("token") != nullptr)
+    {
+        return invalid();
+    }
     if (protocol == "rtsp:")
     {
         if (object->if_contains("password") != nullptr && username.empty())
@@ -222,6 +230,25 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
             return invalid();
         }
         return start_session(request, *stream_id, std::make_shared<rtmp_pull_session>(worker, std::move(*config)));
+    }
+    if (protocol == "http:" && object->if_contains("username") == nullptr && object->if_contains("password") == nullptr &&
+        !url->get_hostname().empty())
+    {
+        std::string host;
+        std::uint16_t port = 80;
+        boost::system::error_code error;
+        const auto local_address = boost::asio::ip::make_address(application_config.webrtc_address, error);
+        if (!parse_host_port(*url, host, port) || error || local_address.is_unspecified())
+        {
+            return invalid();
+        }
+        return start_session(request,
+                             *stream_id,
+                             std::make_shared<whep_pull_session>(worker,
+                                                                 whep_pull_config{.stream_id = *stream_id,
+                                                                                  .url = std::string(url->get_href()),
+                                                                                  .token = std::move(token),
+                                                                                  .local_address = local_address}));
     }
     return invalid();
 }
@@ -245,7 +272,10 @@ std::optional<pull_http_response> validate_request(const pull_http_request& requ
 
 }    // namespace
 
-pull_http_response handle_pull_request(const pull_http_request& request, worker_context& worker, const ada::url_aggregator& target)
+pull_http_response handle_pull_request(const pull_http_request& request,
+                                       worker_context& worker,
+                                       const config& application_config,
+                                       const ada::url_aggregator& target)
 {
     const auto path = target.get_pathname();
     if (path != "/pull/create")
@@ -256,7 +286,7 @@ pull_http_response handle_pull_request(const pull_http_request& request, worker_
     {
         return *error;
     }
-    return handle_create(request, worker);
+    return handle_create(request, worker, application_config);
 }
 
 }    // namespace media_server

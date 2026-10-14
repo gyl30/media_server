@@ -15,6 +15,7 @@
 #include <boost/asio/read_until.hpp>
 #include <boost/scope/scope_exit.hpp>
 
+#include "config.h"
 #include "media/core/media_stream.h"
 #include "media/net/worker_context.h"
 #include "media/http/pull_http.h"
@@ -46,13 +47,14 @@ pull_http_response create(worker_context& worker, boost::json::object body)
     request.set(http::field::content_type, "application/json");
     request.body() = boost::json::serialize(body);
     const auto target = ada::parse<ada::url_aggregator>("http://localhost/pull/create");
-    return handle_pull_request(request, worker, *target);
+    const config application_config{};
+    return handle_pull_request(request, worker, application_config, *target);
 }
 
 void invalid_requests()
 {
     worker_context worker;
-    for (const std::string_view url : {"http://127.0.0.1/source",
+    for (const std::string_view url : {"https://127.0.0.1/source",
                                        "rtsps://127.0.0.1/source",
                                        "rtsp:///source",
                                        "rtsp://127.0.0.1:0/source",

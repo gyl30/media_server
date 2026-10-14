@@ -5,7 +5,7 @@ import {
   h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus, copyButton,
 } from "/ui.js";
 
-const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-pull", "RTMP 拉流"], ["rtmp-push", "RTMP 推流"],
+const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-pull", "RTMP 拉流"], ["whep-pull", "WHEP 拉流"], ["rtmp-push", "RTMP 推流"],
   ["rtsp-push", "RTSP 推流"], ["whip-push", "WHIP 推流"], ["push-unspecified", "推流（未指定）"]];
 const filters = { query: "", protocol: "all", status: "all" };
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
@@ -224,7 +224,7 @@ export function deleteDevice(device, ctx) {
 }
 
 const ADD_OPTIONS = [
-  ["gb", "GB28181 · SIP 注册"], ["rtsp-pull", "RTSP · 主动拉流"], ["rtmp-pull", "RTMP · 主动拉流"],
+  ["gb", "GB28181 · SIP 注册"], ["rtsp-pull", "RTSP · 主动拉流"], ["rtmp-pull", "RTMP · 主动拉流"], ["whep-pull", "WHEP · 主动拉流"],
   ["rtmp", "RTMP · 主动推流"], ["rtsp", "RTSP · 主动推流"], ["whip", "WHIP · 主动推流"],
 ];
 const PUSH_HELP = {
@@ -288,6 +288,16 @@ export function openDeviceDialog(existing = null) {
       fields.url.placeholder = "rtmp://192.168.1.100:1935/live/stream";
       nodes.push(field("url", "RTMP 地址", fields.url, "rtmp://主机[:端口]/应用名/流名，流名可带查询参数（例如推流密钥）。平台以 RTMP Play 拉取。", true));
       nodes.push(h("p", { class: "muted tiny" }, existing ? "修改地址后会按新配置重新拉流，正在观看的用户会断开。" : "确定添加后自动开始拉流；连接失败时设备仍保留，可修改地址或重试连接。"));
+    } else if (choice === "whep-pull") {
+      fields.url.placeholder = "http://192.168.1.100:8080/whep/stream";
+      fields.password.placeholder = existing?.raw.password_set ? "留空则保留原 Token" : "可选";
+      nodes.push(field("url", "WHEP 地址", fields.url, "外部 WHEP 端点的 http:// 地址。平台作为 WHEP 客户端接收 H.264 视频与 Opus 音频（转为 AAC）。", true));
+      nodes.push(field("password", "Bearer Token（可选）", fields.password, existing ? "Token 不回显；填写新 Token 将覆盖原值" : "端点需要认证时填写，只发送给媒体服务器"));
+      if (existing?.raw.password_set) {
+        nodes.push(h("label", { class: "check" }, fields.clear, "清除已保存的 Token"));
+      }
+      nodes.push(h("p", { class: "muted tiny" }, "仅支持本端可直接到达对端 candidate 的网络（不使用 STUN / TURN）。"
+        + (existing ? "修改后会按新配置重新拉流，正在观看的用户会断开。" : "确定添加后自动开始拉流；连接失败时设备仍保留，可修改地址或重试连接。")));
     } else if (choice === "rtsp-pull") {
       fields.url.placeholder = "rtsp://192.168.1.100:554/live";
       nodes.push(field("url", "RTSP 地址", fields.url, "请输入 rtsp:// 地址。认证信息在下方单独填写，不放进 URL。", true));
@@ -355,6 +365,9 @@ export function openDeviceDialog(existing = null) {
     }
     if (choice === "rtmp-pull" && !validPullURL(fields.url.value.trim(), "rtmp")) {
       errors.url = "请输入 rtmp://主机/应用名/流名，不含账号密码";
+    }
+    if (choice === "whep-pull" && !validPullURL(fields.url.value.trim(), "http")) {
+      errors.url = "请输入 http:// 开头、不含账号密码的 WHEP 地址";
     }
     if (Object.keys(errors).length) {
       render();
@@ -429,6 +442,20 @@ async function save(choice, existing, name, fields, prepared) {
     }
     await api.createSource(payload);
     return "已添加 RTMP 拉流源，正在连接";
+  }
+  // WHEP 的 Bearer Token 存为 password：留空不发送（保留），填写覆盖，勾选清除发送空串。
+  if (choice === "whep-pull") {
+    if (fields.clear.checked) {
+      payload.password = "";
+    } else if (fields.password.value) {
+      payload.password = fields.password.value;
+    }
+    if (existing) {
+      await api.patchSource(existing.id, payload);
+      return payload.password === undefined ? "已保存设备" : payload.password ? "已保存，并更新了 Token" : "已保存，并清除了 Token";
+    }
+    await api.createSource(payload);
+    return "已添加 WHEP 拉流源，正在连接";
   }
   const username = fields.username.value;
   const password = fields.password.value;

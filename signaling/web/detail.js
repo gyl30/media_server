@@ -87,7 +87,7 @@ export function mountDetail(root, ctx, kind, id) {
     } else if (kind === "rtsp") {
       fields.push(["拉流状态", `${device.status.label}${device.status.detail ? ` · ${device.status.detail}` : ""}`], ["接入意图", raw.desired_state === "running" ? "自动拉流" : "已停止"],
         ["来源地址", h("span", { class: "mono" }, raw.url), true],
-        ["认证", raw.username ? `用户名 ${raw.username} · 密码不回显` : "未设置"], ["当前媒体流", raw.session ? h("span", { class: "mono" }, raw.session.stream_id) : "—"],
+        ["认证", raw.username ? `用户名 ${raw.username} · 密码不回显` : raw.password_set ? "Bearer Token 已设置 · 不回显" : "未设置"], ["当前媒体流", raw.session ? h("span", { class: "mono" }, raw.session.stream_id) : "—"],
         ["资源标识", h("span", { class: "mono" }, device.id), true]);
     } else {
       fields.push(["接入协议", PUSH_PROTOCOLS[raw.protocol] || "未指定"], ["推流状态", device.status.label],

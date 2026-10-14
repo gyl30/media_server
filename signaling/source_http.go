@@ -30,6 +30,7 @@ type sourceResponse struct {
 	StreamName   string                 `json:"stream_name"`
 	URL          string                 `json:"url"`
 	Username     string                 `json:"username"`
+	PasswordSet  bool                   `json:"password_set"`
 	DesiredState sourceDesiredState     `json:"desired_state"`
 	Session      *sourceSessionResponse `json:"session,omitempty"`
 }
@@ -70,7 +71,8 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 	}
 	username, usernameValid := decodeOptionalString(payload.Username)
 	password, passwordValid := decodeOptionalString(payload.Password)
-	if !usernameValid || !passwordValid || (password != nil && (username == nil || *username == "")) {
+	// 用户名密码与协议的组合由 validRTSPSource 按 URL 协议校验（WHEP 的 password 是 Bearer token）。
+	if !usernameValid || !passwordValid {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -180,7 +182,7 @@ func (s *infrastructureServer) writeSourceError(writer http.ResponseWriter, oper
 func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceResponse {
 	response := sourceResponse{
 		SourceID: source.sourceID, StreamName: source.streamName, URL: source.url,
-		Username: source.username, DesiredState: source.desiredState,
+		Username: source.username, PasswordSet: source.password != "", DesiredState: source.desiredState,
 	}
 	if session, ok := s.rtspSourceSession(source.sourceID); ok {
 		state := "created"
@@ -202,16 +204,18 @@ type pullProtocol string
 const (
 	pullProtocolRTSP pullProtocol = "rtsp"
 	pullProtocolRTMP pullProtocol = "rtmp"
+	// WHEP 端点是 http:// 地址；媒体服务器的 WHEP 客户端不支持 https。
+	pullProtocolWHEP pullProtocol = "http"
 )
 
-// validPullSourceURL 校验主动拉流来源：rtsp:// 或 rtmp://（rtmp 需要 app 与流名两级路径），不内嵌账号密码。
+// validPullSourceURL 校验主动拉流来源：rtsp://、rtmp://（需要 app 与流名两级路径）或 WHEP 端点 http://，不内嵌账号密码。
 func validPullSourceURL(value string) bool {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
 		return false
 	}
 	switch pullProtocol(parsed.Scheme) {
-	case pullProtocolRTSP:
+	case pullProtocolRTSP, pullProtocolWHEP:
 	case pullProtocolRTMP:
 		app, stream, found := strings.Cut(strings.TrimPrefix(parsed.Path, "/"), "/")
 		if !found || app == "" || stream == "" {
