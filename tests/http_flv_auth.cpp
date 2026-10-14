@@ -318,6 +318,17 @@ void admission(std::string_view scenario)
                         {
                             worker.request_stop();
                         }
+                        if (scenario == "pending_end" || scenario == "pending_stop")
+                        {
+                            client.expires_after(3s);
+                            std::array<std::uint8_t, 8192> remaining{};
+                            do
+                            {
+                                client.async_read_some(boost::asio::buffer(remaining), yield[error]);
+                            } while (!error);
+                            require(error == boost::asio::error::eof || error == boost::asio::error::connection_reset,
+                                    "HTTP-FLV did not close the pending write after source end or worker stop");
+                        }
                         if (scenario == "queue_overflow")
                         {
                             require(first_session.expired(), "HTTP-FLV overflow did not terminate a slow viewer");
