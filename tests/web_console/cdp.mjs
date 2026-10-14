@@ -63,6 +63,17 @@ const api = {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
     return result.result.value;
   },
+  // 在每次文档加载、页面脚本执行之前注入；返回的 identifier 用于移除。
+  async beforeLoad(source) {
+    return (await page("Page.addScriptToEvaluateOnNewDocument", { source })).identifier;
+  },
+  async removeBeforeLoad(identifier) {
+    await page("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+  },
+  async reload(wait = 2500) {
+    await page("Page.reload", {});
+    await sleep(wait);
+  },
   async click(x, y) {
     for (const type of ["mouseMoved", "mousePressed", "mouseReleased"]) {
       await page("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });

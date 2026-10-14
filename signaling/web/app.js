@@ -1,14 +1,18 @@
 // 应用外壳：hash 路由、侧边栏、快照轮询。每个页面 mount 后返回 { update, unmount }，
 // 路由变化（侧边栏、前进 / 后退、手改 hash）统一经过 hashchange，旧页面先 unmount 再挂载新页面。
-import { store, subscribe, refresh, refreshing, stopRefresh, unifiedDevices } from "/store.js";
+import { store, subscribe, refresh, refreshing, stopRefresh, unifiedDevices, runningStreams } from "/store.js";
 import { h, icon, toast, formatClock, errorMessage } from "/ui.js";
 import { mountDevices } from "/devices.js";
 import { mountDetail } from "/detail.js";
 import { mountVideo } from "/video.js";
+import { mountOverview, mountStreams, mountStatus } from "/system.js";
 
 const PAGES = [
+  { page: "overview", label: "系统总览", icon: "overview", mount: mountOverview },
   { page: "devices", label: "设备管理", icon: "devices", mount: mountDevices, count: () => unifiedDevices().length },
   { page: "video", label: "视频中心", icon: "video", mount: mountVideo },
+  { page: "streams", label: "媒体流", icon: "streams", mount: mountStreams, count: () => runningStreams().length },
+  { page: "status", label: "运行状态", icon: "activity", mount: mountStatus },
 ];
 
 const view = document.getElementById("view");
