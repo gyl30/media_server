@@ -78,24 +78,36 @@ export function mountDetail(root, ctx, kind, id) {
     if (kind === "gb") {
       const channel = (device.channels || []).find(item => item.channel_id === channelID);
       const title = channel ? `${device.name} · ${channel.name || channel.channel_id}` : device.name;
+      const actions = playAction(device.raw.online && channel?.status === "ON" ? {
+        kind, deviceID: id, key: `gb:${id}:${channel.channel_id}`, label: title,
+        target: { device_id: id, channel_id: channel.channel_id, live_id: channel.live?.state === "streaming" ? channel.live.live_id : undefined },
+      } : null);
       if (channel?.live?.state === "streaming") {
-        return { title, stream: { id: channel.live.live_id, source: { live_id: channel.live.live_id } } };
+        return { title, actions, stream: { id: channel.live.live_id, source: { live_id: channel.live.live_id } } };
       }
-      return { title, notReady: gbNotReady(device, channel) };
+      return { title, actions, notReady: gbNotReady(device, channel) };
     }
     if (kind === "rtsp") {
       if (raw.session?.state === "created") {
-        return { title: device.name, stream: { id: raw.session.stream_id, source: { source_id: id } } };
+        return { title: device.name, actions: playAction({ kind, deviceID: id, key: `rtsp:${id}`, label: device.name, target: { source_id: id } }),
+          stream: { id: raw.session.stream_id, source: { source_id: id } } };
       }
       const starting = raw.session ? "平台正在处理拉流会话，就绪后会自动申请播放地址。"
         : raw.desired_state === "running" ? "已请求取流，但当前没有运行中的拉流会话。请检查摄像机地址与认证信息后重新取流。"
         : "平台尚未连接这个 RTSP 源。开始取流后才会生成播放地址。";
-      return { title: device.name, notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text: starting }) };
+      return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: raw.session ? "clock" : "film", title: "媒体未就绪", text: starting }) };
     }
     if (raw.state === "verified") {
-      return { title: device.name, stream: { id: raw.token, source: { push_device_id: id } } };
+      return { title: device.name, actions: playAction({ kind, deviceID: id, key: `push:${id}`, label: device.name, target: { push_device_id: id } }),
+        stream: { id: raw.token, source: { push_device_id: id } } };
     }
-    return { title: device.name, notReady: emptyState({ icon: "film", title: "媒体未就绪 · 设备未推流", text: "设备使用推流地址连接并开始推流后，这里才会生成播放地址。" }) };
+    return { title: device.name, actions: playAction(null), notReady: emptyState({ icon: "film", title: "媒体未就绪 · 设备未推流", text: "设备使用推流地址连接并开始推流后，这里才会生成播放地址。" }) };
+  }
+
+  // GB 通道在线即可播放（视频中心播放时按现有流程点播）；RTSP / 推流需要运行中的媒体流。
+  function playAction(item) {
+    return [h("button", { class: "btn sm primary", type: "button", disabled: !item, dataset: { key: "play-center" },
+      onclick: () => ctx.playInCenter(item) }, icon("play", "sm"), "在视频中心播放")];
   }
 
   function gbNotReady(device, channel) {

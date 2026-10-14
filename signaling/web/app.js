@@ -4,9 +4,11 @@ import { store, subscribe, refresh, refreshing, stopRefresh, unifiedDevices } fr
 import { h, icon, toast, formatClock, errorMessage } from "/ui.js";
 import { mountDevices } from "/devices.js";
 import { mountDetail } from "/detail.js";
+import { mountVideo } from "/video.js";
 
 const PAGES = [
   { page: "devices", label: "设备管理", icon: "devices", mount: mountDevices, count: () => unifiedDevices().length },
+  { page: "video", label: "视频中心", icon: "video", mount: mountVideo },
 ];
 
 const view = document.getElementById("view");
@@ -20,6 +22,12 @@ let current = null;
 let route = null;
 
 const ctx = {
+  // 由详情页等入口带到视频中心的一路播放；视频中心挂载时取走。
+  pendingPlay: null,
+  playInCenter(item) {
+    ctx.pendingPlay = item;
+    location.hash = "#video";
+  },
   setTitle(title) {
     if (route?.id) {
       crumbs.replaceChildren(h("a", { href: "#devices" }, icon("arrow-left", "sm"), h("span", { class: "crumb-text" }, "设备管理")),
