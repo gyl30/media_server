@@ -56,10 +56,10 @@ try {
   }
   await send("browsingContext.navigate", { context, url: `${base}#monitor`, wait: "complete" });
   await sleep(2500);
-  await evaluate("[...document.querySelectorAll('.tree-node')].find(node => node.textContent.includes('直播间 OBS')).click()");
+  await evaluate("[...document.querySelectorAll('.monitor-play')].find(button => button.dataset.key.startsWith('play:push:')).click()");
   await sleep(8000);
   const state = await evaluate("(() => { const v = document.querySelector('.tile video'); return document.querySelector('.grid-wrap .tile').className + ' t=' + (v ? v.currentTime.toFixed(1) : '-') + ' w=' + (v ? v.videoWidth : 0) + ' ' + document.querySelector('.grid-wrap .tile').innerText.replace(/\\n/g, ' '); })()");
-  check("Firefox 视频中心 WHEP 播放", /is-streaming/.test(state) && /w=1280/.test(state), state);
+  check("Firefox 实时监控 WHEP 播放", /is-streaming/.test(state) && /w=1280/.test(state), state);
   const { data } = await send("browsingContext.captureScreenshot", { context });
   writeFileSync(`${shots}/firefox-video-playing.png`, Buffer.from(data, "base64"));
   await send("browsingContext.navigate", { context, url: `${base}#overview`, wait: "complete" });
