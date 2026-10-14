@@ -148,7 +148,7 @@ void http_flv_client::cancel() noexcept
 {
     resolver_.cancel();
     boost::system::error_code error;
-    socket_.cancel(error);
+    socket_.close(error);
 }
 
 int http_flv_client::media_callback(void* param, int codec, const void*, std::size_t bytes, std::uint32_t, std::uint32_t dts, int)
