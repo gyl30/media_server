@@ -269,10 +269,10 @@ std::optional<dtls_srtp_keying_material> make_client_srtp_material(SSL* ssl)
     const auto server_salt = client_salt + static_cast<std::ptrdiff_t>(salt_size);
     return dtls_srtp_keying_material{
         .profile = std::string(name),
-        .client_write_key = std::vector<std::uint8_t>(server_key, client_salt),
-        .client_write_salt = std::vector<std::uint8_t>(server_salt, material.end()),
-        .server_write_key = std::vector<std::uint8_t>(client_key, server_key),
-        .server_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
+        .client_write_key = std::vector<std::uint8_t>(client_key, server_key),
+        .client_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
+        .server_write_key = std::vector<std::uint8_t>(server_key, client_salt),
+        .server_write_salt = std::vector<std::uint8_t>(server_salt, material.end()),
     };
 }
 
@@ -603,7 +603,7 @@ bool webrtc_client_peer::establish(std::string_view answer_sdp, std::string& err
         return false;
     }
     const auto material = make_client_srtp_material(implementation_->ssl.get());
-    if (!material || !implementation_->srtp.startup(*material))
+    if (!material || !implementation_->srtp.startup(*material, dtls_role::client))
     {
         error = "SRTP startup failed";
         return false;
