@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -205,4 +206,21 @@ func TestRTMPPullSourceValidationAndStart(t *testing.T) {
 		t.Fatalf("rtmp source: %+v %+v", source, media.created)
 	}
 	apiRequest(t, handler, "PATCH", "/api/sources/"+source.SourceID, `{"username":"admin"}`, http.StatusBadRequest)
+}
+
+// 媒体服务器尚未监听（例如 signaling 先于媒体服务器启动）时请求一定没有生效：不进入"结果未知"，显示连接失败并可重试。
+func TestSourceStartRefusedByMediaIsNotAmbiguous(t *testing.T) {
+	s := testInfrastructure(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.media.server.controlURL = "http://" + listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	source := decodeSource(t, apiRequest(t, s.handler(), "POST", "/api/sources", `{"stream_name":"early","url":"rtsp://10.0.0.1/live"}`, http.StatusCreated).Body.Bytes())
+	if source.Session != nil || source.DesiredState != sourceDesiredRunning {
+		t.Fatalf("refused start left a session: %+v", source)
+	}
 }

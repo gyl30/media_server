@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"syscall"
 )
 
 func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, request *http.Request) {
@@ -48,8 +49,9 @@ func (s *infrastructureServer) startSource(ctx context.Context, sourceID string)
 		command.Password = &source.password
 	}
 	if err := s.media.createPull(ctx, command); err != nil {
+		// 媒体服务器明确拒绝或拒绝连接时请求一定没有生效；其他错误（超时、连接中断）结果未知，需要补偿删除。
 		var rejection *mediaServerHTTPRejection
-		ambiguousCreate := !errors.As(err, &rejection)
+		ambiguousCreate := !errors.As(err, &rejection) && !errors.Is(err, syscall.ECONNREFUSED)
 		cleanupConfirmed := !ambiguousCreate
 		if ambiguousCreate {
 			cleanupContext, cancel := s.media.timeoutContext()
