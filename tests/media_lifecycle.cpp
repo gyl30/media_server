@@ -1,4 +1,5 @@
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <future>
@@ -216,6 +217,166 @@ void rtsp_sender_clock(workers& context)
         require(std::abs(ntp_ticks - rtp_ticks) < 2, "RTCP sender clock followed packet arrival instead of media timeline");
     }
     std::cout << "RTSP sender reports retain clock mapping across delayed media bursts: PASS\n";
+}
+
+void rtsp_common_start_clock(workers& context)
+{
+    // Reuse the valid 16x16 libx264 SPS/PPS/IDR fixture from hls_segmenter.cpp.
+    // This exercises production packetization, not a decoder or a simulated FFmpeg.
+    const std::vector<std::uint8_t> h264_idr{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xdd, 0xec, 0x04, 0x40, 0x00, 0x00, 0x03,
+                                             0x00, 0x40, 0x00, 0x00, 0x0c, 0x83, 0xc4, 0x89, 0xe0, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce,
+                                             0x0f, 0xc8, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84, 0x3a, 0x26, 0x28, 0x00, 0x09, 0x02, 0xe0};
+    struct packet_metadata
+    {
+        int channel{};
+        std::int64_t input_pts_ms{};
+        std::uint16_t sequence{};
+        std::uint32_t timestamp{};
+        std::uint64_t ntp{};
+        std::uint32_t ssrc{};
+        int payload_type{};
+        bool marker{};
+        std::size_t payload_bytes{};
+    };
+    std::vector<packet_metadata> packets;
+    std::int64_t input_pts_ms{};
+    std::string reply;
+    rtsp_handler_t handler{};
+    handler.close = [](void*) { return 0; };
+    handler.send = [](void* param, const void* data, std::size_t bytes)
+    {
+        static_cast<std::string*>(param)->assign(static_cast<const char*>(data), bytes);
+        return 0;
+    };
+    std::unique_ptr<rtsp_server_t, decltype(&rtsp_server_destroy)> server(rtsp_server_create("127.0.0.1", 8554, &handler, nullptr, &reply),
+                                                                          &rtsp_server_destroy);
+    require(server != nullptr, "RTSP common start server creation failed");
+    auto source = std::make_shared<media_stream>("verify/common-start-clock", context.source);
+    auto player = std::make_shared<rtsp_play_session>(
+        context.source,
+        source,
+        source->stream_id(),
+        boost::asio::ip::make_address("127.0.0.1"),
+        [&](std::vector<std::uint8_t> packet)
+        {
+            require(packet.size() >= 4 && packet[0] == '$', "RTSP common start framing missing");
+            require(boost::endian::load_big_u16(packet.data() + 2) == packet.size() - 4, "RTSP common start interleaved length changed");
+            packet_metadata metadata{.channel = packet[1], .input_pts_ms = input_pts_ms};
+            require(metadata.channel >= 0 && metadata.channel <= 3, "RTSP common start unexpected channel");
+            if ((metadata.channel % 2) == 0)
+            {
+                require(packet.size() >= 16 && packet[4] == 0x80, "RTSP common start RTP fixed header changed");
+                metadata.sequence = boost::endian::load_big_u16(packet.data() + 6);
+                metadata.timestamp = boost::endian::load_big_u32(packet.data() + 8);
+                metadata.ssrc = boost::endian::load_big_u32(packet.data() + 12);
+                metadata.payload_type = packet[5] & 0x7f;
+                metadata.marker = (packet[5] & 0x80) != 0;
+                metadata.payload_bytes = packet.size() - 16;
+            }
+            else
+            {
+                require(packet.size() >= 32 && packet[5] == 200, "RTSP common start missing sender report");
+                metadata.ntp = boost::endian::load_big_u64(packet.data() + 12);
+                metadata.timestamp = boost::endian::load_big_u32(packet.data() + 20);
+                metadata.ssrc = boost::endian::load_big_u32(packet.data() + 8);
+            }
+            packets.push_back(metadata);
+        });
+    boost::scope::scope_exit cleanup(
+        [&]()
+        {
+            on(context.source,
+               [&]()
+               {
+                   player->shutdown();
+                   stream_registry::instance().remove(*source);
+                   source->end();
+               });
+            on(context.source, []() {});
+        });
+    on(context.source,
+       [&]()
+       {
+           require(source->set_tracks(
+                       {{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90'000, .codec_config = h264_idr},
+                        {.id = 2, .kind = media_kind::audio, .codec = codec_id::g711a, .clock_rate = 8'000, .channel_count = 1, .codec_config = {}}}),
+                   "RTSP common start tracks failed");
+           require(stream_registry::instance().add(source), "RTSP common start registration failed");
+           require(player->prepare_presentation() == 0, "RTSP common start presentation failed");
+           rtsp_header_transport_t video_transport{}, audio_transport{};
+           require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=0-1", &video_transport) == 0,
+                   "RTSP common start video transport parse failed");
+           require(rtsp_header_transport("RTP/AVP/TCP;unicast;interleaved=2-3", &audio_transport) == 0,
+                   "RTSP common start audio transport parse failed");
+           require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/common-start-clock/trackID=1", {}, &video_transport, 1) == 0,
+                   "RTSP common start video SETUP failed");
+           const auto begin = reply.find("Session: ");
+           require(begin != std::string::npos, "RTSP common start SETUP omitted session");
+           const auto end = reply.find_first_of(";\r\n", begin + 9);
+           const auto session = reply.substr(begin + 9, end - begin - 9);
+           require(player->on_setup(server.get(), "rtsp://127.0.0.1/verify/common-start-clock/trackID=2", session, &audio_transport, 1) == 0,
+                   "RTSP common start audio SETUP failed");
+           require(player->on_play(server.get(), "rtsp://127.0.0.1/verify/common-start-clock", session, nullptr, nullptr) == 0,
+                   "RTSP common start PLAY failed");
+           input_pts_ms = 100;
+           auto video = std::make_shared<const std::vector<std::uint8_t>>(h264_idr);
+           source->publish({.track = 1, .dts_ns = milliseconds_to_ns(100), .pts_ns = milliseconds_to_ns(100), .key_frame = true, .payload = video});
+           const auto audio = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5);
+           for (const auto pts : {60, 80, 100, 120})
+           {
+               input_pts_ms = pts;
+               source->publish({.track = 2, .dts_ns = milliseconds_to_ns(pts), .pts_ns = milliseconds_to_ns(pts), .payload = audio});
+           }
+       });
+    on(context.source, []() {});
+    std::vector<packet_metadata> audio_packets;
+    std::vector<packet_metadata> audio_reports;
+    std::vector<packet_metadata> video_packets;
+    std::vector<packet_metadata> video_reports;
+    for (const auto& packet : packets)
+    {
+        std::cout << "RTSP common-start metadata channel=" << packet.channel << " input_pts_ms=" << packet.input_pts_ms << " seq=" << packet.sequence
+                  << " timestamp=" << packet.timestamp << " ntp=" << packet.ntp << " ssrc=" << packet.ssrc << " pt=" << packet.payload_type
+                  << " marker=" << packet.marker << " payload_bytes=" << packet.payload_bytes << '\n';
+        if (packet.channel == 0)
+        {
+            video_packets.push_back(packet);
+        }
+        if (packet.channel == 1)
+        {
+            video_reports.push_back(packet);
+        }
+        if (packet.channel == 2)
+        {
+            audio_packets.push_back(packet);
+        }
+        if (packet.channel == 3)
+        {
+            audio_reports.push_back(packet);
+        }
+    }
+    require(!video_packets.empty() && video_reports.size() == 1, "RTSP common start video packets/report missing");
+    require(std::none_of(audio_packets.begin(), audio_packets.end(), [](const auto& packet) { return packet.input_pts_ms < 100; }),
+            "RTSP common start emitted audio before selected video presentation origin");
+    require(audio_packets.size() == 2 && audio_packets[0].input_pts_ms == 100 && audio_packets[1].input_pts_ms == 120,
+            "RTSP common start did not retain every audio frame at/after origin");
+    require(audio_packets[0].payload_type == 8 && audio_packets[1].payload_type == 8 && audio_packets[0].payload_bytes == 160 &&
+                audio_packets[1].payload_bytes == 160 && audio_packets[0].ssrc == audio_packets[1].ssrc,
+            "RTSP common start PCMA content or identity changed");
+    require(static_cast<std::uint16_t>(audio_packets[1].sequence - audio_packets[0].sequence) == 1 &&
+                static_cast<std::uint32_t>(audio_packets[1].timestamp - audio_packets[0].timestamp) == 160,
+            "RTSP common start audio sequence/sample clock did not continue");
+    require(audio_reports.size() == 1 && audio_reports.front().ssrc == audio_packets.front().ssrc &&
+                video_reports.front().ssrc == video_packets.front().ssrc && video_reports.front().timestamp == video_packets.front().timestamp,
+            "RTSP common start sender report identity/origin changed");
+    const auto ntp_delta = audio_reports.front().ntp - video_reports.front().ntp;
+    require(ntp_delta < (std::uint64_t{1} << 32), "RTSP common start report order or bounded duration changed");
+    constexpr std::uint64_t ntp_fraction = std::uint64_t{1} << 32;
+    const auto ntp_audio_ticks = (ntp_delta * 8'000 + ntp_fraction / 2) / ntp_fraction;
+    const auto sr_audio_ticks = static_cast<std::uint32_t>(audio_reports.front().timestamp - audio_packets.front().timestamp);
+    require(std::abs(static_cast<std::int64_t>(sr_audio_ticks) - static_cast<std::int64_t>(ntp_audio_ticks)) <= 1,
+            "RTSP common start audio SR disagrees with shared video presentation origin");
+    std::cout << "RTSP common start excludes pre-origin audio and retains continuous synchronized PCMA: PASS\n";
 }
 
 void ordered_generations_and_churn(workers& context)
@@ -561,6 +722,7 @@ int main()
         timestamp_boundaries();
         workers context;
         rtsp_sender_clock(context);
+        rtsp_common_start_clock(context);
         ordered_generations_and_churn(context);
         derived_generation_lifetimes(context);
         session_registry_identity();

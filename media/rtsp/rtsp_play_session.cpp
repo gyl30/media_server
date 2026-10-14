@@ -79,6 +79,10 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     }
 
     const auto& state = iterator->second;
+    if (state.kind == media_kind::audio && rtcp_sync_ && ns_to_milliseconds(entry.pts_ns) < rtcp_sync_->pts)
+    {
+        return;
+    }
     if (state.codec == codec_id::opus || state.codec == codec_id::g711a || state.codec == codec_id::g711u)
     {
         constexpr std::int64_t nanoseconds_per_millisecond = 1'000'000;
