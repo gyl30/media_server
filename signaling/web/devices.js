@@ -1,48 +1,52 @@
-// 设备管理：GB28181 设备、RTSP 拉流源、推流设备统一列表，以及添加 / 编辑 / 删除。
+// 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除、签发推流地址。
 import { api } from "/api.js";
-import { store, unifiedDevices, deviceHash, refresh } from "/store.js";
+import { store, unifiedDevices, deviceHash, refresh, loadChannels, PUSH_PROTOCOLS } from "/store.js";
 import {
-  h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus,
+  h, icon, badge, protoTag, emptyState, toast, openDialog, confirmAction, errorMessage, replaceKeepingFocus, copyButton,
 } from "/ui.js";
 
-const KIND_FILTERS = [["all", "全部"], ["gb", "GB28181"], ["rtsp", "RTSP 拉流"], ["push", "推流设备"]];
-const filters = { query: "", kind: "all", status: "all" };
+const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-push", "RTMP 推流"],
+  ["rtsp-push", "RTSP 推流"], ["whip-push", "WHIP 推流"], ["push-unspecified", "推流（未指定）"]];
+const filters = { query: "", protocol: "all", status: "all" };
+const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 
 export function mountDevices(root, ctx) {
   const search = h("input", {
-    class: "input", type: "search", placeholder: "搜索设备名称或 ID", "aria-label": "搜索设备名称或 ID", value: filters.query,
+    class: "input", type: "search", placeholder: "搜索名称、编号、协议或地址", "aria-label": "搜索设备", value: filters.query,
     oninput: event => { filters.query = event.target.value; update(); },
   });
-  const segmented = h("div", { class: "segmented", role: "group", "aria-label": "按接入类型筛选" });
-  const status = h("select", {
-    class: "select", style: "width:140px", "aria-label": "按状态筛选",
-    onchange: event => { filters.status = event.target.value; update(); },
-  }, h("option", { value: "all" }, "全部状态"), h("option", { value: "online" }, "在线 / 运行中"),
-  h("option", { value: "offline" }, "离线 / 未运行"), h("option", { value: "attention" }, "需关注"));
+  const protocol = h("select", { class: "select", "aria-label": "按协议筛选", onchange: event => { filters.protocol = event.target.value; update(); } },
+    PROTOCOL_FILTERS.map(([value, label]) => h("option", { value }, label)));
+  protocol.value = filters.protocol;
+  const status = h("select", { class: "select", "aria-label": "按状态筛选", onchange: event => { filters.status = event.target.value; update(); } },
+    h("option", { value: "all" }, "全部状态"), h("option", { value: "online" }, "在线 / 运行中"),
+    h("option", { value: "offline" }, "离线 / 未运行"), h("option", { value: "attention" }, "需关注"));
   status.value = filters.status;
+  const total = h("span", { class: "muted tiny" });
   const tbody = h("tbody");
   const body = h("div");
   const foot = h("div");
 
   root.replaceChildren(h("div", { class: "page" },
     h("div", { class: "page-head" },
-      h("div", {}, h("h1", {}, "设备管理"), h("p", {}, "GB28181 设备、RTSP 拉流源和推流设备统一管理。点击设备进入详情，查看通道、取流状态与播放地址。")),
+      h("div", {}, h("h1", {}, "设备管理"), h("p", {}, "所有接入设备和视频源在同一列表中管理；不同协议使用各自的参数与操作。")),
       h("div", { class: "actions" }, h("button", { class: "btn primary", type: "button", onclick: () => openDeviceDialog() }, icon("plus"), "添加设备"))),
-    h("div", { class: "card table-card" },
-      h("div", { class: "toolbar" }, h("label", { class: "search" }, icon("search"), search), segmented, status),
+    h("div", { class: "card" },
+      h("div", { class: "toolbar" },
+        h("div", { class: "toolbar-left" }, h("label", { class: "search" }, icon("search"), search), protocol, status),
+        h("div", { class: "toolbar-right" }, total)),
       body, foot)));
 
   function update() {
     const all = unifiedDevices();
+    // 只为还没有通道数据的在线 GB 设备请求一次通道列表，不随轮询全量刷新。
+    const missing = all.filter(device => device.kind === "gb" && device.raw.online && !device.channels).map(device => device.id);
+    if (missing.length) void loadChannels(missing);
     const query = filters.query.trim().toLowerCase();
-    const rows = all.filter(device => (filters.kind === "all" || device.kind === filters.kind)
+    const rows = all.filter(device => (filters.protocol === "all" || device.filter === filters.protocol)
       && (filters.status === "all" || device.status.group === filters.status)
-      && (!query || device.name.toLowerCase().includes(query) || device.id.toLowerCase().includes(query)));
-
-    replaceKeepingFocus(segmented, KIND_FILTERS.map(([kind, label]) => h("button", {
-      type: "button", class: filters.kind === kind ? "is-active" : "", "aria-pressed": String(filters.kind === kind), dataset: { key: `kind:${kind}` },
-      onclick: () => { filters.kind = kind; update(); },
-    }, label, h("span", { class: "n" }, String(kind === "all" ? all.length : all.filter(device => device.kind === kind).length)))));
+      && (!query || [device.name, device.id, device.protocol, device.mode, device.endpoint].join(" ").toLowerCase().includes(query)));
+    total.textContent = store.loaded ? `共 ${all.length} 个接入对象` : "";
 
     if (!store.loaded) {
       body.replaceChildren(store.error
@@ -54,24 +58,23 @@ export function mountDevices(root, ctx) {
     }
     if (rows.length === 0) {
       body.replaceChildren(all.length === 0
-        ? emptyState({ icon: "devices", title: "还没有设备", text: "添加 GB28181 设备、RTSP 拉流源或推流设备。GB28181 设备注册后会自动上报通道。",
+        ? emptyState({ icon: "camera", title: "还没有设备", text: "添加 GB28181 设备、RTSP 拉流源或 RTMP / RTSP / WHIP 推流设备。",
           action: h("button", { class: "btn primary", type: "button", onclick: () => openDeviceDialog() }, icon("plus"), "添加设备") })
-        : emptyState({ icon: "search", title: "没有符合条件的设备", text: "尝试更换关键字，或清除类型、状态筛选。",
-          action: h("button", { class: "btn", type: "button", onclick: () => { Object.assign(filters, { query: "", kind: "all", status: "all" }); search.value = ""; status.value = "all"; update(); } }, "清除筛选") }));
+        : emptyState({ icon: "search", title: "没有符合条件的设备", text: "尝试调整搜索关键词、协议或状态筛选。",
+          action: h("button", { class: "btn", type: "button", onclick: () => { Object.assign(filters, { query: "", protocol: "all", status: "all" }); search.value = ""; protocol.value = "all"; status.value = "all"; update(); } }, "清除筛选") }));
       foot.replaceChildren();
       return;
     }
     if (!body.contains(tbody)) {
       body.replaceChildren(h("div", { class: "table-scroll" }, h("table", { class: "table cards" },
-        h("thead", {}, h("tr", {}, h("th", { style: "width:28%" }, "设备名称"), h("th", {}, "设备 ID"), h("th", {}, "接入类型"),
-          h("th", {}, "状态"), h("th", { class: "num hide-sm" }, "通道"), h("th", { class: "actions" }, "操作"))),
+        h("thead", {}, h("tr", {}, ["设备名称", "协议", "接入方式", "地址 / 设备编号", "状态", "通道", "操作"].map((label, index) => h("th", { class: index === 2 ? "c-mode" : index === 5 ? "num hide-sm" : "" }, label)))),
         tbody)));
     }
     replaceKeepingFocus(tbody, rows.map(device => deviceRow(device, ctx)));
-    const filtered = filters.kind !== "all" || filters.status !== "all" || query;
+    const filtered = filters.protocol !== "all" || filters.status !== "all" || query;
     foot.replaceChildren(h("div", { class: "table-foot" },
-      h("span", {}, filtered ? `筛选出 ${rows.length} 台，共 ${all.length} 台设备` : `共 ${all.length} 台设备`),
-      store.error ? h("span", { class: "stale" }, icon("alert", "sm"), "最近一次刷新失败，显示的是上次结果") : null));
+      h("span", {}, filtered ? `筛选出 ${rows.length} 条，共 ${all.length} 条` : `${all.length} 条记录`),
+      store.error ? h("span", { class: "stale" }, icon("alert", "sm"), "最近一次刷新失败，显示的是上次结果") : h("span", {}, "按名称排列")));
   }
 
   update();
@@ -82,36 +85,69 @@ function skeletonTable() {
   return h("div", { class: "table-scroll", "aria-busy": "true" }, h("table", { class: "table" }, h("tbody", {},
     [0, 1, 2, 3, 4].map(index => h("tr", {},
       h("td", {}, h("div", { class: "skeleton", style: `width:${60 - index * 5}%` })),
-      h("td", {}, h("div", { class: "skeleton", style: "width:70%" })),
       h("td", {}, h("div", { class: "skeleton", style: "width:64px" })),
+      h("td", {}, h("div", { class: "skeleton", style: "width:70%" })),
       h("td", {}, h("div", { class: "skeleton", style: "width:56px" })),
-      h("td", {}, h("div", { class: "skeleton", style: "width:96px;margin-left:auto" })))))));
+      h("td", {}, h("div", { class: "skeleton", style: "width:96px" })))))));
 }
 
 function deviceRow(device, ctx) {
-  const hash = deviceHash(device.kind, device.id);
-  const sub = device.kind === "gb" ? device.access : device.kind === "rtsp" ? `${device.access}${device.address ? ` · ${device.address}` : ""}` : device.access;
-  const editable = editState(device);
+  const key = `${device.kind}:${device.id}`;
   return h("tr", {},
-    h("td", { class: "c-name" }, h("div", { class: "cell-title" },
-      h("a", { class: "link-btn", href: hash, dataset: { key: `open:${device.kind}:${device.id}` } }, device.name || "未命名"),
-      h("span", { class: "direction" }, sub))),
-    h("td", { class: "c-id" }, h("span", { class: "mono", title: device.id }, device.id)),
-    h("td", { class: "c-proto" }, protoTag(device.kind)),
+    h("td", { class: "c-name" }, h("div", { class: "device-name" },
+      h("span", { class: "device-square" }, icon(KIND_ICON[device.kind])),
+      h("div", { class: "cell-title" },
+        h("a", { class: "link-btn", href: deviceHash(device.kind, device.id), dataset: { key: `open:${key}` } }, device.name || "未命名"),
+        device.kind === "gb" ? null : h("span", { class: "table-sub mono" }, device.id)))),
+    h("td", { class: "c-proto" }, protoTag(device.protocol)),
+    h("td", { class: "c-mode" }, device.mode),
+    h("td", { class: "c-endpoint" }, h("div", { class: "endpoint", title: device.endpoint }, device.endpoint)),
     h("td", { class: "c-status" }, h("div", { class: "cell-title" },
       h("span", {}, badge(device.status.label, device.status.tone)),
-      device.status.detail ? h("span", { class: "direction" }, device.status.detail) : null)),
-    h("td", { class: "num hide-sm" }, device.kind === "gb" && device.channels ? String(device.channels.length) : h("span", { class: "muted" }, "—")),
-    h("td", { class: "actions" }, h("div", { class: "actions-inner" },
-      h("a", { class: "btn sm", href: hash }, "详情", icon("chevron-right", "sm")),
-      h("button", {
-        type: "button", class: "icon-btn", "aria-label": "编辑", title: editable.reason || "编辑", disabled: !editable.ok,
-        dataset: { key: `edit:${device.kind}:${device.id}` }, onclick: () => openDeviceDialog(device),
-      }, icon("edit")),
-      h("button", {
-        type: "button", class: "icon-btn danger", "aria-label": "删除", title: "删除", dataset: { key: `delete:${device.kind}:${device.id}` },
-        onclick: () => deleteDevice(device, ctx),
-      }, icon("trash")))));
+      device.status.detail ? h("span", { class: "table-sub" }, device.status.detail) : null)),
+    h("td", { class: "num hide-sm" }, device.kind === "gb" ? (device.channels ? String(device.channels.length) : h("span", { class: "muted" }, device.raw.online ? "…" : "—")) : h("span", { class: "muted" }, "—")),
+    h("td", { class: "c-actions" }, h("div", { class: "text-actions" }, rowActions(device, ctx))));
+}
+
+function rowActions(device, ctx) {
+  const key = `${device.kind}:${device.id}`;
+  const action = (label, name, onclick, options = {}) => h("button", {
+    type: "button", class: options.neg ? "neg" : "", disabled: options.disabled, title: options.title, dataset: { key: `${name}:${key}`, action: name }, onclick,
+  }, label);
+  const links = [h("a", { href: deviceHash(device.kind, device.id), dataset: { key: `detail:${key}` } }, "详情")];
+  if (device.kind === "gb") {
+    links.push(action("通道", "channels", () => ctx.openMonitorDevice(device.id)));
+  } else if (device.kind === "rtsp") {
+    const source = device.raw;
+    const editable = editState(device);
+    links.push(action("编辑", "edit", () => openDeviceDialog(device), { disabled: !editable.ok, title: editable.reason }));
+    links.push(source.session || source.desired_state === "running"
+      ? action("停止拉流", "stop", () => stopSource(device), { neg: true })
+      : action("开始拉流", "start", () => startSource(device)));
+    if (source.session?.state === "created") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
+  } else {
+    const state = device.raw.state;
+    links.push(action("编辑", "edit", () => openDeviceDialog(device)));
+    links.push(state === "idle" ? action("签发地址", "issue", () => issuePublish(device))
+      : action(state === "issued" ? "撤销签发" : "停止推流", "stop", () => stopPush(device), { neg: true }));
+    if (state === "verified") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
+  }
+  links.push(action("删除", "delete", () => deleteDevice(device, ctx), { neg: true }));
+  return links;
+}
+
+// 带到实时监控的播放项；target 沿用 whep.js 的结构。
+export function playItem(device, channel = null) {
+  if (device.kind === "gb") {
+    return {
+      kind: "gb", deviceID: device.id, key: `gb:${device.id}:${channel.channel_id}`, protocol: "GB28181", label: `${device.name} · ${channel.name || channel.channel_id}`,
+      target: { device_id: device.id, channel_id: channel.channel_id, live_id: channel.live?.state === "streaming" ? channel.live.live_id : undefined },
+    };
+  }
+  return {
+    kind: device.kind, deviceID: device.id, key: `${device.kind}:${device.id}`, protocol: device.protocol, label: device.name,
+    target: device.kind === "rtsp" ? { source_id: device.id } : { push_device_id: device.id },
+  };
 }
 
 // GB28181 没有修改接口；RTSP 源取流期间不可修改（与服务端约束一致）。
@@ -120,15 +156,80 @@ export function editState(device) {
     return { ok: false, reason: "GB28181 设备暂不支持编辑" };
   }
   if (device.kind === "rtsp" && device.raw.session) {
-    return { ok: false, reason: "停止取流后可编辑" };
+    return { ok: false, reason: "停止拉流后可编辑" };
   }
   return { ok: true, reason: "" };
+}
+
+export async function startSource(device) {
+  try {
+    await api.startSource(device.id);
+    toast("已请求开始拉流", "success");
+  } catch (error) {
+    toast(errorMessage(error), "danger");
+  }
+  await refresh();
+}
+
+export function stopSource(device) {
+  confirmAction({
+    title: "停止拉流", message: `停止「${device.name}」的拉流后，正在观看的用户都会断开，已签发的播放地址随之失效。`, confirmLabel: "停止拉流",
+    async action() {
+      await api.stopSource(device.id);
+      toast("已停止拉流", "success");
+      void refresh();
+    },
+  });
+}
+
+export function stopPush(device) {
+  const issued = device.raw.state === "issued";
+  confirmAction({
+    title: issued ? "撤销签发" : "停止推流",
+    message: issued ? "撤销后已签发的推流地址立即失效。" : `停止「${device.name}」的推流后，正在观看的用户都会断开；再次推流需要重新签发地址。`,
+    confirmLabel: issued ? "撤销签发" : "停止推流",
+    async action() {
+      await api.stopPushDevice(device.id);
+      toast(issued ? "已撤销签发" : "已停止推流", "success");
+      void refresh();
+    },
+  });
+}
+
+// 签发推流地址：服务端一次签发三种地址、共用一个一次性授权；只展示设备所选协议的地址（未指定时三种都展示）。
+export async function issuePublish(device) {
+  let result;
+  try {
+    result = await api.publishPushDevice(device.id);
+  } catch (error) {
+    toast(errorMessage(error), "danger");
+    return;
+  }
+  void refresh();
+  const chosen = device.raw.protocol;
+  const urls = [["rtmp", "RTMP", result.rtmp_url], ["rtsp", "RTSP", result.rtsp_url], ["whip", "WHIP", result.whip_url]]
+    .filter(([value]) => !chosen || value === chosen);
+  const dialog = document.getElementById("issue-dialog");
+  dialog.replaceChildren(
+    h("div", { class: "dialog-head" }, h("h2", {}, "推流地址"), h("button", { class: "icon-btn", type: "button", "aria-label": "关闭", onclick: () => dialog.close() }, icon("x"))),
+    h("div", { class: "dialog-body" },
+      h("div", { class: "inline" }, h("strong", {}, device.name), protoTag(device.protocol)),
+      h("div", { class: "url-rows bordered" }, urls.map(([, label, url]) => h("div", { class: "url-row" },
+        h("div", { class: "url-proto" }, h("strong", {}, label)), h("div", { class: "url-side" }, copyButton(url, ` ${label} 推流地址`)), h("div", { class: "url-value" }, url)))),
+      h("ul", { class: "rules" },
+        h("li", {}, `一次性授权：${new Date(result.expires_at).toLocaleTimeString("zh-CN", { hour12: false })} 前首次连接有效，连接建立后不受此期限影响。`),
+        h("li", {}, chosen ? `按设备协议只显示 ${PUSH_PROTOCOLS[chosen]} 地址。服务端同时签发了其他协议地址且共用同一授权，当前不会限制推流协议。`
+          : "设备未指定协议，三种地址共用同一授权，任选其一推流。"),
+        h("li", {}, "地址只在本次签发时显示，关闭后无法再次查看；如未保存，请撤销签发后重新签发。"))),
+    h("div", { class: "dialog-foot" }, h("button", { class: "btn primary", type: "button", onclick: () => dialog.close() }, "完成")));
+  dialog.setAttribute("aria-label", "推流地址");
+  openDialog(dialog, dialog.querySelector(".copy-btn"));
 }
 
 export function deleteDevice(device, ctx) {
   const messages = {
     gb: `删除「${device.name}」会停止该设备所有通道的点播，正在观看的用户都会断开。`,
-    rtsp: `删除「${device.name}」会先停止取流，正在观看的用户会断开。`,
+    rtsp: `删除「${device.name}」会先停止拉流，正在观看的用户会断开。`,
     push: `删除「${device.name}」会停止当前推流并作废已签发的推流地址，正在观看的用户会断开。`,
   };
   confirmAction({
@@ -148,76 +249,84 @@ export function deleteDevice(device, ctx) {
   });
 }
 
-const KIND_OPTIONS = [
-  ["gb", "GB28181", "设备主动注册，平台按通道点播"],
-  ["rtsp", "RTSP 拉流", "平台连接摄像机或媒体服务地址"],
-  ["push", "推流设备", "编码器、OBS 或 WebRTC 设备向平台推流"],
+const ADD_OPTIONS = [
+  ["gb", "GB28181 · SIP 注册"], ["rtsp-pull", "RTSP · 主动拉流"],
+  ["rtmp", "RTMP · 主动推流"], ["rtsp", "RTSP · 主动推流"], ["whip", "WHIP · 主动推流"],
 ];
+const PUSH_HELP = {
+  rtmp: "推流客户端（编码器、OBS 等）使用服务端签发的 RTMP 地址推流。",
+  rtsp: "推流客户端使用服务端签发的 RTSP 地址，通过 ANNOUNCE / RECORD 发布。",
+  whip: "兼容 WHIP 的客户端使用签发的 HTTP 地址发起 SDP 协商。",
+};
 
-// existing 为空时是添加；否则编辑（RTSP 源或推流设备）。
+// existing 为空时是添加；否则编辑（RTSP 拉流源或推流设备）。
 export function openDeviceDialog(existing = null) {
   const dialog = document.getElementById("device-dialog");
-  let kind = existing?.kind || "gb";
-  let busy = false;
   const raw = existing?.raw;
+  // choice：gb / rtsp-pull / rtmp / rtsp / whip；推流设备编辑时为当前协议（未指定为空串）。
+  let choice = existing ? (existing.kind === "rtsp" ? "rtsp-pull" : raw.protocol) : "gb";
+  let busy = false;
   const fields = {
-    name: h("input", { class: "input", name: "name", autocomplete: "off", value: existing?.name || "" }),
-    device_id: h("input", { class: "input mono", name: "device_id", inputmode: "numeric", maxlength: "20", autocomplete: "off", placeholder: "34020000001320000001" }),
-    url: h("input", { class: "input mono", name: "url", autocomplete: "off", placeholder: "rtsp://192.168.1.64:554/Streaming/Channels/101", value: raw?.url || "" }),
+    name: h("input", { class: "input", name: "name", autocomplete: "off", maxlength: "64", value: existing?.name || "", placeholder: "请输入设备或视频源名称" }),
+    device_id: h("input", { class: "input mono", name: "device_id", inputmode: "numeric", maxlength: "20", autocomplete: "off", placeholder: "20 位数字，例如 34020000001320000001" }),
+    url: h("input", { class: "input mono", name: "url", autocomplete: "off", placeholder: "rtsp://192.168.1.100:554/live", value: raw?.url || "" }),
     username: h("input", { class: "input", name: "username", autocomplete: "off", placeholder: "可选", value: raw?.username || "" }),
     password: h("input", { class: "input", name: "password", type: "password", autocomplete: "new-password", placeholder: existing ? "留空则保留原密码" : "可选" }),
     clear: h("input", { type: "checkbox", name: "clear_password" }),
   };
+  const picker = h("select", { class: "select", name: "protocol", "aria-label": "接入协议" });
+  if (existing?.kind === "push") {
+    picker.append(...(raw.protocol ? [] : [h("option", { value: "" }, "未指定")]),
+      ...Object.entries(PUSH_PROTOCOLS).map(([value, label]) => h("option", { value }, `${label} · 主动推流`)));
+  } else {
+    picker.append(...ADD_OPTIONS.map(([value, label]) => h("option", { value }, label)));
+  }
+  picker.value = choice;
+  picker.addEventListener("change", () => { choice = picker.value; for (const key of Object.keys(errors)) delete errors[key]; render(); });
   const errors = {};
   const failure = h("div", { class: "notice warn", role: "alert", hidden: true }, icon("alert"), h("span"));
-  const submit = h("button", { class: "btn primary", type: "submit" }, existing ? "保存" : "添加设备");
+  const submit = h("button", { class: "btn primary", type: "submit" }, existing ? "保存" : "创建");
   const cancel = h("button", { class: "btn", type: "button", onclick: () => { if (!busy) dialog.close(); } }, "取消");
   const close = h("button", { class: "icon-btn", type: "button", "aria-label": "关闭", onclick: () => { if (!busy) dialog.close(); } }, icon("x"));
   const content = h("div", { class: "dialog-body" });
 
-  const field = (key, label, input, hint = "") => {
-    const small = h("small", {}, errors[key] || hint);
-    return h("label", { class: `field${errors[key] ? " invalid" : ""}` }, h("span", {}, label), input, errors[key] || hint ? small : null);
-  };
+  const field = (key, label, input, hint = "", required = false) => h("label", { class: `field${errors[key] ? " invalid" : ""}` },
+    h("span", {}, label, required ? h("span", { class: "danger-text" }, " *") : null), input, errors[key] || hint ? h("small", {}, errors[key] || hint) : null);
 
   function render() {
-    const picker = existing
-      ? h("div", { class: "field" }, h("span", {}, "接入类型"),
-        h("div", { class: "inline" }, protoTag(kind), h("span", { class: "muted" }, "接入类型创建后不可修改")))
-      : h("div", { class: "field" }, h("span", {}, "接入类型"), h("div", { class: "proto-picker three", role: "radiogroup", "aria-label": "接入类型" },
-        KIND_OPTIONS.map(([value, label, hint]) => h("button", {
-          type: "button", role: "radio", "aria-checked": String(kind === value), class: `proto-option${kind === value ? " is-active" : ""}`,
-          onclick: () => { kind = value; for (const key of Object.keys(errors)) delete errors[key]; render(); },
-        }, h("strong", {}, label), h("span", {}, hint)))));
-    const grid = h("div", { class: "form-grid" });
-    if (kind === "gb") {
-      grid.append(field("name", "设备名称", fields.name),
-        field("device_id", "设备 ID", fields.device_id, "20 位 GB28181 设备编码"));
-    } else if (kind === "rtsp") {
-      grid.append(h("div", { class: "full" }, field("name", "源名称", fields.name)),
-        h("div", { class: "full" }, field("url", "RTSP 地址", fields.url, "不要在地址中填写用户名和密码，请使用下方认证字段")),
-        field("username", "用户名", fields.username, existing && raw.username ? "清空用户名会同时清除已保存的密码" : ""),
-        field("password", "密码", fields.password, existing ? "密码不回显；填写新密码将覆盖原密码" : ""));
-      if (existing && raw.username) {
-        grid.append(h("label", { class: "full check" }, fields.clear, "清除已保存的密码（保留用户名）"));
-      }
-    } else {
-      grid.append(h("div", { class: "full" }, field("name", "设备名称", fields.name)));
+    const nodes = [];
+    if (!existing) {
+      nodes.push(h("p", {}, "先选择设备接入协议，下面只显示该协议实际需要的配置项。"));
     }
-    const notes = {
-      gb: "保存后，设备使用该 ID 向平台注册；注册成功后通道自动上报。平台不会因此自动点播。",
-      rtsp: "保存后不会立即连接摄像机。在设备详情中点击「开始取流」后，平台才建立 RTSP 拉流。",
-      push: "在设备详情中签发推流地址：一次签发同时提供 RTMP、RTSP、WHIP 三种地址，共用一个一次性授权，需在有效期内首次连接。当前服务端不支持为设备固定推流协议或长期接入地址。",
-    };
-    content.replaceChildren(picker, grid, h("div", { class: "notice info" }, icon("info"), h("span", {}, notes[kind])), failure);
+    if (existing?.kind === "rtsp") {
+      nodes.push(h("div", { class: "field" }, h("span", {}, "接入协议"), h("div", { class: "inline" }, protoTag("RTSP"), h("span", { class: "muted tiny" }, "主动拉流 · 接入方式创建后不可修改"))));
+    } else {
+      nodes.push(field("protocol", "接入协议", picker, existing ? "协议用于展示和选择签发地址，不会限制服务端可接受的推流协议" : "", true));
+    }
+    nodes.push(field("name", "名称", fields.name, "", true));
+    if (choice === "gb") {
+      nodes.push(field("device_id", "国标设备编号", fields.device_id, "设备需要使用该编号主动发起 SIP 注册；创建成功不等于已上线。", true));
+    } else if (choice === "rtsp-pull") {
+      nodes.push(field("url", "RTSP 地址", fields.url, "请输入 rtsp:// 地址。认证信息在下方单独填写，不放进 URL。", true));
+      nodes.push(h("div", { class: "form-grid" },
+        field("username", "用户名（可选）", fields.username, existing && raw.username ? "清空用户名会同时清除已保存的密码" : ""),
+        field("password", "密码（可选）", fields.password, existing ? "密码不回显；填写新密码将覆盖原密码" : "有密码时需填写用户名")));
+      if (existing && raw.username) {
+        nodes.push(h("label", { class: "check" }, fields.clear, "清除已保存的密码（保留用户名）"));
+      }
+      if (!existing) nodes.push(h("p", { class: "muted tiny" }, "创建后默认未拉流，需要时点击列表中的「开始拉流」。"));
+    } else if (!existing) {
+      nodes.push(h("div", { class: "explainer" }, h("strong", {}, `${PUSH_PROTOCOLS[choice]} 推流接入`), h("p", {}, PUSH_HELP[choice]),
+        h("p", { class: "muted tiny" }, "创建后在列表中「签发地址」：服务端签发一次性推流地址，界面只显示所选协议的地址。不设置固定 URL 或永久凭据。")));
+    }
+    nodes.push(failure);
+    content.replaceChildren(...nodes);
   }
 
   const syncPassword = () => {
     const cleared = fields.clear.checked || (existing && raw?.username && !fields.username.value);
     fields.password.disabled = Boolean(cleared);
-    if (cleared) {
-      fields.password.value = "";
-    }
+    if (cleared) fields.password.value = "";
   };
   fields.clear.addEventListener("change", syncPassword);
   fields.username.addEventListener("input", syncPassword);
@@ -230,8 +339,8 @@ export function openDeviceDialog(existing = null) {
     for (const key of Object.keys(errors)) delete errors[key];
     const name = fields.name.value.trim();
     if (!name) errors.name = "请输入名称";
-    if (kind === "gb" && !/^[0-9]{20}$/.test(fields.device_id.value.trim())) errors.device_id = "请输入 20 位数字的设备编码";
-    if (kind === "rtsp") {
+    if (choice === "gb" && !/^[0-9]{20}$/.test(fields.device_id.value.trim())) errors.device_id = "请输入 20 位数字的设备编号";
+    if (choice === "rtsp-pull") {
       if (!validRTSPURL(fields.url.value.trim())) errors.url = "请输入 rtsp:// 开头、不含账号密码的地址";
       if (!fields.username.value && fields.password.value) errors.username = "设置密码前请输入用户名";
     }
@@ -245,7 +354,7 @@ export function openDeviceDialog(existing = null) {
     submit.setAttribute("aria-busy", "true");
     failure.hidden = true;
     try {
-      const message = await save(kind, existing, name, fields);
+      const message = await save(choice, existing, name, fields);
       dialog.close();
       toast(message, "success");
       void refresh();
@@ -259,18 +368,17 @@ export function openDeviceDialog(existing = null) {
     }
   }
 
-  const form = h("form", { novalidate: true, onsubmit: onSubmit },
+  dialog.replaceChildren(h("form", { novalidate: true, onsubmit: onSubmit },
     h("div", { class: "dialog-head" }, h("h2", {}, existing ? "编辑设备" : "添加设备"), close),
     content,
-    h("div", { class: "dialog-foot" }, cancel, submit));
-  dialog.replaceChildren(form);
+    h("div", { class: "dialog-foot" }, cancel, submit)));
   dialog.setAttribute("aria-label", existing ? "编辑设备" : "添加设备");
   render();
   // 提交期间 Esc 不关闭对话框。
   const onCancel = event => { if (busy) event.preventDefault(); };
   dialog.addEventListener("cancel", onCancel);
   dialog.addEventListener("close", () => dialog.removeEventListener("cancel", onCancel), { once: true });
-  openDialog(dialog, fields.name);
+  openDialog(dialog, existing ? fields.name : picker);
 }
 
 // 与服务端 validRTSPSourceURL 一致：rtsp 协议、有主机名、不内嵌账号密码。
@@ -284,18 +392,18 @@ function validRTSPURL(value) {
 }
 
 // 返回与实际请求一致的成功提示。
-async function save(kind, existing, name, fields) {
-  if (kind === "gb") {
+async function save(choice, existing, name, fields) {
+  if (choice === "gb") {
     await api.createDevice({ device_id: fields.device_id.value.trim(), name });
     return "已添加设备，等待设备注册";
   }
-  if (kind === "push") {
+  if (existing?.kind === "push" || ["rtmp", "rtsp", "whip"].includes(choice)) {
     if (existing) {
-      await api.patchPushDevice(existing.id, { name });
+      await api.patchPushDevice(existing.id, choice === existing.raw.protocol ? { name } : { name, protocol: choice });
       return "已保存设备";
     }
-    await api.createPushDevice({ name });
-    return "已添加推流设备";
+    await api.createPushDevice({ name, protocol: choice });
+    return `已添加 ${PUSH_PROTOCOLS[choice]} 推流设备`;
   }
   const payload = { stream_name: name, url: fields.url.value.trim() };
   const username = fields.username.value;
@@ -305,7 +413,7 @@ async function save(kind, existing, name, fields) {
       Object.assign(payload, { username, password });
     }
     await api.createSource(payload);
-    return "已添加 RTSP 源";
+    return "已添加 RTSP 拉流源";
   }
   // 沿用现有 PATCH 语义：密码留空不发送（保留）；填写则覆盖；勾选清除或清空用户名则发送空串清除。
   payload.username = username;

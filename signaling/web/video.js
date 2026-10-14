@@ -2,23 +2,25 @@
 // 布局切换只移动画面节点，WHEPPreview 的状态回调绑定画面对象而不是槽位编号。
 // 关闭画面只释放该画面的 WHEP 会话，不停止上游点播或取流。
 import { WHEPPreview } from "/whep.js";
-import { store, deviceHash } from "/store.js";
+import { store, deviceHash, channelsOf, syncChannels, PUSH_PROTOCOLS } from "/store.js";
 import { h, icon, protoTag, toast, errorMessage, replaceKeepingFocus } from "/ui.js";
 
 const STATE_LABEL = { preparing: "正在准备", negotiating: "正在建立 WHEP 连接", streaming: "播放中", stopping: "正在关闭", failed: "播放失败", ended: "已结束" };
 
-// 当前目标对应的运行中媒体流 ID；用于发现画面所播放的媒体流已结束或换代。
-function currentStreamID(target) {
+// 当前目标对应的运行中媒体流 ID 及该事实的数据时间；用于发现画面所播放的媒体流已结束或换代。
+// GB 通道来自按需请求的通道缓存，时间取该缓存的请求时刻，而不是列表快照时间。
+function currentStream(target) {
   if (target.source_id) {
     const session = store.sources.find(source => source.source_id === target.source_id)?.session;
-    return session?.state === "created" ? session.stream_id : "";
+    return { id: session?.state === "created" ? session.stream_id : "", at: store.updatedAt };
   }
   if (target.push_device_id) {
     const device = store.pushDevices.find(item => item.device_id === target.push_device_id);
-    return device?.state === "verified" ? device.token : "";
+    return { id: device?.state === "verified" ? device.token : "", at: store.updatedAt };
   }
-  const channel = (store.channels.get(target.device_id) || []).find(item => item.channel_id === target.channel_id);
-  return channel?.live?.state === "streaming" ? channel.live.live_id : "";
+  const cache = store.channels.get(target.device_id);
+  const channel = (cache?.channels || []).find(item => item.channel_id === target.channel_id);
+  return { id: channel?.live?.state === "streaming" ? channel.live.live_id : "", at: cache?.at ?? 0 };
 }
 
 function createTile(item, video) {
@@ -49,7 +51,7 @@ function renderTile(tile, video) {
   const failed = tile.state === "failed" || tile.state === "ended";
   tile.element.className = `tile is-${tile.state}${video.isActive(tile) ? " is-active" : ""}`;
   tile.element.setAttribute("aria-label", `${tile.label}：${STATE_LABEL[tile.state] || tile.state}`);
-  tile.top.replaceChildren(h("span", { class: "name", title: tile.label }, tile.label), protoTag(tile.kind),
+  tile.top.replaceChildren(h("span", { class: "name", title: tile.label }, tile.label), protoTag(tile.protocol || ({ gb: "GB28181", rtsp: "RTSP" })[tile.kind] || "推流"),
     h("span", { class: "tile-state" }, h("span", { class: `live-dot${tile.state === "streaming" ? " on" : failed ? " err" : ""}` }), STATE_LABEL[tile.state] || tile.state));
   if (failed) {
     tile.center.replaceChildren(icon("alert", "lg"), h("span", {}, errorMessage({ code: tile.error })), h("p", {}, "不会自动重连。可以重试，或关闭该画面。"),
@@ -85,7 +87,7 @@ function chevron() {
 function treeItems() {
   const items = [];
   for (const device of store.devices) {
-    const channels = device.online ? store.channels.get(device.device_id) || [] : [];
+    const channels = device.online ? channelsOf(device.device_id) || [] : [];
     items.push({
       group: true, kind: "gb", deviceID: device.device_id, name: device.name, online: device.online, reason: device.online ? "" : "设备离线",
       children: channels.map(channel => ({
@@ -104,7 +106,7 @@ function treeItems() {
   }
   for (const device of store.pushDevices) {
     const running = device.state === "verified";
-    items.push({ kind: "push", deviceID: device.device_id, key: `push:${device.device_id}`, name: device.name, label: device.name,
+    items.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol] || "未指定", deviceID: device.device_id, key: `push:${device.device_id}`, name: device.name, label: device.name,
       on: running, reason: running ? "" : "未推流", target: { push_device_id: device.device_id } });
   }
   return items;
@@ -200,7 +202,7 @@ export function mountVideo(root, ctx) {
       type: "button", role: "treeitem", class: `tree-node${nested ? " leaf" : ""}${playing.has(item.key) ? " is-playing" : ""}`,
       disabled: !item.on, title: item.on ? `播放 ${item.label}` : item.reason, dataset: { key: item.key }, onclick: () => pick(item),
     }, h("span", { class: `live-dot${item.on ? " on" : ""}` }), h("span", { class: "name" }, item.name),
-    h("span", { class: "inline" }, h("span", { class: "muted small" }, playing.has(item.key) ? "播放中" : item.on ? item.note || "" : item.reason), nested ? null : protoTag(item.kind)));
+    h("span", { class: "inline" }, h("span", { class: "muted small" }, playing.has(item.key) ? "播放中" : item.on ? item.note || "" : item.reason), nested ? null : protoTag(item.protocol || (item.kind === "rtsp" ? "RTSP" : "GB28181"))));
     const nodes = [];
     for (const item of items) {
       if (!item.group) {
@@ -214,7 +216,7 @@ export function mountVideo(root, ctx) {
         h("button", { type: "button", class: "tree-node", "aria-expanded": String(Boolean(open)), dataset: { key: `group:${item.deviceID}` },
           onclick: () => { if (collapsed.has(item.deviceID)) collapsed.delete(item.deviceID); else collapsed.add(item.deviceID); renderTree(); } },
         chevron(), h("span", { class: "name" }, item.name),
-        h("span", { class: "inline" }, h("span", { class: "muted small" }, item.online ? String(item.children.length) : item.reason), protoTag("gb"))),
+        h("span", { class: "inline" }, h("span", { class: "muted small" }, item.online ? String(item.children.length) : item.reason), protoTag("GB28181"))),
         open ? (item.online ? children.map(child => leaf(child, true)) : h("div", { class: "tree-node leaf muted small" }, h("span"), "设备离线，通道不可用")) : null));
     }
     if (nodes.length === 0) {
@@ -305,10 +307,13 @@ export function mountVideo(root, ctx) {
 
   return {
     update() {
+      syncChannels([...new Set([...store.devices.filter(device => device.online && !collapsed.has(device.device_id)).map(device => device.device_id),
+        ...tiles().filter(tile => tile.target.device_id).map(tile => tile.target.device_id)])]);
       // 画面播放的媒体流已结束或换代（以开始播放之后发出的快照为准）时结束该画面，不自动重连。
       for (const tile of tiles()) {
         const session = tile.preview.current;
-        if (session?.streamID && tile.streamingAt && store.updatedAt > tile.streamingAt && currentStreamID(tile.target) !== session.streamID) {
+        const stream = currentStream(tile.target);
+        if (session?.streamID && tile.streamingAt && stream.at > tile.streamingAt && stream.id !== session.streamID) {
           void tile.preview.end(session);
         }
       }

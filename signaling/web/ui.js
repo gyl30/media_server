@@ -37,9 +37,9 @@ export function badge(label, tone = "neutral", dot = true) {
   return h("span", { class: `badge ${tone}` }, dot ? h("span", { class: "dot" }) : null, label);
 }
 
-export function protoTag(kind) {
-  const labels = { gb: "GB28181", rtsp: "RTSP", push: "推流" };
-  return h("span", { class: `proto ${kind}`, title: kind === "push" ? "推流设备：协议未指定，签发时同时提供 RTMP / RTSP / WHIP 地址" : "" }, labels[kind]);
+// 协议标签：显示后端可确认的协议名；推流设备未保存协议时显示"未指定"。
+export function protoTag(protocol) {
+  return h("span", { class: `proto${protocol === "未指定" ? " none" : ""}` }, protocol);
 }
 
 export function emptyState({ icon: glyph = "info", title, text = "", tone = "", action = null }) {

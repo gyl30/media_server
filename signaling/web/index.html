@@ -4,24 +4,29 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Media Server 控制台</title>
+  <title>视频监控平台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
   <div class="shell" id="shell">
+    <div class="shade" id="shade"></div>
     <aside class="sidebar" aria-label="主导航">
-      <a class="brand" href="#overview"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-text"><strong>Media Server</strong><span>流媒体管理控制台</span></span></a>
+      <a class="brand" href="#overview"><span class="brand-emblem" aria-hidden="true"><svg class="icon"><use href="/icons.svg#camera"></use></svg></span><span class="brand-text"><span class="brand-name">视频监控平台</span><span class="brand-small">GB28181 · VIDEO PLATFORM</span></span></a>
       <nav id="nav" class="nav" aria-label="页面"></nav>
+      <div class="sidebar-bottom"><div class="srv-status" id="server-status"><span class="dot"></span><div><strong>signaling 接口</strong><small>正在连接…</small></div></div></div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button id="menu-button" class="icon-btn menu-button" type="button" aria-label="打开导航" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="/icons.svg#menu"></use></svg></button>
-        <nav id="crumbs" class="crumbs" aria-label="位置"></nav>
+        <nav class="crumbs" aria-label="位置">
+          <button id="menu-button" class="icon-btn menu-button" type="button" aria-label="展开菜单" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="/icons.svg#menu"></use></svg></button>
+          <span class="crumb-root">视频监控平台</span><svg class="icon sm crumb-root" aria-hidden="true"><use href="/icons.svg#chevron-right"></use></svg>
+          <span id="crumbs" class="crumbs"></span>
+        </nav>
         <div class="topbar-actions">
           <span id="updated" class="updated">尚未刷新</span>
-          <button id="refresh-button" class="btn sm" type="button"><svg class="icon sm" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>刷新</button>
+          <button id="refresh-button" class="btn" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>刷新</button>
         </div>
       </header>
       <main id="view"></main>
@@ -29,6 +34,7 @@
   </div>
   <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
   <dialog id="device-dialog" class="dialog"></dialog>
+  <dialog id="issue-dialog" class="dialog"></dialog>
   <dialog id="confirm-dialog" class="dialog sm" aria-labelledby="confirm-title">
     <div class="dialog-head"><h2 id="confirm-title">确认操作</h2></div>
     <div class="dialog-body"><p data-message></p><div class="notice warn" role="alert" data-error hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#alert"></use></svg><span></span></div></div>

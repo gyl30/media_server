@@ -1,5 +1,5 @@
-// 设备快照：三个列表接口 + 在线 GB 设备的通道。统一设备与运行中媒体流都由快照确定性地推导，
-// 不保存任何服务端没有的字段。
+// 设备快照：每 2.5 秒请求三个列表接口；GB 通道只在页面需要时按设备请求（loadChannels），不随轮询全量刷新。
+// 统一设备与运行中媒体流都由快照确定性推导，不保存服务端没有的字段。
 import { api } from "/api.js";
 import { formatAgo, formatDuration } from "/ui.js";
 
@@ -7,6 +7,7 @@ export const store = {
   devices: [],
   sources: [],
   pushDevices: [],
+  // GB 设备 ID → { channels, at }；at 为该次通道请求发出的时间。
   channels: new Map(),
   loaded: false,
   error: null,
@@ -16,10 +17,15 @@ export const store = {
 const listeners = new Set();
 let epoch = 0;
 let controller = null;
+const channelRequests = new Map();
 
 export function subscribe(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+function notify() {
+  listeners.forEach(listener => listener());
 }
 
 export function refreshing() {
@@ -38,26 +44,16 @@ export async function refresh() {
     const [sources, devices, pushDevices] = await Promise.all([
       api.sources(own.signal), api.devices(own.signal), api.pushDevices(own.signal),
     ]);
-    const online = (devices.devices || []).filter(device => device.online);
-    const channelResults = await Promise.allSettled(online.map(device => api.channels(device.device_id, own.signal)));
     if (current !== epoch) {
       return;
     }
     store.sources = sources.sources || [];
     store.devices = devices.devices || [];
     store.pushDevices = pushDevices.devices || [];
-    const channels = new Map();
-    online.forEach((device, index) => {
-      const result = channelResults[index];
-      // 单个设备的通道请求失败时沿用上一次结果，不把它当成"没有通道"。
-      const previous = store.channels.get(device.device_id);
-      if (result.status === "fulfilled") {
-        channels.set(device.device_id, result.value.channels || []);
-      } else if (previous) {
-        channels.set(device.device_id, previous);
-      }
-    });
-    store.channels = channels;
+    // 已删除设备的通道缓存不再保留。
+    for (const id of store.channels.keys()) {
+      if (!store.devices.some(device => device.device_id === id)) store.channels.delete(id);
+    }
     store.loaded = true;
     store.error = null;
     store.updatedAt = startedAt;
@@ -69,7 +65,7 @@ export async function refresh() {
   } finally {
     if (current === epoch) {
       controller = null;
-      listeners.forEach(listener => listener());
+      notify();
     }
   }
 }
@@ -80,10 +76,41 @@ export function stopRefresh() {
   controller = null;
 }
 
+// 请求指定 GB 设备的通道列表。同一设备已有请求在途时复用；单个失败保留上次结果。
+export async function loadChannels(deviceIDs) {
+  const pending = deviceIDs.map(id => {
+    if (!channelRequests.has(id)) {
+      const startedAt = Date.now();
+      channelRequests.set(id, api.channels(id)
+        .then(result => { store.channels.set(id, { channels: result.channels || [], at: startedAt }); })
+        .catch(() => {})
+        .finally(() => channelRequests.delete(id)));
+    }
+    return channelRequests.get(id);
+  });
+  if (pending.length) {
+    await Promise.all(pending);
+    notify();
+  }
+}
+
+// 正在查看的设备随轮询保持新鲜：只重新请求早于最近一次列表快照的通道缓存。
+// 通道请求完成也会通知订阅者，按时间判断可避免在通知里反复请求。
+export function syncChannels(deviceIDs) {
+  const stale = deviceIDs.filter(id => (store.channels.get(id)?.at ?? -1) < store.updatedAt);
+  if (stale.length) void loadChannels(stale);
+}
+
+export function channelsOf(deviceID) {
+  return store.channels.get(deviceID)?.channels;
+}
+
 // 设备详情路由：#devices/<kind>/<id>。source_id 与推流设备 ID 都是 UUID，需要 kind 区分。
 export function deviceHash(kind, id) {
   return `#devices/${kind}/${encodeURIComponent(id)}`;
 }
+
+export const PUSH_PROTOCOLS = { rtmp: "RTMP", rtsp: "RTSP", whip: "WHIP" };
 
 function gbStatus(device) {
   if (device.online) {
@@ -95,66 +122,63 @@ function gbStatus(device) {
   };
 }
 
+// RTSP 拉流：desired_state 是配置，session 是运行事实；created 表示媒体服务器已建立拉流会话。
 const SESSION_STATUS = {
-  created: { label: "取流中", tone: "success", group: "online" },
-  starting: { label: "正在连接", tone: "pending", group: "online" },
-  stopping: { label: "正在停止", tone: "pending", group: "online" },
-  unresolved: { label: "正在清理", tone: "pending", group: "attention" },
+  created: { label: "拉流中", tone: "success", group: "online", detail: "拉流会话已建立" },
+  starting: { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" },
+  stopping: { label: "正在停止", tone: "pending", group: "online", detail: "" },
+  unresolved: { label: "正在清理", tone: "warn", group: "attention", detail: "会话结果待确认" },
 };
 
 export function sourceStatus(source) {
   if (source.session) {
-    return { ...(SESSION_STATUS[source.session.state] || SESSION_STATUS.unresolved), detail: "" };
+    return SESSION_STATUS[source.session.state] || SESSION_STATUS.unresolved;
   }
   if (source.desired_state === "running") {
-    return { label: "未连接", tone: "warn", group: "attention", detail: "已请求取流，当前没有运行中的拉流会话" };
+    return { label: "未连接", tone: "warn", group: "attention", detail: "已请求拉流，当前没有运行中的会话" };
   }
-  return { label: "已停止", tone: "neutral", group: "offline", detail: "按需开始取流" };
+  return { label: "未启动", tone: "neutral", group: "offline", detail: "需要时开始拉流" };
 }
 
+// 推流设备：verified 只说明推流授权已被使用、推流运行已登记，不代表音视频健康。
 export function pushStatus(device) {
   if (device.state === "verified") {
-    return { label: "推流中", tone: "success", group: "online", detail: device.verified_at ? `已推流 ${formatDuration(Date.now() - Date.parse(device.verified_at))}` : "" };
+    return { label: "已接入", tone: "success", group: "online", detail: device.verified_at ? `推流授权已验证 ${formatDuration(Date.now() - Date.parse(device.verified_at))}` : "推流授权已验证" };
   }
   if (device.state === "issued") {
     return { label: "等待推流", tone: "pending", group: "offline", detail: device.expires_at ? `地址 ${new Date(device.expires_at).toLocaleTimeString("zh-CN", { hour12: false })} 前首次连接有效` : "" };
   }
-  return { label: "空闲", tone: "neutral", group: "offline", detail: "签发推流地址后设备才能推流" };
+  return { label: "未推流", tone: "neutral", group: "offline", detail: "签发推流地址后设备才能推流" };
 }
 
+// 前端统一展示对象。key 在三类资源间唯一；protocol 是显示用协议名，filter 是协议筛选值。
 export function unifiedDevices() {
   return [
     ...store.devices.map(device => ({
-      kind: "gb", id: device.device_id, name: device.name, access: "设备注册", raw: device, status: gbStatus(device),
-      channels: device.online ? store.channels.get(device.device_id) : undefined,
+      key: `gb:${device.device_id}`, kind: "gb", id: device.device_id, name: device.name, protocol: "GB28181", filter: "gb",
+      mode: "SIP 注册", endpoint: device.device_id, raw: device, status: gbStatus(device), channels: channelsOf(device.device_id),
     })),
     ...store.sources.map(source => ({
-      kind: "rtsp", id: source.source_id, name: source.stream_name, access: "拉流", raw: source, status: sourceStatus(source),
-      address: rtspHost(source.url),
+      key: `rtsp:${source.source_id}`, kind: "rtsp", id: source.source_id, name: source.stream_name, protocol: "RTSP", filter: "rtsp-pull",
+      mode: "拉流", endpoint: source.url, raw: source, status: sourceStatus(source),
     })),
     ...store.pushDevices.map(device => ({
-      kind: "push", id: device.device_id, name: device.name, access: "推流 · RTMP / RTSP / WHIP", raw: device, status: pushStatus(device),
+      key: `push:${device.device_id}`, kind: "push", id: device.device_id, name: device.name,
+      protocol: PUSH_PROTOCOLS[device.protocol] || "未指定", filter: device.protocol ? `${device.protocol}-push` : "push-unspecified",
+      mode: "推流", endpoint: device.state === "verified" ? "推流已接入" : device.state === "issued" ? "已签发，等待推流" : "签发地址时生成", raw: device, status: pushStatus(device),
     })),
-  ];
+  ].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }
 
-function rtspHost(value) {
-  try {
-    return new URL(value).host;
-  } catch {
-    return "";
-  }
-}
-
-// 当前可以证明正在运行的媒体流：GB 点播 streaming、RTSP 会话 created、推流 verified。
+// 当前可以证明正在运行的媒体流：GB 点播 streaming（仅限已获取通道的设备）、RTSP 会话 created、推流 verified。
 // 播放目标沿用 whep.js 的 target 结构。
 export function runningStreams() {
   const streams = [];
   for (const device of store.devices) {
-    for (const channel of store.channels.get(device.device_id) || []) {
+    for (const channel of channelsOf(device.device_id) || []) {
       if (channel.live?.state === "streaming") {
         streams.push({
-          kind: "gb", streamID: channel.live.live_id, deviceID: device.device_id, name: `${device.name} · ${channel.name || channel.channel_id}`,
+          kind: "gb", protocol: "GB28181", streamID: channel.live.live_id, deviceID: device.device_id, name: `${device.name} · ${channel.name || channel.channel_id}`,
           detail: channel.channel_id, target: { device_id: device.device_id, channel_id: channel.channel_id, live_id: channel.live.live_id },
         });
       }
@@ -162,12 +186,12 @@ export function runningStreams() {
   }
   for (const source of store.sources) {
     if (source.session?.state === "created") {
-      streams.push({ kind: "rtsp", streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: "RTSP 拉流", target: { source_id: source.source_id } });
+      streams.push({ kind: "rtsp", protocol: "RTSP", streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: "RTSP 拉流", target: { source_id: source.source_id } });
     }
   }
   for (const device of store.pushDevices) {
     if (device.state === "verified") {
-      streams.push({ kind: "push", streamID: device.token, deviceID: device.device_id, name: device.name, detail: "推流", target: { push_device_id: device.device_id } });
+      streams.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol] || "推流", streamID: device.token, deviceID: device.device_id, name: device.name, detail: "推流", target: { push_device_id: device.device_id } });
     }
   }
   return streams;

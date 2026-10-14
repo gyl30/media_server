@@ -39,7 +39,7 @@ export default async function (b) {
   await b.shot(`${shots}/streams.png`);
   if (want.streams > 0) {
     await q("document.querySelector('.table tbody tr .btn').click()");
-    check("从媒体流播放：视频中心只开这一路", await waitFor(b, "location.hash === '#video' && document.querySelectorAll('.tile.is-streaming').length === 1", 15000));
+    check("从媒体流播放：视频中心只开这一路", await waitFor(b, "location.hash === '#monitor' && document.querySelectorAll('.tile.is-streaming').length === 1", 15000));
     await q("location.hash = '#status'");
     await b.sleep(800);
     check("离开后无视频元素", await q("document.querySelectorAll('video').length") === 0);

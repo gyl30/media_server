@@ -44,8 +44,8 @@ func TestWebManagementPageAndAssets(t *testing.T) {
 			if response.Code != http.StatusOK || err != nil || mediaType != expected || response.Body.Len() == 0 {
 				t.Fatalf("GET %s: status=%d type=%s error=%v", path, response.Code, mediaType, err)
 			}
-			if path == "/" && (!strings.Contains(response.Body.String(), `lang="zh-CN"`) || !strings.Contains(response.Body.String(), "Media Server 控制台")) {
-				t.Fatal("首页未提供中文管理控制台")
+			if path == "/" && (!strings.Contains(response.Body.String(), `lang="zh-CN"`) || !strings.Contains(response.Body.String(), "视频监控平台")) {
+				t.Fatal("首页未提供中文视频监控平台")
 			}
 		})
 	}

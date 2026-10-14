@@ -37,14 +37,14 @@ export default async function (b) {
   const created = await api("/api/sources", { method: "POST", body: { stream_name: "详情测试 RTSP", url: "rtsp://127.0.0.1:9/none" } });
   const sourceID = created.body.source_id;
   await b.goto(base + `#devices/rtsp/${sourceID}`, 1500);
-  check("RTSP 详情显示已停止", (await q(text(".detail-head"))).includes("已停止"), await q("location.hash + ' ' + document.querySelector('#view').innerText.slice(0, 120)"));
-  await q(clickText(".detail-head .btn", "开始取流"));
+  check("RTSP 详情显示未启动", (await q(text(".detail-head"))).includes("未启动"), await q("location.hash + ' ' + document.querySelector('#view').innerText.slice(0, 120)"));
+  await q(clickText(".detail-head .btn", "开始拉流"));
   // 不可达地址：服务端短暂建立会话后结束，期望状态保持 running、没有会话。
   check("接口：拉流结束后无会话", await waitFor(b, `fetch('/api/sources').then(r => r.json()).then(j => j.sources.some(s => s.source_id === '${sourceID}' && s.desired_state === 'running' && !s.session))`, 15000));
   check("界面显示未连接并提供重新取流与停止", await waitFor(b, "document.querySelector('.detail-head').innerText.includes('未连接')", 6000)
-    && (await q(text(".detail-head"))).includes("重新取流") && (await q(text(".detail-head"))).includes("停止取流"));
+    && (await q(text(".detail-head"))).includes("重新拉流") && (await q(text(".detail-head"))).includes("停止拉流"));
   await b.shot(`${shots}/detail-rtsp-unconnected.png`);
-  await q(clickText(".detail-head .btn", "停止取流"));
+  await q(clickText(".detail-head .btn", "停止拉流"));
   await confirm();
   await b.sleep(1500);
   check("停止后期望状态为 stopped", (await api("/api/sources")).body.sources.find(item => item.source_id === sourceID).desired_state === "stopped");
@@ -54,12 +54,14 @@ export default async function (b) {
   const push = (await api("/api/push-devices", { method: "POST", body: { name: "详情测试 推流" } })).body;
   await b.goto(base + `#devices/push/${push.device_id}`, 1500);
   await q(clickText(".card .btn", "签发推流地址"));
-  check("签发后显示 RTMP / RTSP / WHIP 地址", await waitFor(b, "document.querySelectorAll('.card .url-value').length === 3", 5000));
-  const urls = await q("[...document.querySelectorAll('.card .url-value')].map(e => e.textContent)");
+  check("签发后在弹窗中显示 RTMP / RTSP / WHIP 地址（协议未指定）", await waitFor(b, "document.querySelectorAll('#issue-dialog .url-value').length === 3", 5000));
+  const urls = await q("[...document.querySelectorAll('#issue-dialog .url-value')].map(e => e.textContent)");
   check("地址形态与接口一致", urls[0].startsWith("rtmp://127.0.0.1:21935/live/") && urls[1].startsWith("rtsp://127.0.0.1:28554/") && urls[2].includes("/publish/whip/"), urls.join(" "));
   check("后端状态为已签发", (await api(`/api/push-devices/${push.device_id}`)).body.state === "issued");
-  check("不单独显示 token 字段", !(await q("document.querySelector('.page').innerText")).toLowerCase().includes("token"));
+  check("不单独显示 token 字段", !(await q("document.querySelector('#issue-dialog').innerText")).toLowerCase().includes("token"));
   await b.shot(`${shots}/detail-push-issued.png`);
+  await q(clickText("#issue-dialog .btn", "完成"));
+  await waitFor(b, "document.querySelector('.page').innerText.includes('撤销签发')", 5000);
   await q(clickText(".card .btn", "撤销签发"));
   await confirm();
   check("撤销后回到空闲", await waitFor(b, `fetch('/api/push-devices/${push.device_id}').then(r => r.json()).then(j => j.state === 'idle')`, 5000)

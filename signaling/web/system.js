@@ -1,5 +1,5 @@
 // 系统总览、媒体流、运行状态。所有数值都由真实快照确定性汇总；没有数据来源的指标只说明暂不支持。
-import { store, unifiedDevices, runningStreams, deviceHash, refresh } from "/store.js";
+import { store, unifiedDevices, runningStreams, deviceHash, refresh, loadChannels } from "/store.js";
 import { h, icon, badge, protoTag, emptyState, errorMessage, formatClock, replaceKeepingFocus } from "/ui.js";
 
 const KIND_LABEL = { gb: "GB28181", rtsp: "RTSP 拉流", push: "推流设备" };
@@ -21,7 +21,14 @@ function loadingOrError(root) {
   return true;
 }
 
+// GB 点播状态来自通道列表：页面只为尚无缓存的在线设备请求一次，不随轮询全量刷新。
+function loadMissingChannels() {
+  const missing = store.devices.filter(device => device.online && !store.channels.has(device.device_id)).map(device => device.device_id);
+  if (missing.length) void loadChannels(missing);
+}
+
 function summaryOf() {
+  loadMissingChannels();
   const devices = unifiedDevices();
   const streams = runningStreams();
   const kinds = ["gb", "rtsp", "push"].map(kind => {
@@ -67,7 +74,7 @@ export function mountOverview(root, ctx) {
         h("div", { class: "stack" },
           h("section", { class: "card" },
             h("div", { class: "card-head" }, h("div", {}, h("h2", {}, "按接入类型"), h("div", { class: "sub" }, "实色为在线 / 运行中，浅色为总数"))),
-            h("div", { class: "card-body dist" }, kinds.map(item => h("div", { class: "dist-row" }, protoTag(item.kind),
+            h("div", { class: "card-body dist" }, kinds.map(item => h("div", { class: "dist-row" }, protoTag(KIND_LABEL[item.kind]),
               h("div", { class: "dist-bar" }, h("b", { style: `width:${(item.total / maxTotal) * 100}%;background:${KIND_COLOR[item.kind]}` }),
                 h("i", { style: `width:${(item.online / maxTotal) * 100}%;background:${KIND_COLOR[item.kind]}` })),
               h("div", { class: "dist-num" }, h("strong", {}, String(item.online)), ` / ${item.total}`))))),
@@ -110,6 +117,7 @@ export function mountStreams(root, ctx) {
     h("div", { class: "card table-card" }, h("div", { class: "toolbar" }, filter), body)));
 
   function update() {
+    loadMissingChannels();
     const all = store.loaded ? runningStreams() : [];
     replaceKeepingFocus(filter, [["all", "全部"], ["gb", "GB28181"], ["rtsp", "RTSP 拉流"], ["push", "推流"]].map(([value, label]) => h("button", {
       type: "button", class: kind === value ? "is-active" : "", "aria-pressed": String(kind === value), dataset: { key: `kind:${value}` },
@@ -130,7 +138,7 @@ export function mountStreams(root, ctx) {
           h("a", { class: "link-btn", href: deviceHash(stream.kind, stream.deviceID), dataset: { key: `open:${stream.streamID}` } }, stream.name),
           h("span", { class: "direction" }, stream.kind === "gb" ? `通道 ${stream.detail}` : stream.detail))),
         h("td", { class: "c-id" }, h("span", { class: "mono", title: stream.streamID }, stream.streamID)),
-        h("td", { class: "c-proto" }, protoTag(stream.kind)),
+        h("td", { class: "c-proto" }, protoTag(stream.protocol)),
         h("td", { class: "c-status" }, badge("运行中", "success")),
         h("td", { class: "actions" }, h("div", { class: "actions-inner" },
           h("button", { class: "btn sm", type: "button", dataset: { key: `play:${stream.streamID}` }, onclick: () => ctx.playInCenter(playItem(stream)) }, icon("play", "sm"), "播放"),
