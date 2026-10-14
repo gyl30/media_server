@@ -312,7 +312,15 @@ bool whep_pull_session::negotiate(boost::asio::yield_context yield)
     }
 
     answer_ = parse_whep_pull_answer(result->body);
-    if (!answer_ || (answer_->setup != "passive" && answer_->setup != "active") || !dtls_transport::valid_sha256_fingerprint(answer_->fingerprint))
+    if (answer_)
+    {
+        // 这里只有绑定地址对应的一族 UDP socket；跳过不可由它发送的候选，保留同族直达路径。
+        std::erase_if(answer_->candidates,
+                      [this](const boost::asio::ip::udp::endpoint& candidate)
+                      { return candidate.address().is_v4() != config_.local_address.is_v4(); });
+    }
+    if (!answer_ || answer_->candidates.empty() || (answer_->setup != "passive" && answer_->setup != "active") ||
+        !dtls_transport::valid_sha256_fingerprint(answer_->fingerprint))
     {
         spdlog::warn("whep pull unsupported answer {}", config_.stream_id);
         return false;

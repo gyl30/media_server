@@ -261,6 +261,13 @@ def main():
                         relay.wrong_transaction = mode == "whep_transaction"
                         proxy = WhepProxy(f"http://127.0.0.1:{http_port}/play/whep/{source}/{play}", relay.rewrite)
                         url = proxy.url
+                    elif mode == "whep_mixed_candidates":
+                        def prepend_ipv6(answer):
+                            offset = answer.find("a=candidate:")
+                            assert offset >= 0 and " 127.0.0.1 " in answer[offset:], answer
+                            return answer[:offset] + "a=candidate:mixed 1 UDP 2130706431 ::1 9 typ host\r\n" + answer[offset:]
+                        proxy = WhepProxy(f"http://127.0.0.1:{http_port}/play/whep/{source}/{play}", prepend_ipv6)
+                        url = proxy.url
                 if mode == "whep_failures":
                     whep_failures(base, http_port, source, signaling, log)
                     return
