@@ -18,7 +18,7 @@ SOCKET_TIMEOUT = 0.25
 
 
 def limit_files():
-    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
+    resource.setrlimit(resource.RLIMIT_NOFILE, (64, 66))
 
 
 def rtsp_options(port):
@@ -79,6 +79,10 @@ def main():
                 return 1
 
             print(f"server reported EMFILE with {len(connections)} held connections")
+            # 先解除已确认的 FD 压力，再触发连接清理；sanitizer 的
+            # vptr 检查需要两个临时 pipe FD，不能依赖尚未执行的 socket 关闭。
+            resource.prlimit(server.pid, resource.RLIMIT_NOFILE, (66, 66))
+            print("descriptor budget restored from 64 to 66 before closing held connections")
             for connection in connections:
                 connection.close()
             connections.clear()
