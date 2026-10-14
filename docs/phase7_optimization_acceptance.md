@@ -57,7 +57,7 @@ GB 参数 95% t 区间约 `[−0.073835,−0.015880]` 核，FLV `[−0.422001,�
 | UBSan 生命周期 | PASS | Debug 独立构建，`ubsan-targeted.log`，11/11、14.19s；UDP、TCP completion、GB sender、FLV、media lifecycle、跨 worker 分发。 |
 | UBSan 实际混合媒体 | PASS | `ubsan-media/result.json`，GB UDP 输入，FLV3/GB UDP3/RTMP1/RTSP1/WHEP1/HLS1，15s 测量；全部媒体进展、owned 清理成功。属于功能验证，不是性能数据。 |
 | UBSan 双轨解码 | PASS | `ubsan-decode-complete/`，上游及 GB 输入后的 FLV 各实际解码 60 帧、双轨 map、2s，stderr 空；FLV2/GB UDP2 后续 12s 健康。外部探针初次遗漏依赖的三份失败记录保留，不归因生产。 |
-| ASan | BLOCKED | `asan-configure.log`，项目 Boost.Context ucontext/ASan 兼容守卫失败；未绕过、未将 UBSan 当 ASan。 |
+| ASan | 初次 BLOCKED；后续补测 PASS | 原 `asan-configure.log` 的守卫失败事实保留。2026-10-14 使用隔离 Boost 1.92.0 后实际通过；定向12/12、完整61/61、真实双轨/混合/RTCP和LSan验证见 [ASan 补充验收](phase7_asan_verification.md)。 |
 | GB kernel profiling | PASS（有限画像） | 两臂 1000 viewers，150s；DUT DWARF30s、8核20s、stat10s，phase exit 全0、窗口内、媒体健康。raw 及 noinline self report 均保留。完整 inline DWARF report 两次60s超时，不能声称完整调用图已解析。 |
 | 分配探针清理 | PASS（最小调用修正） | namespace 内 RED 可复现：tracefs 不可见，bpftrace exit0仍报 detach ENOENT。target 留在 namespace、tracer 在宿主按 PID attach 后 GREEN：exit0、stderr 空、events 前后相同、PID 消失。原警告不追认 PASS。 |
 | 上轮负对照 / 实际解码 | PASS（证据复核） | 原 `negative-result.json` 五项及 `functional-result.json` 保留；没有重复整套 A/B 或声称本轮重跑负对照。 |
@@ -75,6 +75,21 @@ GB FD 原失败是 DUT soft limit1024先耗尽：成功场景需2033 FD，各200
 - SRTP 多入口是必要 GCM IV/AAD/encrypt/final/tag，非五次重复加密；不动 third，不合并 viewer 密钥状态。
 - 新版 FLV/RTMP 剩余分配未量化为可删除开销，不凭旧热点再改队列、buffer 或 executor。
 
+以下是 ASan 补测前的历史合并条件，最新决定见末节。
+
 **CONDITIONAL GO**：两个优化建议保留，未发现阻止保留的真实生产缺陷；正式合并前仍需在兼容 Boost.Context 的环境补 ASan 所有权/关闭回归，或由独立 Review 明确接受该验证限制。GB 收益应表述为已测三对的方向性小幅改善，而非稳健容量承诺。不自行合并。
 
 本轮仅新增测试11行和审查文档；新增生产状态、配置、抽象、后台任务、自动重试、生产代码行数均0。本轮 namespace 无PID后已删除，owned探针事件为空，未改系统配置；原始失败及结果文件全部保留。
+
+## ASan 补测与最新合并建议
+
+2026-10-14 后续独立补测，START_HEAD=`23e77ca`。完整记录见 [Phase 7 ASan 补充验收](phase7_asan_verification.md)，证据在 DEV `/var/tmp/media_server_phase7_asan_23e77ca_zFCjAKc8/`。原完整报告 SHA256 保持 `0050fe41891106ee5b62b7ecf1a22ec3a04cad755fafcfbf88c01bf6a73123f6`，没有改写历史 A/B。
+
+- 原根因是 ucontext 头与普通 fcontext 静态库不匹配，不是 CMake 守卫错误；采用用户指定的本地 Boost 1.92.0，独立安装并真实通过 guard，未覆盖生产依赖。
+- 真实 fiber smoke 5 次通过，ASan UAF / LSan 512B 正对照确实检出；detect_leaks=1，未关闭报告。
+- 最终定向 ASan 12/12（13.15s）、完整 CTest 61/61（152.09s）通过。首次全量59/60失败保留：真实EMFILE后sanitizer临时pipe无法创建，测试只在确认耗尽后为自有子进程解除2FD压力，原错误及恢复断言不变。
+- `309940a` 修正 FD 耗尽测试的 sanitizer 清理条件；`66779b9` 修复 native WebRTC 测试客户端关闭回调引用环并补51次生命周期回归。没有修改 Phase 7 生产优化或 `media/**`、`signaling/**`、`third/**`。
+- GB 输入后的上游/下游FLV分别实际双轨解码60帧；10个混合viewer全部进展、WHEP音视频SRTP健康；33秒GB/RTCP实际收到6,959 RTP、1 SR、9 RR，另双轨解码90帧，DUT退出0。
+- 最终79份实际日志独立扫描无fatal sanitizer诊断，旧RED、故意错误正对照及ucontext兼容警告均保留。外部依赖不属于完整插桩栈；本轮是DEV功能验证，不是新的性能或Chrome验收。
+
+最新结论：**GO**，原ASan合并前置条件已实际完成，没有未解决的内存安全报告；建议外部Review后合并。GB小幅收益的统计边界与原性能结论保持不变。本轮仍不push、不merge，最终文档提交后保持工作区clean。
