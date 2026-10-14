@@ -7,7 +7,7 @@ export const store = {
   devices: [],
   sources: [],
   pushDevices: [],
-  // GB 设备 ID → { channels, at }；at 为该次通道请求发出的时间。
+  // GB 设备 ID → { channels, at, error }；at 为最近一次通道请求发出的时间，失败时保留上次成功的通道。
   channels: new Map(),
   loaded: false,
   error: null,
@@ -76,14 +76,15 @@ export function stopRefresh() {
   controller = null;
 }
 
-// 请求指定 GB 设备的通道列表。同一设备已有请求在途时复用；单个失败保留上次结果。
+// 请求指定 GB 设备的通道列表。同一设备已有请求在途时复用。
+// 失败也记录请求时间：syncChannels 据此等到下一次快照再重试，避免在通知里立即重复请求。
 export async function loadChannels(deviceIDs) {
   const pending = deviceIDs.map(id => {
     if (!channelRequests.has(id)) {
       const startedAt = Date.now();
       channelRequests.set(id, api.channels(id)
-        .then(result => { store.channels.set(id, { channels: result.channels || [], at: startedAt }); })
-        .catch(() => {})
+        .then(result => { store.channels.set(id, { channels: result.channels || [], at: startedAt, error: null }); })
+        .catch(error => { store.channels.set(id, { channels: store.channels.get(id)?.channels, at: startedAt, error }); })
         .finally(() => channelRequests.delete(id)));
     }
     return channelRequests.get(id);
@@ -157,6 +158,7 @@ export function unifiedDevices() {
     ...store.devices.map(device => ({
       key: `gb:${device.device_id}`, kind: "gb", id: device.device_id, name: device.name, protocol: "GB28181", filter: "gb",
       mode: "SIP 注册", endpoint: device.device_id, raw: device, status: gbStatus(device), channels: channelsOf(device.device_id),
+      channelError: store.channels.get(device.device_id)?.error || null,
     })),
     ...store.sources.map(source => ({
       key: `rtsp:${source.source_id}`, kind: "rtsp", id: source.source_id, name: source.stream_name, protocol: "RTSP", filter: "rtsp-pull",

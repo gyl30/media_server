@@ -40,7 +40,7 @@ export function mountDevices(root, ctx) {
   function update() {
     const all = unifiedDevices();
     // 只为还没有通道数据的在线 GB 设备请求一次通道列表，不随轮询全量刷新。
-    const missing = all.filter(device => device.kind === "gb" && device.raw.online && !device.channels).map(device => device.id);
+    const missing = all.filter(device => device.kind === "gb" && device.raw.online && !store.channels.has(device.id)).map(device => device.id);
     if (missing.length) void loadChannels(missing);
     const query = filters.query.trim().toLowerCase();
     const rows = all.filter(device => (filters.protocol === "all" || device.filter === filters.protocol)
@@ -105,7 +105,7 @@ function deviceRow(device, ctx) {
     h("td", { class: "c-status" }, h("div", { class: "cell-title" },
       h("span", {}, badge(device.status.label, device.status.tone)),
       device.status.detail ? h("span", { class: "table-sub" }, device.status.detail) : null)),
-    h("td", { class: "num hide-sm" }, device.kind === "gb" ? (device.channels ? String(device.channels.length) : h("span", { class: "muted" }, device.raw.online ? "…" : "—")) : h("span", { class: "muted" }, "—")),
+    h("td", { class: "num hide-sm" }, device.kind === "gb" ? (device.channels ? String(device.channels.length) : h("span", { class: "muted", title: device.channelError ? errorMessage(device.channelError) : "" }, device.channelError ? "获取失败" : device.raw.online ? "…" : "—")) : h("span", { class: "muted" }, "—")),
     h("td", { class: "c-actions" }, h("div", { class: "text-actions" }, rowActions(device, ctx))));
 }
 

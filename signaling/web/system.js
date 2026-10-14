@@ -40,6 +40,9 @@ function channelsNote() {
   if (loaded.length < online.length) {
     return "GB 通道数据获取中";
   }
+  if (loaded.some(item => item.error)) {
+    return "部分 GB 设备通道获取失败，点击右上角刷新重试";
+  }
   return `GB 通道数据时间 ${formatClock(Math.min(...loaded.map(item => item.at)))}，点击右上角刷新更新`;
 }
 

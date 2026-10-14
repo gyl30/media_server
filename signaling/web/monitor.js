@@ -217,7 +217,7 @@ export function mountVideo(root, ctx) {
               h("small", {}, protoTag("GB28181"), h("span", {}, device.raw.online ? (device.channels ? `${channels.length} 个通道` : "展开查看通道") : "设备离线"))),
             h("span", { class: `device-state${ready ? " ready" : ""}` }, h("span", { class: "dot" }), device.status.label)),
           open ? h("div", { class: "monitor-children" }, !device.raw.online ? h("p", { class: "monitor-note" }, "设备离线，通道不可用")
-            : !device.channels ? h("p", { class: "monitor-note" }, "正在获取通道…")
+            : !device.channels ? h("p", { class: "monitor-note" }, device.channelError ? `通道加载失败：${errorMessage(device.channelError)}` : "正在获取通道…")
             : matchedChannels.length === 0 ? h("p", { class: "monitor-note" }, "暂无通道")
             : matchedChannels.map(channel => sourceRow(playItem(device, channel), channel.name || channel.channel_id,
               channel.status === "ON" ? "" : "通道离线", channel.live?.state === "streaming" ? "点播中" : "可点播", playing))) : null));

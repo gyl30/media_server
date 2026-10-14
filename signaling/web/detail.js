@@ -104,7 +104,9 @@ export function mountDetail(root, ctx, kind, id) {
     if (!device.raw.online) {
       content = emptyState({ icon: "wifi-off", title: "设备离线", text: "设备注册上线后，通道会自动出现在这里。" });
     } else if (!device.channels) {
-      content = emptyState({ icon: "clock", title: "正在获取通道…" });
+      content = device.channelError
+        ? emptyState({ icon: "alert", tone: "danger", title: "通道加载失败", text: `${errorMessage(device.channelError)}。下一次刷新时会重新获取。` })
+        : emptyState({ icon: "clock", title: "正在获取通道…" });
     } else if (channels.length === 0) {
       content = emptyState({ icon: "layers", title: "未发现通道", text: "设备上线后会通过目录查询上报通道；若长时间为空，请检查设备配置。" });
     } else {
