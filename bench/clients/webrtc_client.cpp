@@ -362,9 +362,10 @@ struct webrtc_client_peer::implementation
             {
                 if (error)
                 {
-                    if (!closed && error_callback)
+                    const auto callback = error_callback;
+                    if (!closed && callback)
                     {
-                        error_callback(error);
+                        callback(error);
                     }
                     return;
                 }
@@ -373,9 +374,10 @@ struct webrtc_client_peer::implementation
                     ++received_media_datagrams;
                     const bool rtcp = receive_buffer[1] >= 192U && receive_buffer[1] <= 223U;
                     auto clear = rtcp ? srtp.unprotect_rtcp({receive_buffer.data(), size}) : srtp.unprotect_rtp({receive_buffer.data(), size});
-                    if (clear && packet_callback)
+                    const auto callback = packet_callback;
+                    if (clear && callback)
                     {
-                        packet_callback(rtcp, *clear);
+                        callback(rtcp, *clear);
                     }
                     else if (!clear)
                     {
@@ -412,9 +414,10 @@ struct webrtc_client_peer::implementation
                                      {
                                          if (send_error)
                                          {
-                                             if (!closed && error_callback)
+                                             const auto callback = error_callback;
+                                             if (!closed && callback)
                                              {
-                                                 error_callback(send_error);
+                                                 callback(send_error);
                                              }
                                              return;
                                          }
@@ -659,6 +662,8 @@ bool webrtc_client_peer::send_rtcp(std::span<const std::uint8_t> packet)
 void webrtc_client_peer::close() noexcept
 {
     implementation_->closed = true;
+    implementation_->packet_callback = {};
+    implementation_->error_callback = {};
     boost::system::error_code error;
     implementation_->keepalive_timer.cancel();
     implementation_->socket.close(error);
