@@ -4,98 +4,35 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>设备管理 · Media Server</title>
+  <title>Media Server 控制台</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="app-header">
-    <a class="brand" href="#devices" aria-label="返回设备管理"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>Media Server</strong></a>
-    <button id="refresh-button" class="button secondary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>刷新</button>
-  </header>
-  <nav class="view-tabs" aria-label="管理入口" role="tablist">
-    <button class="view-tab is-active" id="tab-devices" type="button" role="tab" aria-selected="true" aria-controls="view-devices" data-view="devices">设备</button>
-    <button class="view-tab" id="tab-sources" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-sources" data-view="sources">RTSP 源</button>
-    <button class="view-tab" id="tab-push" type="button" role="tab" tabindex="-1" aria-selected="false" aria-controls="view-push" data-view="push">推流设备</button>
-    <time id="last-updated">尚未刷新</time>
-  </nav>
-  <div id="global-status" class="global-status" role="status" aria-live="polite" hidden></div>
-  <main class="app-layout" data-view="devices">
-    <div class="workspace">
-      <section class="view is-active" id="view-devices" role="tabpanel" aria-labelledby="tab-devices">
-        <div class="device-layout">
-          <section class="device-pane" aria-labelledby="devices-title">
-            <div class="section-heading"><h1 id="devices-title">设备</h1><button id="add-device-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加设备</button></div>
-            <p id="device-count" class="count-label">正在加载…</p>
-            <div id="device-list" class="device-list" aria-busy="true"></div>
-            <div id="device-empty" class="empty-state compact" data-kind="loading"><strong>正在加载设备</strong><p>正在获取最新状态</p></div>
-          </section>
-          <section class="channel-pane" id="device-detail" aria-labelledby="selected-device-name" hidden>
-            <button id="back-devices-button" class="button secondary compact" type="button">返回设备列表</button>
-            <div class="section-heading detail-heading"><div><h1 id="selected-device-name"></h1><p id="selected-device" class="mono"></p><span id="selected-device-status"></span></div><button id="delete-device-button" class="button danger subtle" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#trash"></use></svg>删除设备</button></div>
-            <div class="subheading"><h2 id="channels-title">通道</h2></div>
-            <div class="table-wrap channel-table"><table><thead><tr><th scope="col">名称 / 编码</th><th scope="col">状态</th><th scope="col">取流</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="channel-rows"></tbody></table></div>
-            <div id="channel-empty" class="empty-state" role="status" aria-live="polite"><strong>正在同步通道…</strong><p>设备上线后，通道会自动显示在这里</p></div>
-          </section>
-          <div id="device-welcome" class="empty-state welcome"><strong>选择一台设备</strong><p>查看设备状态和通道，或开始播放。</p></div>
+  <div class="shell" id="shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="#devices"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-text"><strong>Media Server</strong><span>流媒体管理控制台</span></span></a>
+      <nav id="nav" class="nav" aria-label="页面"></nav>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <button id="menu-button" class="icon-btn menu-button" type="button" aria-label="打开导航" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="/icons.svg#menu"></use></svg></button>
+        <nav id="crumbs" class="crumbs" aria-label="位置"></nav>
+        <div class="topbar-actions">
+          <span id="updated" class="updated">尚未刷新</span>
+          <button id="refresh-button" class="btn sm" type="button"><svg class="icon sm" aria-hidden="true"><use href="/icons.svg#refresh"></use></svg>刷新</button>
         </div>
-      </section>
-      <section class="view" id="view-push" role="tabpanel" aria-labelledby="tab-push" hidden>
-        <div class="section-heading"><h1>推流设备</h1><button id="add-push-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加推流设备</button></div>
-        <section class="data-section" aria-label="推流设备">
-          <div class="table-wrap wide-table"><table><thead><tr><th scope="col">名称</th><th scope="col">状态</th><th scope="col">当前推流 token</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="push-rows"></tbody></table></div>
-          <div id="push-empty" class="empty-state" data-kind="loading"><strong>正在加载推流设备</strong><p>正在获取最新状态</p></div>
-        </section>
-      </section>
-      <section class="view" id="view-sources" role="tabpanel" aria-labelledby="tab-sources" hidden>
-        <div class="section-heading"><h1>RTSP 源</h1><button id="add-source-button" class="button primary" type="button"><svg class="icon" aria-hidden="true"><use href="/icons.svg#plus"></use></svg>添加源</button></div>
-        <section class="data-section" aria-label="RTSP 源">
-          <div class="table-wrap wide-table"><table><thead><tr><th scope="col">名称</th><th scope="col">地址</th><th scope="col">期望状态</th><th scope="col">取流状态</th><th scope="col" class="actions-heading">操作</th></tr></thead><tbody id="source-rows"></tbody></table></div>
-          <div id="source-empty" class="empty-state" data-kind="loading"><strong>正在加载媒体源</strong><p>正在获取最新状态</p></div>
-        </section>
-      </section>
+      </header>
+      <main id="view"></main>
     </div>
-    <section class="preview-panel" aria-labelledby="preview-title" hidden>
-      <div class="preview-heading"><h2 id="preview-title">播放器</h2><div class="player-actions"><button id="stop-preview-button" class="button secondary" type="button" disabled>关闭播放器</button><button id="stop-live-button" class="button danger subtle" type="button" disabled>停止设备取流</button></div></div>
-      <div class="video-shell"><video id="preview-video" autoplay playsinline controls></video><div id="preview-placeholder" class="video-placeholder"><svg class="preview-icon" aria-hidden="true"><use href="/icons.svg#monitor-play"></use></svg><strong>正在连接</strong></div></div>
-      <button id="resume-playback-button" class="button primary" type="button" hidden>点击播放音视频</button>
-      <dl class="preview-details"><div><dt>播放内容</dt><dd id="preview-target"></dd></div><div><dt>状态</dt><dd id="preview-state"></dd></div></dl>
-      <p id="preview-error" class="inline-error" role="alert" hidden></p>
-    </section>
-  </main>
-  <dialog id="device-dialog" class="source-dialog" aria-labelledby="device-dialog-title">
-    <form id="device-form">
-      <div class="dialog-heading"><h2 id="device-dialog-title">添加设备</h2><button id="close-device-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
-      <div class="form-grid"><label class="field"><span>设备 ID</span><input id="device-id" name="device_id" type="text" inputmode="numeric" pattern="[0-9]{20}" minlength="20" maxlength="20" autocomplete="off" required aria-describedby="device-id-hint"><small id="device-id-hint">20 位 GB28181 设备编码</small></label><label class="field"><span>设备名称</span><input id="device-name" name="name" type="text" autocomplete="off" required></label></div>
-      <p id="device-form-error" class="inline-error" role="alert" hidden></p>
-      <div class="dialog-actions"><button id="cancel-device-dialog" class="button secondary" type="button">取消</button><button id="save-device-button" class="button primary" type="submit">添加设备</button></div>
-    </form>
-  </dialog>
-  <dialog id="source-dialog" class="source-dialog" aria-labelledby="source-dialog-title">
-    <form id="source-form">
-      <div class="dialog-heading"><h2 id="source-dialog-title">添加源</h2><button class="icon-button" id="close-source-dialog" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
-      <input id="source-id" type="hidden">
-      <div class="form-grid"><label class="field"><span>源名称</span><input id="source-stream-name" name="stream_name" type="text" autocomplete="off" required></label><label class="field"><span>RTSP 地址</span><input id="source-url" name="url" type="url" inputmode="url" autocomplete="off" placeholder="rtsp://camera.example/live" required></label><label class="field"><span>用户名</span><input id="source-username" name="username" type="text" autocomplete="username"></label><label class="field"><span>密码</span><input id="source-password" name="password" type="password" autocomplete="new-password"></label></div>
-      <label id="clear-password-field" class="check-field" hidden><input id="clear-password" type="checkbox"><span>清除已保存密码</span></label>
-      <p id="source-form-error" class="inline-error" role="alert" hidden></p>
-      <div class="dialog-actions"><button id="cancel-source-dialog" class="button secondary" type="button">取消</button><button id="save-source-button" class="button primary" type="submit">添加源</button></div>
-    </form>
-  </dialog>
-  <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message"><form method="dialog"><h2 id="confirm-title">确认操作</h2><p id="confirm-message"></p><div class="dialog-actions"><button class="button secondary" value="cancel">取消</button><button id="confirm-action-button" class="button danger" value="confirm">删除</button></div></form></dialog>
-  <dialog id="push-dialog" class="source-dialog" aria-labelledby="push-dialog-title">
-    <form id="push-form">
-      <div class="dialog-heading"><h2 id="push-dialog-title">添加推流设备</h2><button id="close-push-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
-      <input id="push-id" type="hidden">
-      <label class="field"><span>设备名称</span><input id="push-name" name="name" type="text" autocomplete="off" required></label>
-      <p id="push-form-error" class="inline-error" role="alert" hidden></p>
-      <div class="dialog-actions"><button id="cancel-push-dialog" class="button secondary" type="button">取消</button><button id="save-push-button" class="button primary" type="submit">添加设备</button></div>
-    </form>
-  </dialog>
-  <dialog id="url-dialog" class="url-dialog" aria-labelledby="url-dialog-title">
-    <div class="dialog-heading"><h2 id="url-dialog-title">媒体地址</h2><button id="close-url-dialog" class="icon-button" type="button" aria-label="关闭"><svg class="icon" aria-hidden="true"><use href="/icons.svg#x"></use></svg></button></div>
-    <p id="url-hint" class="count-label"></p><div id="url-list" class="url-list"></div>
-    <div class="dialog-actions"><button id="done-url-dialog" class="button primary" type="button">关闭</button></div>
+  </div>
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <dialog id="device-dialog" class="dialog"></dialog>
+  <dialog id="confirm-dialog" class="dialog sm" aria-labelledby="confirm-title">
+    <div class="dialog-head"><h2 id="confirm-title">确认操作</h2></div>
+    <div class="dialog-body"><p data-message></p><div class="notice warn" role="alert" data-error hidden><svg class="icon" aria-hidden="true"><use href="/icons.svg#alert"></use></svg><span></span></div></div>
+    <div class="dialog-foot"><button class="btn" type="button" data-cancel>取消</button><button class="btn danger" type="button" data-confirm>确认</button></div>
   </dialog>
 </body>
 </html>

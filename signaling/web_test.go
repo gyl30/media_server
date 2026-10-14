@@ -11,7 +11,7 @@ import (
 func TestWebTokenManagement(t *testing.T) {
 	handler := testInfrastructure(t).handler()
 	for path, snippets := range map[string][]string{
-		"/":        {`id="view-push"`, `id="push-form"`, `id="url-dialog"`},
+		"/":        {`id="device-dialog"`, `id="confirm-dialog"`, `src="/app.js"`},
 		"/api.js":  {`"/api/play"`, `"/api/push-devices"`},
 		"/whep.js": {`ticket.stream_id`, `api.play(`, `new URL(location, session.whepURL)`},
 	} {
@@ -32,7 +32,8 @@ func TestWebManagementPageAndAssets(t *testing.T) {
 	handler := testInfrastructure(t).handler()
 	for path, expected := range map[string]string{
 		"/": "text/html", "/app.js": "text/javascript", "/api.js": "text/javascript",
-		"/whep.js": "text/javascript", "/style.css": "text/css",
+		"/whep.js": "text/javascript", "/style.css": "text/css", "/ui.js": "text/javascript",
+		"/store.js": "text/javascript", "/devices.js": "text/javascript", "/detail.js": "text/javascript",
 		"/icons.svg": "image/svg+xml", "/favicon.svg": "image/svg+xml",
 	} {
 		t.Run(path, func(t *testing.T) {
@@ -42,8 +43,8 @@ func TestWebManagementPageAndAssets(t *testing.T) {
 			if response.Code != http.StatusOK || err != nil || mediaType != expected || response.Body.Len() == 0 {
 				t.Fatalf("GET %s: status=%d type=%s error=%v", path, response.Code, mediaType, err)
 			}
-			if path == "/" && (!strings.Contains(response.Body.String(), `lang="zh-CN"`) || !strings.Contains(response.Body.String(), "添加设备")) {
-				t.Fatal("首页未提供中文设备管理入口")
+			if path == "/" && (!strings.Contains(response.Body.String(), `lang="zh-CN"`) || !strings.Contains(response.Body.String(), "Media Server 控制台")) {
+				t.Fatal("首页未提供中文管理控制台")
 			}
 		})
 	}
