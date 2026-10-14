@@ -94,5 +94,5 @@ CDP 驱动仅清理自己启动的 Chrome；启动失败也执行清理。需要
 
 - `WHEPPreview` 关闭时同时发送 DELETE 与关闭 PeerConnection，服务端常先因 DTLS 关闭释放会话，DELETE 得到 404（`whep.js` 视为已释放，资源已回收）。
 - 无头 Firefox 的全新配置没有 OpenH264，WHEP offer 不含 H.264，服务端返回 400；界面显示"浏览器与服务器无法协商音视频编码"。
-- 当前接续验收还有一次 WHEP 拉流经 RTSP 输出的首音频 PTS 回退未唯一定位；后续双轨通过不抵消该失败，整合结论和完整边界见 [接续验收](reviews/web_console_acceptance.md)。
+- 原首音频 PTS 回退失败仍保留，不能唯一还原旧连接的逐包原因；同类公共起点前迟到音频的初始化倒退已稳定复现并最小修复，新 ELF 七输入严格双轨通过。真实关页 DELETE 也已用独立 HTTP 观察器确认，整合结论和验证边界见 [接续验收](reviews/web_console_acceptance.md)。
 - 1150px 以下设备表隐藏“接入方式”列；手机宽度改用纵向设备卡片，长地址在卡片内截断，不造成页面横向溢出。
