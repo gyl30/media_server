@@ -1285,22 +1285,48 @@ std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp)
     for (const auto& media : answer->media)
     {
         const auto media_direction = lower_copy(media.direction);
-        if (media.port == 0 || !bundle_contains(*answer, media.mid) || (media_direction != "sendonly" && media_direction != "sendrecv"))
+        // port 0 明确拒绝该轨道，inactive 是 recvonly offer 的合法无媒体应答。
+        if (media.port == 0 || media_direction == "inactive")
         {
             continue;
         }
+        // 本客户端只接收共享传输上的媒体；活跃轨道不能被静默忽略为 video-only。
+        if (!bundle_contains(*answer, media.mid) || media_direction != "sendonly")
+        {
+            return std::nullopt;
+        }
+        const auto media_type = lower_copy(media.type);
+        if (std::any_of(media.payload_types.begin(), media.payload_types.end(),
+                        [&](int payload_type)
+                        {
+                            return media_type == "video" ? payload_type < 96 || payload_type > 99
+                                                         : media_type != "audio" || payload_type != 111;
+                        }))
+        {
+            return std::nullopt;
+        }
+        bool supported = false;
         for (const auto& codec : media.codecs)
         {
+            // on_rtpmap 已过滤不属于当前 m= 的 PT；这里仅匹配本客户端固定 offer 的 codec。
             const auto encoding = lower_copy(codec.encoding_name);
-            if (lower_copy(media.type) == "video" && result.video_payload_type < 0 && encoding == "h264" && codec.clock_rate == 90'000U &&
+            if (media_type == "video" && codec.payload_type >= 96 && codec.payload_type <= 99 &&
+                result.video_payload_type < 0 && encoding == "h264" && codec.clock_rate == 90'000U &&
                 has_parameter(codec.format_parameters, "packetization-mode", "1"))
             {
                 result.video_payload_type = codec.payload_type;
+                supported = true;
             }
-            else if (lower_copy(media.type) == "audio" && !result.audio_payload_type && encoding == "opus" && codec.clock_rate == 48'000U)
+            else if (media_type == "audio" && codec.payload_type == 111 && !result.audio_payload_type && encoding == "opus" &&
+                     codec.clock_rate == 48'000U && codec.channel_count == 2)
             {
                 result.audio_payload_type = codec.payload_type;
+                supported = true;
             }
+        }
+        if (!supported)
+        {
+            return std::nullopt;
         }
     }
     if (result.video_payload_type < 0)

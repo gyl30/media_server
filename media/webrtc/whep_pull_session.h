@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <chrono>
 #include <optional>
 
 #include <boost/asio/spawn.hpp>
@@ -90,6 +91,14 @@ class whep_pull_session final : public session, public std::enable_shared_from_t
     std::uint64_t tie_breaker_{};
     std::array<std::uint8_t, 8> transaction_prefix_{};
     std::uint32_t check_sequence_{};
+    struct pending_check
+    {
+        std::array<std::uint8_t, 12> transaction;
+        boost::asio::ip::udp::endpoint endpoint;
+        std::chrono::steady_clock::time_point sent;
+    };
+    std::vector<pending_check> pending_checks_;
+    std::chrono::steady_clock::time_point consent_received_{};
 };
 
 }    // namespace media_server

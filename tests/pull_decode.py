@@ -2,7 +2,11 @@
 # 主动拉流的真实媒体验证：媒体服务器从上游拉流（RTMP / RTSP / WHEP 播放输出、FFmpeg 独立 RTMP 服务器），
 # 再由独立 FFmpeg 从本服务器的 RTMP 输出解码音视频；上游结束后拉流会话随之结束。
 import json
+import hashlib
+import hmac
+import re
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -10,6 +14,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import threading
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "bench"))
@@ -93,6 +99,86 @@ class WhepProxy:
         self.server.server_close()
 
 
+class WhepRelay:
+    """真实 DTLS/SRTP 双向透传；仅改变成功 STUN 事务或停止其响应。"""
+
+    def __init__(self):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind(("127.0.0.1", 0))
+        self.socket.settimeout(0.1)
+        self.upstream = None
+        self.client = None
+        self.password = None
+        self.wrong_transaction = False
+        self.drop_consent = False
+        self.responses = 0
+        self.altered = 0
+        self.dropped = 0
+        self.media = 0
+        self.error = None
+        self.closed = threading.Event()
+        self.thread = threading.Thread(target=self.run, daemon=True)
+        self.thread.start()
+
+    def rewrite(self, answer):
+        candidate = re.search(r"a=candidate:\S+ 1 UDP \d+ (127\.0\.0\.1) (\d+)", answer)
+        assert candidate, answer
+        self.upstream = (candidate[1], int(candidate[2]))
+        self.password = re.search(r"a=ice-pwd:([^\r\n]+)", answer)[1].encode()
+        return answer[:candidate.start(2)] + str(self.socket.getsockname()[1]) + answer[candidate.end(2):]
+
+    def alter_transaction(self, packet):
+        packet = bytearray(packet)
+        packet[19] ^= 0x80  # 8-byte prefix remains genuine; remaining transaction ID was never sent.
+        offset = 20
+        while offset < len(packet):
+            kind, size = struct.unpack_from("!HH", packet, offset)
+            if kind == 0x0008:
+                prefix = bytearray(packet[:offset])
+                struct.pack_into("!H", prefix, 2, offset + 24 - 20)
+                packet[offset + 4:offset + 24] = hmac.new(self.password, prefix, hashlib.sha1).digest()
+            elif kind == 0x8028:
+                struct.pack_into("!I", packet, offset + 4, zlib.crc32(packet[:offset]) ^ 0x5354554E)
+            offset += 4 + ((size + 3) & ~3)
+        return bytes(packet)
+
+    def run(self):
+        try:
+            while not self.closed.is_set():
+                try:
+                    packet, source = self.socket.recvfrom(65536)
+                except socket.timeout:
+                    continue
+                if source == self.upstream:
+                    if packet[:2] == b"\x01\x01" and packet[4:8] == b"\x21\x12\xa4\x42":
+                        self.responses += 1
+                        if self.drop_consent:
+                            self.dropped += 1
+                            continue
+                        if self.wrong_transaction:
+                            packet = self.alter_transaction(packet)
+                            self.altered += 1
+                    elif packet and 128 <= packet[0] <= 191:
+                        self.media += 1
+                    if self.client is not None:
+                        self.socket.sendto(packet, self.client)
+                else:
+                    self.client = source
+                    if self.upstream is not None:
+                        self.socket.sendto(packet, self.upstream)
+        except OSError as error:
+            if not self.closed.is_set():
+                self.error = error
+        except Exception as error:
+            self.error = error
+
+    def close(self):
+        self.closed.set()
+        self.thread.join(timeout=1)
+        self.socket.close()
+        assert not self.thread.is_alive() and self.error is None, self.error
+
+
 # 外部 WHEP 端点的失败路径：拒绝连接、HTTP 错误、非法应答、DTLS 指纹不符、candidate 不可达。
 # 每种情况下拉流会话都会结束；已经创建的外部资源会被 DELETE。
 def whep_failures(base, http_port, source, signaling, log):
@@ -148,6 +234,8 @@ def main():
                                        "--http-port", str(http_port), "--bind-address", "127.0.0.1", "--webrtc-address", "127.0.0.1",
                                        "--signaling-url", signaling.url], stdout=server_log, stderr=subprocess.STDOUT)
             upstream = None
+            proxy = None
+            relay = None
             log = lambda: (output / "server.log").read_text()
             try:
                 wait_for_listener("127.0.0.1", http_port)
@@ -168,6 +256,11 @@ def main():
                     url = {"rtmp": f"rtmp://127.0.0.1:{rtmp_port}/{source}/{play}",
                            "rtsp": f"rtsp://127.0.0.1:{rtsp_port}/{source}/{play}",
                            "whep": f"http://127.0.0.1:{http_port}/play/whep/{source}/{play}"}.get(mode, "")
+                    if mode in ("whep_shutdown", "whep_transaction", "whep_consent"):
+                        relay = WhepRelay()
+                        relay.wrong_transaction = mode == "whep_transaction"
+                        proxy = WhepProxy(f"http://127.0.0.1:{http_port}/play/whep/{source}/{play}", relay.rewrite)
+                        url = proxy.url
                 if mode == "whep_failures":
                     whep_failures(base, http_port, source, signaling, log)
                     return
@@ -184,6 +277,14 @@ def main():
                 pulled = str(uuid.uuid4())
                 assert post(base, "/pull/create", {"stream_id": pulled, "url": url}) == 201, log()
                 assert post(base, "/pull/create", {"stream_id": pulled, "url": url}) == 409, log()
+                if mode == "whep_transaction":
+                    wait_until(lambda: relay.altered >= 1, 5, lambda: "no genuine STUN response was rewritten by relay")
+                    time.sleep(0.5)  # Allow the rewritten authenticated response to reach the DUT's owner handler.
+                    assert relay.error is None, relay.error
+                    assert "whep pull ice connected " + pulled not in log() and "whep pull dtls connected " + pulled not in log(), \
+                        "authenticated response with unsent transaction was accepted\n" + log()
+                    assert not receivers(base).get(pulled), "unsent STUN transaction established media\n" + log()
+                    relay.wrong_transaction = False
                 wait_until(lambda: receivers(base).get(pulled), 10, log)
                 token = signaling.issue("play", pulled)
                 decoded = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-rw_timeout", "3000000",
@@ -192,6 +293,34 @@ def main():
                 assert decoded.returncode == 0, decoded.stderr
                 assert "Video: h264" in decoded.stderr and "Audio: aac" in decoded.stderr and "time=00:00:02" in decoded.stderr, decoded.stderr
                 print(f"{mode} pull -> RTMP output H.264/AAC decode: PASS", flush=True)
+
+                if mode == "whep_shutdown":
+                    stop_process(server)
+                    assert server.returncode == 0, log()
+                    wait_until(lambda: len(proxy.deletes) == 1, 8, lambda: "worker stop lost external WHEP DELETE\n" + log())
+                    assert relay.error is None, relay.error
+                    print("WHEP worker stop drains external DELETE: PASS", flush=True)
+                    return
+
+                if mode == "whep_consent":
+                    relay.drop_consent = True
+                    media_before = relay.media
+                    started = time.monotonic()
+                    time.sleep(10)
+                    assert receivers(base).get(pulled), "consent expired prematurely\n" + log()
+                    # Verify authenticated video/audio still decode after responses have stopped.
+                    token = signaling.issue("play", pulled)
+                    decoded = subprocess.run([ffmpeg, "-nostdin", "-hide_banner", "-loglevel", "info", "-rw_timeout", "3000000",
+                                              "-i", f"rtmp://127.0.0.1:{rtmp_port}/{pulled}/{token}", "-map", "0:v:0", "-map", "0:a:0",
+                                              "-t", "2", "-f", "null", "-"], capture_output=True, text=True, timeout=15)
+                    assert decoded.returncode == 0 and "time=00:00:02" in decoded.stderr, decoded.stderr
+                    wait_until(lambda: pulled not in receivers(base), max(1, 36 - (time.monotonic() - started)),
+                               lambda: "continuous authenticated media prevented consent expiry\n" + log())
+                    assert 24 <= time.monotonic() - started <= 36, time.monotonic() - started
+                    assert receivers(base).get(source) and relay.media - media_before > 200 and relay.dropped >= 4, (relay.media, relay.dropped, log())
+                    wait_until(lambda: len(proxy.deletes) == 1, 5, lambda: "consent-expired resource not deleted")
+                    print("WHEP consent expires despite continuous decodable SRTP: PASS", flush=True)
+                    return
 
                 stop_process(upstream)
                 upstream = None
@@ -208,6 +337,10 @@ def main():
             finally:
                 stop_process(upstream)
                 stop_process(server)
+                if proxy is not None:
+                    proxy.close()
+                if relay is not None:
+                    relay.close()
                 text = log()
                 assert server.returncode == 0 and "ERROR: AddressSanitizer" not in text and "runtime error:" not in text, text
 

@@ -12,8 +12,10 @@
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <boost/scope/scope_exit.hpp>
 
 #include "media/net/worker_context.h"
 #include "media/net/media_port_pool.h"
@@ -27,9 +29,11 @@ namespace
 
 constexpr auto http_timeout = std::chrono::seconds{5};
 constexpr auto establishment_timeout = std::chrono::seconds{15};
-// 连接建立前按 RFC 8445 的检查节奏重发；建立后周期性检查用于对端的同意新鲜度（RFC 7675）。
+// 固定 controlling / 积极提名的有限 ICE 检查；建立后独立检查对端的同意新鲜度授权期限。
 constexpr auto check_interval = std::chrono::milliseconds{100};
 constexpr auto consent_interval = std::chrono::seconds{5};
+constexpr auto consent_timeout = std::chrono::seconds{30};
+constexpr auto transaction_timeout = std::chrono::seconds{5};
 constexpr std::uint32_t host_candidate_priority = 2'130'706'431U;
 constexpr std::size_t max_sdp_size = 64U * 1024U;
 
@@ -59,7 +63,7 @@ struct http_result
     std::string body;
 };
 
-// 一次 HTTP/1.1 请求（WHEP 只用 http://）；连接、发送与读取共用一个期限。
+// 一次 HTTP/1.1 请求（WHEP 只用 http://）；DNS、连接、发送与读取共用一个期限。
 std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolver,
                                          const ada::url_aggregator& url,
                                          boost::beast::http::verb method,
@@ -74,14 +78,33 @@ std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolve
         hostname.remove_suffix(1);
     }
     const std::string port = url.get_port().empty() ? "80" : std::string(url.get_port());
+    boost::beast::tcp_stream stream(yield.get_executor());
+    boost::asio::steady_timer deadline(yield.get_executor());
+    const auto active = std::make_shared<bool>(true);
+    const auto expires = std::chrono::steady_clock::now() + http_timeout;
+    deadline.expires_at(expires);
+    deadline.async_wait(
+        [active, &resolver, &stream](boost::system::error_code error)
+        {
+            if (!error && *active)
+            {
+                resolver.cancel();
+                stream.cancel();
+            }
+        });
+    boost::scope::scope_exit stop_deadline(
+        [&]()
+        {
+            *active = false;
+            deadline.cancel();
+        });
     boost::system::error_code error;
     const auto endpoints = resolver.async_resolve(std::string(hostname), port, yield[error]);
     if (error)
     {
         return std::nullopt;
     }
-    boost::beast::tcp_stream stream(yield.get_executor());
-    stream.expires_after(http_timeout);
+    stream.expires_at(expires);
     stream.async_connect(endpoints, yield[error]);
     if (error)
     {
@@ -126,14 +149,17 @@ std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolve
 // 会话结束后释放外部 WHEP 资源；与会话生命周期分离，只持有请求所需的数据。
 void delete_resource(worker_context& worker, std::string resource_url, std::string token)
 {
-    worker.spawn(
+    // Worker 的普通任务在 request_stop 时取消/拒绝创建；资源回收必须在 owner io 上继续排空。
+    boost::asio::spawn(
+        worker.io(),
         [resource_url = std::move(resource_url), token = std::move(token)](boost::asio::yield_context yield)
         {
             const auto url = ada::parse<ada::url_aggregator>(resource_url);
             boost::asio::ip::tcp::resolver resolver(yield.get_executor());
             const auto result = url ? http_exchange(resolver, *url, boost::beast::http::verb::delete_, {}, token, yield) : std::nullopt;
             spdlog::info("whep pull resource delete {} status {}", resource_url, result ? result->status : 0U);
-        });
+        },
+        boost::asio::detached);
 }
 
 }    // namespace
@@ -183,6 +209,7 @@ void whep_pull_session::safe_shutdown()
     srtp_.reset();
     media_receiver_.reset();
     selected_.reset();
+    pending_checks_.clear();
     if (udp_transport_)
     {
         udp_transport_->shutdown();
@@ -368,20 +395,35 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
 {
     if (const auto transaction = parse_stun_binding_success_response(packet, answer_->ice_pwd))
     {
-        if (!std::equal(transaction_prefix_.begin(), transaction_prefix_.end(), transaction->begin()) ||
-            std::find(answer_->candidates.begin(), answer_->candidates.end(), endpoint) == answer_->candidates.end())
+        const auto now = std::chrono::steady_clock::now();
+        const auto pending = std::find_if(pending_checks_.begin(), pending_checks_.end(),
+                                         [&](const pending_check& check)
+                                         {
+                                             return check.transaction == *transaction && check.endpoint == endpoint &&
+                                                    now - check.sent < transaction_timeout;
+                                         });
+        if (pending == pending_checks_.end())
         {
             return;
         }
+        pending_checks_.erase(pending);
         if (selected_)
         {
             if (endpoint == *selected_)
             {
+                if (now - consent_received_ >= consent_timeout)
+                {
+                    shutdown();
+                    return;
+                }
                 idle_timer_.touch();
+                consent_received_ = now;
             }
             return;
         }
         selected_ = endpoint;
+        consent_received_ = now;
+        pending_checks_.clear();
         idle_timer_.touch();
         spdlog::info("whep pull ice connected {} remote {} {}", config_.stream_id, endpoint.address().to_string(), endpoint.port());
         const auto self = shared_from_this();
@@ -474,6 +516,14 @@ void whep_pull_session::send_checks()
     {
         return;
     }
+    const auto now = std::chrono::steady_clock::now();
+    if (selected_ && now - consent_received_ >= consent_timeout)
+    {
+        spdlog::info("whep pull consent expired {}", config_.stream_id);
+        shutdown();
+        return;
+    }
+    std::erase_if(pending_checks_, [&](const pending_check& check) { return now - check.sent >= transaction_timeout; });
     const auto username = answer_->ice_ufrag + ":" + ice_ufrag_;
     const auto& targets = selected_ ? std::vector<boost::asio::ip::udp::endpoint>{*selected_} : answer_->candidates;
     for (const auto& target : targets)
@@ -482,6 +532,7 @@ void whep_pull_session::send_checks()
         std::copy(transaction_prefix_.begin(), transaction_prefix_.end(), transaction.begin());
         const auto sequence = ++check_sequence_;
         std::memcpy(transaction.data() + transaction_prefix_.size(), &sequence, sizeof(sequence));
+        pending_checks_.push_back(pending_check{transaction, target, now});
         send_udp(make_stun_binding_request(transaction, username, answer_->ice_pwd, host_candidate_priority, tie_breaker_), target);
     }
     schedule_checks();
@@ -489,7 +540,8 @@ void whep_pull_session::send_checks()
 
 void whep_pull_session::schedule_checks()
 {
-    check_timer_.expires_after(selected_ ? std::chrono::duration_cast<std::chrono::milliseconds>(consent_interval) : check_interval);
+    const auto now = std::chrono::steady_clock::now();
+    check_timer_.expires_at(selected_ ? std::min(now + consent_interval, consent_received_ + consent_timeout) : now + check_interval);
     const auto self = shared_from_this();
     check_timer_.async_wait(
         [self](boost::system::error_code error)

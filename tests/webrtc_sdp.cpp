@@ -1,6 +1,8 @@
 #include <array>
 #include <string>
 #include <vector>
+#include <utility>
+#include <string_view>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -185,11 +187,62 @@ void check_whep_pull()
                             without_candidate.find("a=end-of-candidates") - without_candidate.find("a=candidate:"));
     auto vp8_only = answer->sdp;
     vp8_only.replace(vp8_only.find("H264/90000"), 10, "VP8/90000");
-    for (const auto& invalid : {without_candidate, vp8_only, std::string("v=0\r\n")})
+    auto replace_all = [](std::string text, std::string_view from, std::string_view to)
+    {
+        std::size_t offset = 0;
+        while ((offset = text.find(from, offset)) != std::string::npos)
+        {
+            text.replace(offset, from.size(), to);
+            offset += to.size();
+        }
+        return text;
+    };
+    auto unoffered_video = replace_all(answer->sdp, " 99\r\n", " 120\r\n");
+    unoffered_video = replace_all(unoffered_video, ":99 ", ":120 ");
+    auto unoffered_audio = replace_all(answer->sdp, " 111\r\n", " 112\r\n");
+    unoffered_audio = replace_all(unoffered_audio, ":111 ", ":112 ");
+    const auto unlisted_video = replace_all(answer->sdp, " 99\r\n", " 96\r\n");
+    const auto unlisted_audio = replace_all(answer->sdp, " 111\r\n", " 112\r\n");
+    const auto unsupported_audio = replace_all(answer->sdp, "opus/48000/2", "PCMU/8000");
+    const auto unbundled_audio = replace_all(answer->sdp, "a=group:BUNDLE 0 1\r\n", "a=group:BUNDLE 0\r\n");
+    auto audio_direction = [&](std::string_view direction)
+    {
+        auto text = answer->sdp;
+        const auto offset = text.find("a=sendonly", text.find("m=audio"));
+        if (offset == std::string::npos) throw std::runtime_error("test answer has no sending audio");
+        text.replace(offset, std::string_view("a=sendonly").size(), direction);
+        return text;
+    };
+    const auto inactive_audio = parse_whep_pull_answer(audio_direction("a=inactive"));
+    const auto video_only_sdp = make_webrtc_answer(*offer, {video}, server);
+    const auto video_only = video_only_sdp ? parse_whep_pull_answer(video_only_sdp->sdp) : std::nullopt;
+    if (!inactive_audio || inactive_audio->audio_payload_type || !video_only || video_only->audio_payload_type)
+    {
+        throw std::runtime_error("valid video-only WHEP answer rejected");
+    }
+    for (const auto& [payload_type, profile] : {std::pair{96, "42e01f"}, std::pair{97, "42001f"},
+                                               std::pair{98, "4d001f"}, std::pair{99, "64001f"}})
+    {
+        auto text = replace_all(answer->sdp, " 99\r\n", " " + std::to_string(payload_type) + "\r\n");
+        text = replace_all(text, ":99 ", ":" + std::to_string(payload_type) + " ");
+        text = replace_all(text, "profile-level-id=64001f", std::string("profile-level-id=") + profile);
+        const auto supported_answer = parse_whep_pull_answer(text);
+        if (!supported_answer || supported_answer->video_payload_type != payload_type)
+        {
+            throw std::runtime_error("offered H.264 PT rejected: " + std::to_string(payload_type));
+        }
+    }
+    const std::vector<std::pair<std::string_view, std::string>> invalid_answers{
+        {"no candidate", without_candidate}, {"VP8 only", vp8_only}, {"unoffered video PT", unoffered_video},
+        {"unoffered audio PT", unoffered_audio}, {"unlisted video rtpmap", unlisted_video}, {"unlisted audio rtpmap", unlisted_audio},
+        {"unsupported active audio", unsupported_audio}, {"unbundled active audio", unbundled_audio},
+        {"recvonly audio answer to recvonly offer", audio_direction("a=recvonly")},
+        {"sendrecv audio answer to recvonly offer", audio_direction("a=sendrecv")}, {"incomplete SDP", "v=0\r\n"}};
+    for (const auto& [name, invalid] : invalid_answers)
     {
         if (parse_whep_pull_answer(invalid))
         {
-            throw std::runtime_error("invalid whep pull answer accepted");
+            throw std::runtime_error("invalid WHEP answer accepted: " + std::string(name));
         }
     }
     std::cout << "WHEP pull offer/answer: PASS\n";

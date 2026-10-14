@@ -460,7 +460,7 @@ if(BUILD_TESTING)
             COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/rtmp_decode.py
                 $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} h265)
         set_tests_properties(rtmp_hevc_decode PROPERTIES TIMEOUT 60)
-        foreach(pull_mode rtmp rtmp_listen rtmp_unsupported rtsp whep whep_failures)
+        foreach(pull_mode rtmp rtmp_listen rtmp_unsupported rtsp whep whep_failures whep_shutdown whep_transaction whep_consent)
             add_test(NAME pull_decode_${pull_mode}
                 COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/pull_decode.py
                     $<TARGET_FILE:media_server> ${MEDIA_SERVER_TEST_FFMPEG} ${pull_mode})
