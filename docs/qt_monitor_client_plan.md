@@ -59,3 +59,5 @@
 阶段四录像目录查询子集已实现：新RecordInfo入口复用SN/pending与锁，累计完整分批后返回，标准零条及无Result支持，保留合法重复及接收顺序。应用上限1000条/平台15秒/Qt20秒，不新增DB或后台轮询；独立非模态窗口取消先断回调再abort，不干扰实时或PTZ。Go全量test/race/vet通过，normal与ASan+UBSan各5/5桌面CTest（各311项QTest，109.01/111.14秒）通过；实际Qt→HTTP→UDP组合run02显示两批目录、期末pending/live/owner/INVITE均0、正常退出。Claude第26–29轮设计及生产复审无阻断，原始工具/fixture失败保留。真实录像目录BLOCKED，独立历史回放/下载NOT_RUN，整个阶段四及平台仍未GO。详见[录像目录查询验证](qt_monitor_client_stage4_record_query.md)。证据：DEV `/var/tmp/media-server-qt-record-query-zk3R88Gs/`、`/var/tmp/media-server-qt-record-ui-tests-WtTP1nRN/`、`/var/tmp/media-server-qt-stage4-record-main-6S4nzeFB/`。
 
 录像回放前置审查发现既有实时 INVITE 取消期间的成功响应未被 ACK/BYE、以及重传 ACK 的 CSeq/Route 错误，先独立修复，不复制缺陷到回放。平台改用公开事务单 owner 等待、Init 前安装 ACK 重传回调和同一窄对话请求构造器；不新增对话 registry、后台 goroutine、持久状态或关闭标志。详见[邀请取消与 ACK 生命周期](qt_monitor_client_sip_lifecycle.md)。该修复不代表历史回放已实现；录像首尾、独立会话所有权及实际控制仍须单独设计和验证。
+
+阶段四继续采用独立有限传输，不把历史录像接入实时 `media_stream`：TCP/RTP 原始 PS 通过一次授权 HTTP chunked 通道交给 FFmpeg。传输正常结束与录像内容完整严格区分；私有真实媒体组合已验证逐帧及 PCM 参考一致和异常结束，自然注销及 sanitizer 结果单列。详见[有限录像传输子集](qt_monitor_client_stage4_finite_transport.md)。signaling 历史 owner/票据/INVITE/121/INFO、Qt 有限背压及显示和音频尾部排空仍须后续实现，不把这个组件标记为完整历史回放。

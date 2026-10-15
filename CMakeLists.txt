@@ -262,6 +262,7 @@ add_library(media_core STATIC
     media/gb28181/gb28181_udp_sender_session.cpp
     media/gb28181/gb28181_tcp_sender_session.cpp
     media/gb28181/gb28181_tcp_receiver_session.cpp
+    media/gb28181/gb28181_playback_session.cpp
     media/webrtc/dtls_certificate.cpp
     media/webrtc/dtls_transport.cpp
     media/webrtc/stun_message.cpp
@@ -346,6 +347,14 @@ if(BUILD_TESTING)
     add_test(NAME gb_sender_lifecycle COMMAND gb_sender_lifecycle_tests)
     set_tests_properties(gb_sender_lifecycle PROPERTIES TIMEOUT 30)
 
+    add_executable(gb_playback_lifecycle_tests tests/gb_playback_lifecycle.cpp)
+    target_link_libraries(gb_playback_lifecycle_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb_playback_lifecycle COMMAND gb_playback_lifecycle_tests)
+    set_tests_properties(gb_playback_lifecycle PROPERTIES TIMEOUT 60)
+    add_executable(gb_playback_http_tests tests/gb_playback_http.cpp)
+    target_link_libraries(gb_playback_http_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb_playback_http COMMAND gb_playback_http_tests)
+    set_tests_properties(gb_playback_http PROPERTIES TIMEOUT 60)
     add_executable(gb_tcp_lifecycle_tests tests/gb_tcp_lifecycle.cpp)
     target_link_libraries(gb_tcp_lifecycle_tests PRIVATE media_core media_server_link_options)
     foreach(scenario receiver_queued_read sender_connected sender_refused sender_pending_accept)

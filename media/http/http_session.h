@@ -25,7 +25,7 @@ class http_session final : public std::enable_shared_from_this<http_session>
 
    private:
     void run(boost::asio::yield_context yield);
-    void handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, boost::asio::yield_context yield);
+    void handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, bool trailing_bytes, boost::asio::yield_context yield);
     void write_string_response(boost::beast::http::request<boost::beast::http::string_body>& request,
                                boost::beast::http::response<boost::beast::http::string_body> response,
                                boost::asio::yield_context yield);

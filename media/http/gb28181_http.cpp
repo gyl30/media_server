@@ -12,6 +12,7 @@
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/core/session_registry.h"
+#include "media/gb28181/gb28181_playback_session.h"
 #include "media/gb28181/gb28181_tcp_sender_session.h"
 #include "media/gb28181/gb28181_udp_sender_session.h"
 #include "media/gb28181/gb28181_tcp_receiver_session.h"
@@ -76,15 +77,28 @@ std::optional<gb28181_http_response> validate_request(const gb28181_http_request
     return std::nullopt;
 }
 
-gb28181_http_response handle_receiver_create(const gb28181_http_request& request,
-                                             worker_context& worker,
-                                             gb28181_receiver_config config,
-                                             boost::asio::ip::address bind_address)
+gb28181_http_response handle_receiver_create(
+    const gb28181_http_request& request, worker_context& worker, gb28181_receiver_config config, boost::asio::ip::address bind_address, bool playback)
 {
     const auto stream_id = config.stream_id;
     if (stream_registry::instance().find(stream_id))
     {
         return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+    }
+
+    if (playback)
+    {
+        if (config.transport != gb28181_transport::tcp_passive)
+        {
+            return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
+        }
+        auto session = std::make_shared<gb28181_playback_session>(worker, stream_id, config.payload_type, config.ssrc);
+        if (!session_registry::instance().add_receiver_session(stream_id, session) || !session->startup(std::move(bind_address), config.listen_port))
+        {
+            session->shutdown();
+            return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
+        }
+        return make_empty_response(request, boost::beast::http::status::created);
     }
 
     if (config.transport == gb28181_transport::udp)
@@ -188,7 +202,7 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
                                                       boost::asio::ip::address bind_address)
 {
     const auto path = target.get_pathname();
-    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/update")
+    if (path != "/gb28181/receiver/create" && path != "/gb28181/receiver/update" && path != "/gb28181/receiver/playback/create")
     {
         return make_error_response(request, boost::beast::http::status::not_found, "not_found");
     }
@@ -197,14 +211,14 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
         return *error;
     }
 
-    if (path == "/gb28181/receiver/create")
+    if (path != "/gb28181/receiver/update")
     {
         auto config = parse_gb28181_receiver_config(request.body());
         if (!config)
         {
             return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request");
         }
-        return handle_receiver_create(request, worker, std::move(*config), std::move(bind_address));
+        return handle_receiver_create(request, worker, std::move(*config), std::move(bind_address), path == "/gb28181/receiver/playback/create");
     }
 
     const auto update = parse_gb28181_receiver_update(request.body());
@@ -221,6 +235,10 @@ gb28181_http_response handle_gb28181_receiver_request(const gb28181_http_request
     else if (const auto tcp = std::dynamic_pointer_cast<gb28181_tcp_receiver_session>(found))
     {
         tcp->update_ssrc(ssrc);
+    }
+    else if (const auto playback = std::dynamic_pointer_cast<gb28181_playback_session>(found))
+    {
+        playback->update_ssrc(ssrc);
     }
     else
     {

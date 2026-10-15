@@ -19,6 +19,8 @@
 #include "media/core/session_registry.h"
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
+#include "media/http/signaling_verify.h"
+#include "media/gb28181/gb28181_playback_session.h"
 
 namespace media_server
 {
@@ -91,11 +93,13 @@ void http_session::run(boost::asio::yield_context yield)
     }
     else
     {
-        handle_request(request, yield);
+        handle_request(request, buffer.size() != 0, yield);
     }
 }
 
-void http_session::handle_request(boost::beast::http::request<boost::beast::http::string_body>& request, boost::asio::yield_context yield)
+void http_session::handle_request(boost::beast::http::request<boost::beast::http::string_body>& request,
+                                  bool trailing_bytes,
+                                  boost::asio::yield_context yield)
 {
     const auto parsed = parse_http_target(request.target());
     if (!parsed)
@@ -203,6 +207,45 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     if (path == "/pull" || path.starts_with("/pull/"))
     {
         write_string_response(request, media_server::handle_pull_request(request, worker_, config_, *parsed), yield);
+        return;
+    }
+    if (path == "/play/gb28181" || path.starts_with("/play/gb28181/"))
+    {
+        if (request.method() != boost::beast::http::verb::get)
+        {
+            send_text_response(request, boost::beast::http::status::method_not_allowed, "method not allowed\n", yield, "GET");
+            return;
+        }
+        constexpr std::string_view prefix = "/play/gb28181/";
+        const auto identity = path.starts_with(prefix) ? path.substr(prefix.size()) : std::string_view{};
+        const auto separator = identity.find('/');
+        const auto stream_id = identity.substr(0, separator);
+        const auto suffix = separator == std::string_view::npos ? std::string_view{} : identity.substr(separator + 1);
+        const auto token = suffix.ends_with(".ps") ? suffix.substr(0, suffix.size() - 3) : std::string_view{};
+        if (parsed->has_search() || request.version() != 11 || trailing_bytes || !request.body().empty() || !valid_stream_id(stream_id) ||
+            !valid_stream_token(token))
+        {
+            send_text_response(request, boost::beast::http::status::bad_request, "invalid playback request\n", yield);
+            return;
+        }
+        const auto receiver = std::dynamic_pointer_cast<gb28181_playback_session>(session_registry::instance().find_receiver_session(stream_id));
+        if (!receiver)
+        {
+            send_text_response(request, boost::beast::http::status::not_found, "playback not found\n", yield);
+            return;
+        }
+        if (!verify_stream(config_, token, "play", stream_id, yield))
+        {
+            send_text_response(request, boost::beast::http::status::forbidden, "forbidden\n", yield);
+            return;
+        }
+        if (yield.cancelled() != boost::asio::cancellation_type::none)
+        {
+            shutdown();
+            return;
+        }
+        stream_.expires_never();
+        receiver->attach(std::move(stream_.socket()), request.version());
         return;
     }
     if (path == "/play/whep" || path.starts_with("/play/whep/"))
