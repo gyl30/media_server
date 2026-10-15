@@ -48,6 +48,8 @@ class monitor_window final : public QMainWindow
     void query_device(const QString& command);
     void query_presets();
     void control_ptz(const QString& command);
+    int selected_preset_id() const;
+    void control_preset(const QString& command);
 
    private:
     platform_client client_;
@@ -68,6 +70,10 @@ class monitor_window final : public QMainWindow
     QPushButton* preset_query_;
     QTreeWidget* preset_list_;
     QLabel* preset_result_;
+    QSpinBox* preset_number_;
+    QPushButton* preset_set_;
+    QPushButton* preset_goto_;
+    QPushButton* preset_remove_;
     std::array<QPushButton*, 10> ptz_actions_{};
     QPushButton* ptz_stop_;
     QSpinBox* ptz_speed_;

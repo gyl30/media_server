@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QVariant>
+#include <QPointer>
 #include <QSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
@@ -24,6 +25,7 @@
 #include <QStringList>
 #include <QFileDialog>
 #include <QTreeWidget>
+#include <QMessageBox>
 #include <QGridLayout>
 #include <QKeySequence>
 #include <QHBoxLayout>
@@ -53,6 +55,10 @@ monitor_window::monitor_window(QWidget* parent)
       preset_query_(new QPushButton(QStringLiteral("查询预置位"), this)),
       preset_list_(new QTreeWidget(this)),
       preset_result_(new QLabel(this)),
+      preset_number_(new QSpinBox(this)),
+      preset_set_(new QPushButton(QStringLiteral("设置"), this)),
+      preset_goto_(new QPushButton(QStringLiteral("调用"), this)),
+      preset_remove_(new QPushButton(QStringLiteral("删除"), this)),
       ptz_stop_(new QPushButton(QStringLiteral("停止"), this)),
       ptz_speed_(new QSpinBox(this)),
       ptz_zoom_speed_(new QSpinBox(this)),
@@ -248,6 +254,21 @@ monitor_window::monitor_window(QWidget* parent)
     preset_list_->setRootIsDecorated(false);
     preset_list_->setSelectionMode(QAbstractItemView::SingleSelection);
     preset_layout->addWidget(preset_list_, 1);
+    auto* preset_actions = new QHBoxLayout;
+    preset_number_->setObjectName(QStringLiteral("preset_number"));
+    preset_number_->setRange(1, 255);
+    preset_number_->setValue(1);
+    preset_number_->setToolTip(QStringLiteral("设置当前姿态为此编号；调用、删除使用列表选中编号"));
+    preset_set_->setObjectName(QStringLiteral("preset_set"));
+    preset_goto_->setObjectName(QStringLiteral("preset_goto"));
+    preset_remove_->setObjectName(QStringLiteral("preset_remove"));
+    preset_goto_->setToolTip(QStringLiteral("仅可调用列表中规范十进制 1–255 的编号；受理不等于到位"));
+    preset_remove_->setToolTip(QStringLiteral("仅可删除列表中规范十进制 1–255 的编号"));
+    preset_actions->addWidget(preset_number_);
+    preset_actions->addWidget(preset_set_);
+    preset_actions->addWidget(preset_goto_);
+    preset_actions->addWidget(preset_remove_);
+    preset_layout->addLayout(preset_actions);
     preset_result_->setObjectName(QStringLiteral("preset_result"));
     preset_result_->setTextFormat(Qt::PlainText);
     preset_result_->setWordWrap(true);
@@ -310,6 +331,18 @@ monitor_window::monitor_window(QWidget* parent)
     connect(device_info_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceInfo")); });
     connect(device_status_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceStatus")); });
     connect(preset_query_, &QPushButton::clicked, this, &monitor_window::query_presets);
+    connect(preset_set_, &QPushButton::clicked, this, [this]() { control_preset(QStringLiteral("preset_set")); });
+    connect(preset_goto_, &QPushButton::clicked, this, [this]() { control_preset(QStringLiteral("preset_goto")); });
+    connect(preset_remove_, &QPushButton::clicked, this, [this]() { control_preset(QStringLiteral("preset_remove")); });
+    connect(preset_list_,
+            &QTreeWidget::currentItemChanged,
+            this,
+            [this]()
+            {
+                const bool enabled = preset_list_->isEnabled() && selected_preset_id() != 0;
+                preset_goto_->setEnabled(enabled);
+                preset_remove_->setEnabled(enabled);
+            });
     connect(ptz_stop_, &QPushButton::clicked, this, [this]() { control_ptz(QStringLiteral("stop")); });
     reset_device_query();
     connect(stop, &QPushButton::clicked, this, [this]() { selected_->stop(); });
@@ -533,6 +566,11 @@ void monitor_window::set_control_busy(bool busy)
     device_info_->setEnabled(device && !busy);
     device_status_->setEnabled(device && !busy);
     preset_query_->setEnabled(channel && !busy);
+    preset_list_->setEnabled(channel && !busy);
+    preset_number_->setEnabled(channel && !busy);
+    preset_set_->setEnabled(channel && !busy);
+    preset_goto_->setEnabled(channel && !busy && selected_preset_id() != 0);
+    preset_remove_->setEnabled(channel && !busy && selected_preset_id() != 0);
     for (auto* button : ptz_actions_)
     {
         button->setEnabled(channel && !busy);
@@ -676,6 +714,119 @@ void monitor_window::query_presets()
             preset_result_->setText(identifiers.isEmpty() ? QStringLiteral("通道 %1 没有预置位").arg(channel)
                                                           : QStringLiteral("通道 %1 返回 %2 个预置位").arg(channel).arg(identifiers.size()));
         });
+}
+
+int monitor_window::selected_preset_id() const
+{
+    const auto* item = preset_list_->currentItem();
+    if (!item)
+    {
+        return 0;
+    }
+    const auto text = item->text(0);
+    bool valid = false;
+    const auto number = text.toInt(&valid);
+    return valid && number >= 1 && number <= 255 && QString::number(number) == text ? number : 0;
+}
+
+void monitor_window::control_preset(const QString& command)
+{
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    const auto number = command == QStringLiteral("preset_set") ? preset_number_->value() : selected_preset_id();
+    if (!listing_ || data.value(QStringLiteral("kind")).toString() != QStringLiteral("gb_channel") || number == 0)
+    {
+        return;
+    }
+    const auto id = data.value(QStringLiteral("id")).toString();
+    const auto channel = data.value(QStringLiteral("channel_id")).toString();
+    delete control_context_;
+    control_context_ = new QObject(listing_);
+    const auto context = QPointer<QObject>(control_context_);
+    set_control_busy(true);
+    device_result_->clear();
+    ptz_result_->clear();
+    auto send = [this, id, channel, command, number, context]()
+    {
+        if (!context)
+        {
+            return;
+        }
+        if (command != QStringLiteral("preset_goto"))
+        {
+            preset_list_->clear();
+        }
+        preset_result_->setText(QStringLiteral("正在请求预置位控制，物理结果未确认…"));
+        const auto path = QStringLiteral("/api/devices/%1/channels/%2/ptz")
+                              .arg(QString::fromLatin1(QUrl::toPercentEncoding(id)), QString::fromLatin1(QUrl::toPercentEncoding(channel)));
+        client_.request("POST",
+                        path,
+                        {{QStringLiteral("command"), command}, {QStringLiteral("preset_id"), number}},
+                        context.data(),
+                        [this, id, channel, command, number](platform_response response)
+                        {
+                            set_control_busy(false);
+                            if (!response.ok())
+                            {
+                                preset_result_->setText(QStringLiteral("预置位请求失败：%1；物理结果未确认").arg(response.error));
+                                return;
+                            }
+                            const auto result = response.document.object();
+                            const auto accepted = result.value(QStringLiteral("accepted"));
+                            const auto preset = result.value(QStringLiteral("preset_id"));
+                            if (response.status != 200 || result.value(QStringLiteral("device_id")).toString() != id ||
+                                result.value(QStringLiteral("channel_id")).toString() != channel ||
+                                result.value(QStringLiteral("command")).toString() != command || !preset.isDouble() || preset.toDouble() != number ||
+                                !accepted.isBool() || !accepted.toBool() ||
+                                result.value(QStringLiteral("physical_result")).toString() != QStringLiteral("unconfirmed"))
+                            {
+                                preset_result_->setText(QStringLiteral("预置位请求失败：平台返回的控制结果无效；物理结果未确认"));
+                                return;
+                            }
+                            preset_result_->setText(command == QStringLiteral("preset_goto")
+                                                        ? QStringLiteral("调用预置位 %1 已受理，实际到位未确认；需要时请显式 STOP").arg(number)
+                                                        : QStringLiteral("预置位 %1 控制已受理，物理结果未确认；请手动查询列表确认").arg(number));
+                        });
+    };
+    if (command == QStringLiteral("preset_goto"))
+    {
+        send();
+        return;
+    }
+    preset_result_->setText(QStringLiteral("等待确认，尚未发送预置位指令"));
+    auto* confirmation =
+        new QMessageBox(QMessageBox::Warning,
+                        QStringLiteral("确认预置位操作"),
+                        QStringLiteral("%1预置位 %2？\n父设备：%3\n通道：%4\n设置可能覆盖原位置，删除不可回滚；SIP 受理不等于设备生效。")
+                            .arg(command == QStringLiteral("preset_set") ? QStringLiteral("设置") : QStringLiteral("删除"))
+                            .arg(number)
+                            .arg(id, channel),
+                        QMessageBox::Yes | QMessageBox::No,
+                        this);
+    confirmation->setObjectName(QStringLiteral("preset_confirm"));
+    confirmation->setTextFormat(Qt::PlainText);
+    confirmation->setDefaultButton(QMessageBox::No);
+    confirmation->setAttribute(Qt::WA_DeleteOnClose);
+    confirmation->setWindowModality(Qt::NonModal);
+    connect(context.data(), &QObject::destroyed, confirmation, &QMessageBox::reject);
+    connect(confirmation,
+            &QMessageBox::finished,
+            context.data(),
+            [this, context, send = std::move(send)](int result)
+            {
+                if (!context)
+                {
+                    return;
+                }
+                if (result == QMessageBox::Yes)
+                {
+                    send();
+                    return;
+                }
+                set_control_busy(false);
+                preset_result_->setText(QStringLiteral("已取消，未发送预置位指令"));
+            });
+    confirmation->show();
 }
 
 void monitor_window::control_ptz(const QString& command)

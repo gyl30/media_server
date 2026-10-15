@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -24,11 +25,13 @@ type ptzResponse struct {
 	ChannelID      string `json:"channel_id"`
 	Command        string `json:"command"`
 	Start          string `json:"start,omitempty"`
-	Stop           string `json:"stop"`
+	Stop           string `json:"stop,omitempty"`
+	PresetID       int    `json:"preset_id,omitempty"`
+	Accepted       bool   `json:"accepted,omitempty"`
 	PhysicalResult string `json:"physical_result"`
 }
 
-func encodePTZ(command string, speed int) (string, error) {
+func encodePTZ(command string, value int) (string, error) {
 	packet := [8]byte{0xA5, 0x0F}
 	switch command {
 	case "right":
@@ -51,28 +54,39 @@ func encodePTZ(command string, speed int) (string, error) {
 		packet[3] = 0x10
 	case "zoom_out":
 		packet[3] = 0x20
+	case "preset_set":
+		packet[3] = 0x81
+	case "preset_goto":
+		packet[3] = 0x82
+	case "preset_remove":
+		packet[3] = 0x83
 	case "stop":
-		if speed != 0 {
+		if value != 0 {
 			return "", fmt.Errorf("STOP does not accept speed")
 		}
 	default:
 		return "", fmt.Errorf("unsupported PTZ command")
 	}
-	if packet[3]&0x0F != 0 {
-		if speed < 1 || speed > 255 {
+	if packet[3]&0x80 != 0 {
+		if value < 1 || value > 255 {
+			return "", fmt.Errorf("invalid preset ID")
+		}
+		packet[5] = byte(value)
+	} else if packet[3]&0x0F != 0 {
+		if value < 1 || value > 255 {
 			return "", fmt.Errorf("invalid direction speed")
 		}
 		if packet[3]&0x03 != 0 {
-			packet[4] = byte(speed)
+			packet[4] = byte(value)
 		}
 		if packet[3]&0x0C != 0 {
-			packet[5] = byte(speed)
+			packet[5] = byte(value)
 		}
 	} else if command != "stop" {
-		if speed < 1 || speed > 15 {
+		if value < 1 || value > 15 {
 			return "", fmt.Errorf("invalid zoom speed")
 		}
-		packet[6] = byte(speed << 4)
+		packet[6] = byte(value << 4)
 	}
 	for _, value := range packet[:7] {
 		packet[7] += value
@@ -83,14 +97,33 @@ func encodePTZ(command string, speed int) (string, error) {
 func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *http.Request) {
 	deviceID, channelID := request.PathValue("device_id"), request.PathValue("channel_id")
 	var command struct {
-		Command string `json:"command"`
-		Speed   int    `json:"speed"`
+		Command  string          `json:"command"`
+		Speed    json.RawMessage `json:"speed"`
+		PresetID json.RawMessage `json:"preset_id"`
 	}
 	if !validDigits(deviceID, 20) || !validDigits(channelID, 20) || !decodeJSON(writer, request, &command) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	encoded, err := encodePTZ(command.Command, command.Speed)
+	preset := command.Command == "preset_set" || command.Command == "preset_goto" || command.Command == "preset_remove"
+	value, parameter := 0, command.Speed
+	if preset {
+		parameter = command.PresetID
+		if len(command.Speed) != 0 || len(parameter) == 0 {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+	} else if len(command.PresetID) != 0 {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if len(parameter) != 0 {
+		if err := json.Unmarshal(parameter, &value); err != nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+	}
+	encoded, err := encodePTZ(command.Command, value)
 	if err != nil {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
@@ -98,12 +131,13 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 	key := liveKey{deviceID: deviceID, channelID: channelID}
 	s.live.mu.Lock()
 	if cancel, exists := s.live.ptzOwners[key]; exists {
-		s.live.mu.Unlock()
 		if command.Command != "stop" {
+			s.live.mu.Unlock()
 			writeHTTPError(writer, http.StatusConflict, "ptz_busy")
 			return
 		}
 		cancel()
+		s.live.mu.Unlock()
 		writeJSON(writer, http.StatusAccepted, ptzResponse{DeviceID: deviceID, ChannelID: channelID, Command: "stop", Stop: "requested", PhysicalResult: "unconfirmed"})
 		return
 	}
@@ -128,11 +162,11 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
 		return
 	}
-	// cancel 只控制 START/点动等待；STOP 必须使用独立 context，连续 STOP 不得取消它。
+	// cancel 只控制动作事务/点动等待；STOP 必须使用独立 context，连续 STOP 不得取消它。
 	actionContext, cancel := context.WithCancel(request.Context())
 	s.live.ptzOwners[key] = cancel
 	s.live.mu.Unlock()
-	defer func() { cancel(); s.live.mu.Lock(); delete(s.live.ptzOwners, key); s.live.mu.Unlock() }()
+	defer cancel()
 	control := ptzControl{Command: "DeviceControl", DeviceID: channelID, PTZCommand: encoded}
 	control.Info.Priority = 5
 	var startError error
@@ -141,16 +175,34 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		body, err := xml.Marshal(control)
 		startError = err
 		if startError == nil {
-			startContext, stopStart := context.WithTimeout(actionContext, 300*time.Millisecond)
+			duration := 300 * time.Millisecond
+			if preset {
+				duration = 1500 * time.Millisecond
+			}
+			startContext, stopStart := context.WithTimeout(actionContext, duration)
 			startError = startContext.Err()
 			if startError == nil {
 				startError = s.live.sip.sendMANSCDP(startContext, device, append([]byte(xml.Header), body...))
 			}
-			if startError == nil {
+			if startError == nil && !preset {
 				<-startContext.Done()
 			}
 			stopStart()
 		}
+	}
+	if preset {
+		// 与已有 owner 的手动 STOP 在同一把锁内决定：成功释放或保留到 STOP 完成。
+		s.live.mu.Lock()
+		if startError == nil {
+			startError = actionContext.Err()
+		}
+		if startError == nil {
+			delete(s.live.ptzOwners, key)
+			s.live.mu.Unlock()
+			writeJSON(writer, http.StatusOK, ptzResponse{DeviceID: deviceID, ChannelID: channelID, Command: command.Command, PresetID: value, Accepted: true, PhysicalResult: "unconfirmed"})
+			return
+		}
+		s.live.mu.Unlock()
 	}
 	// 等 START 的 Do 返回、Terminate 完成本地重传终止后，再尝试原目标 STOP。
 	control.SN = int(s.live.sip.messageSN.Add(1))
@@ -161,8 +213,11 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		stopError = s.live.sip.sendMANSCDP(stopContext, device, append([]byte(xml.Header), body...))
 		stopStop()
 	}
+	s.live.mu.Lock()
+	delete(s.live.ptzOwners, key)
+	s.live.mu.Unlock()
 	if startError != nil {
-		s.logger.Warn("PTZ START failed", "device_id", deviceID, "channel_id", channelID, "error", startError)
+		s.logger.Warn("PTZ control failed", "device_id", deviceID, "channel_id", channelID, "command", command.Command, "error", startError)
 	}
 	if stopError != nil {
 		s.logger.Warn("PTZ STOP unconfirmed", "device_id", deviceID, "channel_id", channelID, "error", stopError)
@@ -170,6 +225,10 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		return
 	}
 	if startError != nil {
+		if preset {
+			writeHTTPError(writer, http.StatusBadGateway, "preset_control_unconfirmed")
+			return
+		}
 		writeHTTPError(writer, http.StatusBadGateway, "ptz_start_failed")
 		return
 	}

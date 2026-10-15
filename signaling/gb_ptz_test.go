@@ -83,7 +83,9 @@ func TestPTZPreconditions(t *testing.T) {
 			if test.stopping {
 				s.live.stoppingDevices[queryTestDeviceID] = struct{}{}
 			}
-			apiRequest(t, s.handler(), "POST", "/api/devices/"+queryTestDeviceID+"/channels/"+presetQueryChannelID+"/ptz", `{"command":"left","speed":64}`, test.status)
+			for _, body := range []string{`{"command":"left","speed":64}`, `{"command":"preset_set","preset_id":1}`} {
+				apiRequest(t, s.handler(), "POST", "/api/devices/"+queryTestDeviceID+"/channels/"+presetQueryChannelID+"/ptz", body, test.status)
+			}
 			if len(s.live.ptzOwners) != 0 || s.live.sip.messageSN.Load() != 0 {
 				t.Fatal("precondition allocated PTZ")
 			}

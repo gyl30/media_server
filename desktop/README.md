@@ -26,7 +26,9 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
 
-选中国标通道后，“预置位”页可查询该通道实际返回的编号和名称；空列表是有效结果。编号保留设备返回的字符串，不按后续控制指令的数值范围截断。查询与基本页请求串行，不缓存、不自动刷新；切换目标立即清空旧列表。该功能要求同版本 signaling 的 `POST /api/devices/{id}/channels/{channel_id}/presets/query`；设置、调用、删除尚未实现。详见 [预置位查询验证](../docs/qt_monitor_client_stage3_presets.md)。
+选中国标通道后，“预置位”页可查询该通道实际返回的编号和名称；空列表是有效结果。编号保留设备返回的字符串，不按控制指令的数值范围截断。查询与基本页请求串行，不缓存、不自动刷新；切换目标立即清空旧列表。该功能要求同版本 signaling 的 `POST /api/devices/{id}/channels/{channel_id}/presets/query`。详见 [预置位查询验证](../docs/qt_monitor_client_stage3_presets.md)。
+
+预置位“设置”使用数字输入框1–255；“调用”和“删除”使用查询列表中当前明确选中的规范十进制编号1–255。`001`、`camera-A`、`1000`等原样显示，但不隐式转换、夹值或截断后控制。设置和删除须在非模态确认框核对父设备、通道及编号；默认取消，确认前不发指令，切树、刷新、STOP或退出会关闭旧确认。确认后发送沿用 `/ptz` 的 `preset_set/preset_goto/preset_remove` 与整数 `preset_id`，不支持名称写入。设置/删除发送后清空旧列表，请手动查询确认，不自动刷新或乐观改列表。调用受理后不自动300毫秒STOP，也不表示已到位；需要时显式STOP。SIP事务取消/失败仍独立尝试STOP，但不回滚可能已经生效的设置/删除。已受理调用不再由平台在途owner跟踪，切目标、关窗或平台退出不保证停止设备；后续点动/STOP可能中断它，全零STOP能否中断调用须实测。物理保存、到位、删除和停止仍待验收。见 [预置位控制验证](../docs/qt_monitor_client_stage3_preset_control.md)。
 
 “云台”页对当前树中明确选中的国标通道提供八方向点动、变倍与 STOP；目标区同时显示父 ID 与通道 ID，不跟随播放画面的选中状态。方向速度 1–255（默认64），变倍1–15（默认4），按钮不自动重复。平台以300毫秒为点动等待上限，随后独立尝试 STOP；手动 STOP 可提前结束等待，重复 STOP 不取消正在发送的 STOP。SIP 200 只是受理，界面始终显示物理结果未确认。当前通道的 STOP 在普通查询或点动等待期间仍可用；它替换当前 UI 等待，原动作最终 STOP 的结果此后只在平台日志可查。切树、刷新或关窗只隔离 UI 回调，不撤销已发 HTTP/SIP。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/ptz`；网络中断或进程崩溃不能保证物理停止，真实设备动作尚待验收。详见 [点动与停止验证](../docs/qt_monitor_client_stage3_ptz.md)。
 
@@ -61,7 +63,7 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、预置位写操作、录像、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、录像、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 
