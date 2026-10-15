@@ -168,5 +168,8 @@ func (s *sourceStore) consumePushCredential(ctx context.Context, credential stri
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
-	return deviceID, err
+	if err != nil {
+		return "", err
+	}
+	return deviceID, nil
 }

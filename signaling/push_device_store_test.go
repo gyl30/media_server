@@ -91,6 +91,52 @@ func TestPushCredentialConcurrentConsumptionAcrossConnections(t *testing.T) {
 	}
 }
 
+func TestPushCredentialBusyReturnsNoIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reader-lock.db")
+	first, err := openSourceStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = first.close() })
+	second, err := openSourceStore(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = second.close() })
+	now := time.Now()
+	credential, err := newStreamToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := pushDevice{deviceID: uuid.NewString(), name: "Busy contract", protocol: pushProtocolRTMP, credential: credential, expiresAt: pushCredentialDeadline(now)}
+	if err := first.createPushDevice(t.Context(), device); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := second.db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reader.Rollback() })
+	var count int
+	if err := reader.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM push_devices`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("reader count=%d err=%v", count, err)
+	}
+	id, consumeErr := first.consumePushCredential(t.Context(), credential, now)
+	var sqliteError *sqlite.Error
+	if !errors.As(consumeErr, &sqliteError) || sqliteError.Code() != 5 || id != "" {
+		t.Fatalf("failed consumption: id_nonempty=%t err=%v", id != "", consumeErr)
+	}
+	if err := reader.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if id, err := first.consumePushCredential(t.Context(), credential, now); err != nil || id != device.deviceID {
+		t.Fatalf("released reader consumption: matches=%t err=%v", id == device.deviceID, err)
+	}
+	if id, err := first.consumePushCredential(t.Context(), credential, now); err != nil || id != "" {
+		t.Fatalf("reused credential: id_nonempty=%t err=%v", id != "", err)
+	}
+}
+
 func decodePushDevice(t *testing.T, body string) pushDeviceResponse {
 	t.Helper()
 	var device pushDeviceResponse
