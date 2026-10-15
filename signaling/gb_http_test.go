@@ -81,3 +81,71 @@ func TestDeviceHTTPPersistsOfflineDevice(t *testing.T) {
 		apiRequest(t, handler, "POST", "/api/devices", body, http.StatusBadRequest)
 	}
 }
+
+func TestChannelHTTPDerivesMediaReady(t *testing.T) {
+	const deviceID = "34020000001320000001"
+	const channelID = "34020000001320000002"
+	const streamID = "11111111-1111-4111-8111-111111111111"
+	for _, test := range []struct {
+		name       string
+		state      liveState
+		cache      map[string]struct{}
+		mediaReady bool
+	}{
+		{name: "no live", cache: map[string]struct{}{streamID: {}}},
+		{name: "streaming without cache", state: liveStreaming},
+		{name: "streaming not ready", state: liveStreaming, cache: map[string]struct{}{}},
+		{name: "streaming ready", state: liveStreaming, cache: map[string]struct{}{streamID: {}}, mediaReady: true},
+		{name: "other generation ready", state: liveStreaming, cache: map[string]struct{}{"old-stream": {}}},
+		{name: "preparing with stale ready", state: livePreparing, cache: map[string]struct{}{streamID: {}}},
+		{name: "inviting with stale ready", state: liveInviting, cache: map[string]struct{}{streamID: {}}},
+		{name: "stopping with stale ready", state: liveStopping, cache: map[string]struct{}{streamID: {}}},
+		{name: "cleanup with stale ready", state: liveCleanupPending, cache: map[string]struct{}{streamID: {}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := testInfrastructure(t)
+			if err := s.live.sip.deviceStore.create(t.Context(), gbDevice{deviceID: deviceID, name: "test camera"}); err != nil {
+				t.Fatal(err)
+			}
+			s.live.sip.channels.mu.Lock()
+			s.live.sip.channels.channels[deviceID] = map[string]channel{
+				channelID: {deviceID: deviceID, id: channelID, status: "ON"},
+			}
+			s.live.sip.channels.mu.Unlock()
+			if test.state != "" {
+				session := testStreamingLive(s, channelID, streamID)
+				s.live.mu.Lock()
+				session.state = test.state
+				s.live.mu.Unlock()
+			}
+			if test.cache != nil {
+				s.readyStreams.Store(&test.cache)
+			}
+			response := apiRequest(t, s.handler(), "GET", "/api/devices/"+deviceID+"/channels", "", http.StatusOK)
+			var body struct {
+				Channels []map[string]any `json:"channels"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if len(body.Channels) != 1 {
+				t.Fatalf("channels: %s", response.Body.String())
+			}
+			live, exists := body.Channels[0]["live"]
+			if test.state == "" {
+				if exists {
+					t.Fatalf("channel without live includes live: %s", response.Body.String())
+				}
+				return
+			}
+			value, ok := live.(map[string]any)
+			state := test.state
+			if state == liveCleanupPending {
+				state = liveStopping
+			}
+			if !ok || value["live_id"] != streamID || value["state"] != string(state) || value["media_ready"] != test.mediaReady {
+				t.Fatalf("live readiness: %s, want media_ready=%t", response.Body.String(), test.mediaReady)
+			}
+		})
+	}
+}
