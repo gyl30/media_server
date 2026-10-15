@@ -1,8 +1,11 @@
 #include <utility>
 
 #include <QUrl>
+#include <QDate>
+#include <QTime>
 #include <QLabel>
 #include <QVariant>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QDateTime>
 #include <QJsonArray>
@@ -32,6 +35,8 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
       type_(new QComboBox(this)),
       query_(new QPushButton(QStringLiteral("查询"), this)),
       cancel_(new QPushButton(QStringLiteral("取消查询"), this)),
+      utc_offset_(new QSpinBox(this)),
+      play_(new QPushButton(QStringLiteral("在选中画面回放"), this)),
       records_(new QTreeWidget(this)),
       result_(new QLabel(this))
 {
@@ -40,9 +45,10 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
     setWindowModality(Qt::NonModal);
     resize(1000, 480);
     auto* layout = new QVBoxLayout(this);
-    auto* target = new QLabel(QStringLiteral("父设备：%1\n通道：%2\n时间按设备当地墙上时间填写，不作时区转换；这里只检索目录，不代表文件可回放。")
-                                  .arg(device_id_, channel_id_),
-                              this);
+    auto* target =
+        new QLabel(QStringLiteral("父设备：%1\n通道：%2\n查询时间按设备当地墙上时间填写；回放前请确认下方设备 UTC 偏移。目录不代表录像可回放。")
+                       .arg(device_id_, channel_id_),
+                   this);
     target->setObjectName(QStringLiteral("record_target"));
     target->setTextFormat(Qt::PlainText);
     target->setWordWrap(true);
@@ -87,12 +93,55 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
     records_->setRootIsDecorated(false);
     records_->setSelectionMode(QAbstractItemView::SingleSelection);
     layout->addWidget(records_, 1);
+    auto* playback = new QHBoxLayout;
+    utc_offset_->setObjectName(QStringLiteral("record_utc_offset"));
+    utc_offset_->setRange(-14 * 60, 14 * 60);
+    utc_offset_->setSuffix(QStringLiteral(" 分钟"));
+    utc_offset_->setValue(QDateTime::currentDateTime().offsetFromUtc() / 60);
+    play_->setObjectName(QStringLiteral("record_play"));
+    playback->addWidget(new QLabel(QStringLiteral("设备 UTC 偏移（须人工确认；不自动识别夏令时）"), this));
+    playback->addWidget(utc_offset_);
+    playback->addStretch();
+    playback->addWidget(play_);
+    layout->addLayout(playback);
     result_->setObjectName(QStringLiteral("record_result"));
     result_->setTextFormat(Qt::PlainText);
     result_->setWordWrap(true);
     result_->setText(QStringLiteral("请填写时间范围后查询；每次最多接收 1000 条，请按需缩小范围"));
     layout->addWidget(result_);
     connect(query_, &QPushButton::clicked, this, &record_query_dialog::query);
+    connect(records_,
+            &QTreeWidget::itemSelectionChanged,
+            this,
+            [this]() { play_->setEnabled(query_->isEnabled() && records_->currentItem() && records_->currentItem()->isSelected()); });
+    connect(play_,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                const auto* item = records_->currentItem();
+                if (!item || !item->isSelected())
+                {
+                    return;
+                }
+                const QDateTime first(QDate::fromString(item->text(2).left(10), QStringLiteral("yyyy-MM-dd")),
+                                      QTime::fromString(item->text(2).mid(11), QStringLiteral("HH:mm:ss")),
+                                      Qt::OffsetFromUTC,
+                                      utc_offset_->value() * 60);
+                const QDateTime last(QDate::fromString(item->text(3).left(10), QStringLiteral("yyyy-MM-dd")),
+                                     QTime::fromString(item->text(3).mid(11), QStringLiteral("HH:mm:ss")),
+                                     Qt::OffsetFromUTC,
+                                     utc_offset_->value() * 60);
+                if (!first.isValid() || !last.isValid() || first.toSecsSinceEpoch() <= 0 || first >= last ||
+                    first.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(2) ||
+                    last.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(3))
+                {
+                    result_->setText(QStringLiteral("该目录项缺少合法时间范围，不能回放；未申请媒体或使用文件路径"));
+                    return;
+                }
+                emit playback_requested(first.toSecsSinceEpoch(), last.toSecsSinceEpoch());
+                result_->setText(QStringLiteral("已向选中画面申请独占录像回放，UTC 偏移 %1 分钟；未停止其他实时上游").arg(utc_offset_->value()));
+            });
     connect(cancel_,
             &QPushButton::clicked,
             this,
@@ -131,6 +180,7 @@ void record_query_dialog::set_busy(bool busy)
     type_->setEnabled(!busy);
     query_->setEnabled(!busy);
     cancel_->setEnabled(busy);
+    play_->setEnabled(!busy && records_->currentItem() && records_->currentItem()->isSelected());
 }
 
 void record_query_dialog::query()

@@ -565,6 +565,22 @@ void monitor_window::open_record_query()
         new record_query_dialog(client_, data.value(QStringLiteral("id")).toString(), data.value(QStringLiteral("channel_id")).toString(), this);
     record_dialog_->setAttribute(Qt::WA_DeleteOnClose);
     connect(listing_, &QObject::destroyed, record_dialog_, &QDialog::reject);
+    connect(record_dialog_,
+            &record_query_dialog::playback_requested,
+            listing_,
+            [this, data, dialog = record_dialog_](qint64 start_time, qint64 end_time)
+            {
+                if (selected_ && record_dialog_ == dialog && dialog->isVisible())
+                {
+                    selected_->play_record(client_,
+                                           {play_target::kind::gb_channel,
+                                            data.value(QStringLiteral("id")).toString(),
+                                            data.value(QStringLiteral("channel_id")).toString(),
+                                            data.value(QStringLiteral("name")).toString()},
+                                           start_time,
+                                           end_time);
+                }
+            });
     record_dialog_->show();
 }
 

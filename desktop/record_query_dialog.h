@@ -7,6 +7,7 @@
 
 class QLabel;
 class QObject;
+class QSpinBox;
 class QComboBox;
 class QPushButton;
 class QTreeWidget;
@@ -25,6 +26,9 @@ class record_query_dialog final : public QDialog
    public:
     record_query_dialog(platform_client& client, QString device_id, QString channel_id, QWidget* parent = nullptr);
     ~record_query_dialog() override;
+
+   signals:
+    void playback_requested(qint64 start_time, qint64 end_time);
 
    protected:
     void done(int result) override;
@@ -45,6 +49,8 @@ class record_query_dialog final : public QDialog
     QComboBox* type_;
     QPushButton* query_;
     QPushButton* cancel_;
+    QSpinBox* utc_offset_;
+    QPushButton* play_;
     QTreeWidget* records_;
     QLabel* result_;
 };

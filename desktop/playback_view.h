@@ -46,6 +46,7 @@ class playback_view final : public QWidget
 
    public:
     void play(platform_client& client, const play_target& target);
+    void play_record(platform_client& client, const play_target& target, qint64 start_time, qint64 end_time);
     void stop();
     void set_audible(quint32 audio_id, int period_bytes);
     bool audible() const;
@@ -71,7 +72,7 @@ class playback_view final : public QWidget
 
    private:
     void update_media();
-    void start_decoder(const QString& name, const QUrl& url);
+    void start_decoder(const QString& name, const QUrl& url, playback_mode mode = playback_mode::realtime);
     void wait_for_gb_media(platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline);
     void reset_audio();
     void set_status(const QString& text);
@@ -87,6 +88,7 @@ class playback_view final : public QWidget
     qint64 wall_pts_{no_media_timestamp};
     qint64 audio_end_pts_{no_media_timestamp};
     qint64 shown_pts_{no_media_timestamp};
+    qint64 shown_end_pts_{no_media_timestamp};
     QImage image_;
     QString status_;
     decoder_snapshot final_stats_;

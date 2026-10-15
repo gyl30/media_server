@@ -28,6 +28,7 @@
 #include <QJsonObject>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <QMetaObject>
 #include <QMessageBox>
 #include <QHostAddress>
 #include <QJsonDocument>
@@ -73,13 +74,13 @@ class platform_fixture final : public QObject
         QJsonObject body;
     };
 
-    explicit platform_fixture(bool gb_devices = false)
+    explicit platform_fixture(bool gb_devices = false, bool hold_gb_play = false)
     {
         connect(
             &server,
             &QTcpServer::newConnection,
             this,
-            [this, gb_devices]()
+            [this, gb_devices, hold_gb_play]()
             {
                 while (server.hasPendingConnections())
                 {
@@ -89,7 +90,7 @@ class platform_fixture final : public QObject
                         socket,
                         &QTcpSocket::readyRead,
                         this,
-                        [this, socket, gb_devices]()
+                        [this, socket, gb_devices, hold_gb_play]()
                         {
                             const auto bytes = socket->property("request").toByteArray() + socket->readAll();
                             socket->setProperty("request", bytes);
@@ -122,6 +123,13 @@ class platform_fixture final : public QObject
                             {
                                 const auto source = QJsonDocument::fromJson(bytes.mid(end + 4, length)).object().value("source").toObject();
                                 plays.append({socket, source.value("push_device_id").toString()});
+                                return;
+                            }
+                            if (path.endsWith("/playback") || (hold_gb_play && path.endsWith("/play")))
+                            {
+                                auto& pending = path.endsWith("/playback") ? record_plays : gb_plays;
+                                pending.append(
+                                    {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
                                 return;
                             }
                             QByteArray body = "{}";
@@ -164,6 +172,8 @@ class platform_fixture final : public QObject
     QTcpServer server;
     QList<pending_play> plays;
     QList<pending_query> queries;
+    QList<pending_query> record_plays;
+    QList<pending_query> gb_plays;
 };
 
 QByteArray device_query_response(const QString& id, const QString& command, const QString& marker, const QString& result = QStringLiteral("OK"))
@@ -289,6 +299,44 @@ playback_view* slot_view(monitor_window& window, int slot)
     return window.findChild<playback_view*>(QStringLiteral("view_%1").arg(slot, 2, 10, QLatin1Char('0')));
 }
 
+bool load_record_rows(record_query_dialog& dialog, platform_fixture& api)
+{
+    auto* query = dialog.findChild<QPushButton*>(QStringLiteral("record_query"));
+    auto* list = dialog.findChild<QTreeWidget*>(QStringLiteral("record_list"));
+    auto* offset = dialog.findChild<QSpinBox*>(QStringLiteral("record_utc_offset"));
+    if (!query || !list || !offset)
+    {
+        return false;
+    }
+    offset->setValue(0);
+    const auto count = api.queries.size();
+    query->click();
+    if (!QTest::qWaitFor([&] { return api.queries.size() == count + 1; }, 1000))
+    {
+        return false;
+    }
+    const QJsonArray rows{
+        QJsonObject{
+            {"device_id", "34020000001310000001"}, {"name", "first"}, {"start_time", "2023-11-14T22:13:20"}, {"end_time", "2023-11-14T22:13:25"}},
+        QJsonObject{
+            {"device_id", "34020000001310000001"}, {"name", "selected"}, {"start_time", "2023-11-14T22:13:30"}, {"end_time", "2023-11-14T22:13:40"}}};
+    respond(api.queries.back().socket,
+            200,
+            QJsonDocument(QJsonObject{{"device_id", "34020000001320000001"},
+                                      {"channel_id", "34020000001310000001"},
+                                      {"command", "RecordInfo"},
+                                      {"sn", 29},
+                                      {"sum_num", 2},
+                                      {"records", rows}})
+                .toJson(QJsonDocument::Compact));
+    if (!QTest::qWaitFor([&] { return query->isEnabled() && list->topLevelItemCount() == 2; }, 1000))
+    {
+        return false;
+    }
+    list->setCurrentItem(list->topLevelItem(1));
+    return list->topLevelItem(1)->isSelected();
+}
+
 QByteArray item_payload(const QVariantMap& data)
 {
     QByteArray bytes;
@@ -315,6 +363,125 @@ class monitor_window_test final : public QObject
     Q_OBJECT
 
    private slots:
+    void record_playback_queued_reload_data()
+    {
+        QTest::addColumn<QString>("action");
+        for (const auto& action : {"refresh", "platform", "dialog-close", "dialog-reopen"})
+        {
+            QTest::newRow(action) << QString::fromLatin1(action);
+        }
+    }
+
+    void record_playback_queued_reload()
+    {
+        QFETCH(QString, action);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        QVERIFY(select_gb_channel(window));
+        window.findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
+        QPointer<record_query_dialog> dialog = window.findChild<record_query_dialog*>();
+        QVERIFY(dialog);
+        QVERIFY(load_record_rows(*dialog, api));
+        auto* play = dialog->findChild<QPushButton*>(QStringLiteral("record_play"));
+        QVERIFY(play && play->isEnabled());
+        platform_fixture second(true);
+        if (action == QStringLiteral("platform"))
+        {
+            QVERIFY(second.start());
+            window.findChild<QLineEdit*>(QStringLiteral("platform_address"))
+                ->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+        }
+        // 点击已排队但尚未派发；同步操作先关闭旧查询窗口。
+        QVERIFY(QMetaObject::invokeMethod(play, &QPushButton::click, Qt::QueuedConnection));
+        if (action == QStringLiteral("dialog-close"))
+        {
+            dialog->close();
+        }
+        else if (action == QStringLiteral("dialog-reopen"))
+        {
+            window.findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
+            bool fresh_visible = false;
+            for (auto* candidate : window.findChildren<record_query_dialog*>())
+            {
+                fresh_visible = fresh_visible || (candidate != dialog && candidate->isVisible());
+            }
+            QVERIFY(fresh_visible);
+        }
+        else
+        {
+            window.findChild<QPushButton*>(QStringLiteral("refresh_devices"))->click();
+        }
+        QVERIFY(!dialog || !dialog->isVisible());
+        QVERIFY(QTest::qWaitFor([&] { return dialog.isNull(); }, 1000));
+        QVERIFY(select_gb_channel(window));
+        // 给真实网络请求一个有限观察窗口；不是平台时延或设备协议承诺。
+        QEventLoop observation;
+        QTimer::singleShot(250, &observation, &QEventLoop::quit);
+        observation.exec();
+        QCOMPARE(api.record_plays.size(), 0);
+        QCOMPARE(second.record_plays.size(), 0);
+        window.close();
+    }
+
+    void record_playback_current_view_and_fixed_target_data()
+    {
+        QTest::addColumn<int>("selected_slot");
+        QTest::newRow("original-view") << 1;
+        QTest::newRow("newly-selected-view") << 2;
+    }
+
+    void record_playback_current_view_and_fixed_target()
+    {
+        QFETCH(int, selected_slot);
+        platform_fixture api(true, true);
+        QVERIFY(api.start());
+        monitor_window window;
+        window.show();
+        auto* layout = window.findChild<QComboBox*>(QStringLiteral("view_layout"));
+        QVERIFY(layout);
+        layout->setCurrentIndex(layout->findData(4));
+        QVERIFY(select_gb_channel(window));
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* first = slot_view(window, 1);
+        auto* second = slot_view(window, 2);
+        auto* live = slot_view(window, 3);
+        QVERIFY(tree && first && second && live && live->isVisible());
+        QTest::mouseClick(live, Qt::LeftButton);
+        tree->itemDoubleClicked(tree->currentItem(), 0);
+        QVERIFY(QTest::qWaitFor([&] { return api.gb_plays.size() == 1; }, 1000));
+        const auto live_peer = api.gb_plays[0].socket;
+        const auto live_status = live->status();
+        // 只保留独立实时观看申请；不把挂起的 HTTP 请求冒称 SIP 上游已建立。
+        QTest::mouseClick(first, Qt::LeftButton);
+        window.findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
+        auto* dialog = window.findChild<record_query_dialog*>();
+        QVERIFY(dialog);
+        QVERIFY(load_record_rows(*dialog, api));
+        QCOMPARE(api.queries.back().path, QByteArray("/api/devices/34020000001320000001/channels/34020000001310000001/records/query"));
+        QVERIFY(select_gb_channel(window, 1));
+        auto* target = slot_view(window, selected_slot);
+        auto* other = slot_view(window, selected_slot == 1 ? 2 : 1);
+        const auto other_status = other->status();
+        QTest::mouseClick(target, Qt::LeftButton);
+        QVERIFY(target->property("selected").toBool());
+        dialog->findChild<QPushButton*>(QStringLiteral("record_play"))->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.record_plays.size() == 1; }, 1000));
+        const auto& request = api.record_plays[0];
+        QCOMPARE(request.request_line, QByteArray("POST /api/devices/34020000001320000001/channels/34020000001310000001/playback HTTP/1.1"));
+        QCOMPARE(request.body, (QJsonObject{{"start_time", 1700000010}, {"end_time", 1700000020}}));
+        QCOMPARE(other->status(), other_status);
+        QVERIFY(live_peer && live_peer->state() == QAbstractSocket::ConnectedState);
+        QCOMPARE(live->status(), live_status);
+        QCOMPARE(api.gb_plays.size(), 1);
+        respond(request.socket, 502, R"({"error":"fixture_rejected"})");
+        QVERIFY(QTest::qWaitFor([&] { return target->status().contains(QStringLiteral("录像回放申请失败")); }, 1000));
+        QCOMPARE(other->status(), other_status);
+        QVERIFY(live_peer && live_peer->state() == QAbstractSocket::ConnectedState);
+        QCOMPARE(live->status(), live_status);
+        window.close();
+    }
+
     void record_query_entry_and_fixed_target()
     {
         platform_fixture api(true);

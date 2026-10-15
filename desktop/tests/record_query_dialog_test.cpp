@@ -4,8 +4,10 @@
 #include <QLabel>
 #include <QPointer>
 #include <QVariant>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QDateTime>
+#include <QSignalSpy>
 #include <QJsonArray>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -153,12 +155,14 @@ struct controls
           type(dialog.findChild<QComboBox*>(QStringLiteral("record_type"))),
           query(dialog.findChild<QPushButton*>(QStringLiteral("record_query"))),
           cancel(dialog.findChild<QPushButton*>(QStringLiteral("record_cancel"))),
+          offset(dialog.findChild<QSpinBox*>(QStringLiteral("record_utc_offset"))),
+          play(dialog.findChild<QPushButton*>(QStringLiteral("record_play"))),
           list(dialog.findChild<QTreeWidget*>(QStringLiteral("record_list"))),
           result(dialog.findChild<QLabel*>(QStringLiteral("record_result")))
     {
     }
 
-    bool valid() const { return start && end && type && query && cancel && list && result; }
+    bool valid() const { return start && end && type && query && cancel && offset && play && list && result; }
     bool idle() const { return start->isEnabled() && end->isEnabled() && type->isEnabled() && query->isEnabled() && !cancel->isEnabled(); }
     bool busy() const { return !start->isEnabled() && !end->isEnabled() && !type->isEnabled() && !query->isEnabled() && cancel->isEnabled(); }
 
@@ -167,6 +171,8 @@ struct controls
     QComboBox* type;
     QPushButton* query;
     QPushButton* cancel;
+    QSpinBox* offset;
+    QPushButton* play;
     QTreeWidget* list;
     QLabel* result;
 };
@@ -178,6 +184,162 @@ class record_query_dialog_test final : public QObject
     Q_OBJECT
 
    private slots:
+    void playback_utc_offset_data()
+    {
+        QTest::addColumn<int>("offset_minutes");
+        for (const int offset : {0, 480, 345, -210, 840, -840})
+        {
+            QTest::newRow(qPrintable(QString::number(offset))) << offset;
+        }
+    }
+
+    void playback_utc_offset()
+    {
+        QFETCH(int, offset_minutes);
+        platform_client client;
+        record_fixture api;
+        QVERIFY(api.start(client));
+        record_query_dialog dialog(client, device, channel);
+        controls ui(dialog);
+        QVERIFY(ui.valid());
+        QCOMPARE(ui.offset->minimum(), -840);
+        QCOMPARE(ui.offset->maximum(), 840);
+        ui.offset->setValue(offset_minutes);
+        QSignalSpy requested(&dialog, &record_query_dialog::playback_requested);
+        QVERIFY(requested.isValid());
+        ui.query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 1000);
+        auto first = row(QStringLiteral("未选择的第一段"));
+        first.insert("start_time", "2026-10-15T03:04:05");
+        first.insert("end_time", "2026-10-15T04:05:06");
+        auto selected = row(QStringLiteral("所选第二段"));
+        selected.insert("file_path", "https://untrusted.invalid/not-a-playback.ps");
+        respond(api.requests[0].socket, 200, QJsonDocument(response({first, selected})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 2, 1000);
+        ui.list->setCurrentItem(ui.list->topLevelItem(1));
+        QVERIFY(ui.play->isEnabled());
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(1));
+        const auto start_utc = QDateTime(QDate(2026, 10, 15), QTime(1, 2, 3), Qt::UTC).toSecsSinceEpoch();
+        const auto end_utc = QDateTime(QDate(2026, 10, 15), QTime(2, 3, 4), Qt::UTC).toSecsSinceEpoch();
+        QCOMPARE(requested[0][0].toLongLong(), start_utc - offset_minutes * 60);
+        QCOMPARE(requested[0][1].toLongLong(), end_utc - offset_minutes * 60);
+        // 只发所选目录项的规范时间；目录文件路径不构成媒体请求。
+        QCOMPARE(api.requests.size(), qsizetype(1));
+        QVERIFY(ui.result->text().contains(QStringLiteral("UTC 偏移 %1 分钟").arg(offset_minutes)));
+    }
+
+    void playback_invalid_record_range_data()
+    {
+        QTest::addColumn<QString>("first");
+        QTest::addColumn<QString>("last");
+        const QString valid_first = QStringLiteral("2026-10-15T01:02:03");
+        const QString valid_last = QStringLiteral("2026-10-15T02:03:04");
+        QTest::newRow("missing-start") << QString() << valid_last;
+        QTest::newRow("missing-end") << valid_first << QString();
+        QTest::newRow("invalid-day") << QStringLiteral("2026-02-30T01:02:03") << valid_last;
+        QTest::newRow("invalid-clock") << QStringLiteral("2026-10-15T25:02:03") << valid_last;
+        QTest::newRow("not-canonical-space") << QStringLiteral("2026-10-15 01:02:03") << valid_last;
+        QTest::newRow("utc-suffix") << (valid_first + "Z") << valid_last;
+        QTest::newRow("fractional-second") << (valid_first + ".000") << valid_last;
+        QTest::newRow("equal") << valid_first << valid_first;
+        QTest::newRow("reversed") << valid_last << valid_first;
+        QTest::newRow("epoch-zero") << QStringLiteral("1970-01-01T00:00:00") << QStringLiteral("1970-01-01T00:00:01");
+        QTest::newRow("negative-epoch") << QStringLiteral("1969-12-31T23:59:58") << QStringLiteral("1969-12-31T23:59:59");
+    }
+
+    void playback_invalid_record_range()
+    {
+        QFETCH(QString, first);
+        QFETCH(QString, last);
+        platform_client client;
+        record_fixture api;
+        QVERIFY(api.start(client));
+        record_query_dialog dialog(client, device, channel);
+        controls ui(dialog);
+        QVERIFY(ui.valid());
+        ui.offset->setValue(0);
+        QSignalSpy requested(&dialog, &record_query_dialog::playback_requested);
+        QVERIFY(requested.isValid());
+        ui.query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 1000);
+        auto invalid = row();
+        invalid.insert("start_time", first);
+        invalid.insert("end_time", last);
+        respond(api.requests[0].socket, 200, QJsonDocument(response({invalid})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 1, 1000);
+        ui.list->setCurrentItem(ui.list->topLevelItem(0));
+        QVERIFY(ui.play->isEnabled());
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(0));
+        QVERIFY(ui.result->text().contains(QStringLiteral("缺少合法时间范围")));
+        QCOMPARE(api.requests.size(), qsizetype(1));
+    }
+
+    void playback_requires_selected_record()
+    {
+        platform_client client;
+        record_fixture api;
+        QVERIFY(api.start(client));
+        record_query_dialog dialog(client, device, channel);
+        controls ui(dialog);
+        QVERIFY(ui.valid());
+        QSignalSpy requested(&dialog, &record_query_dialog::playback_requested);
+        QVERIFY(requested.isValid());
+        QVERIFY(!ui.play->isEnabled());
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(0));
+        ui.query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 1000);
+        respond(api.requests[0].socket, 200, QJsonDocument(response({row()})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 1, 1000);
+        auto* item = ui.list->topLevelItem(0);
+        ui.list->setCurrentItem(item);
+        QVERIFY(item->isSelected());
+        QVERIFY(ui.play->isEnabled());
+        ui.list->clearSelection();
+        QCOMPARE(ui.list->currentItem(), item);
+        QVERIFY(ui.list->selectedItems().isEmpty());
+        // 清除选择不会清除焦点项；仅 currentItem 非空不能授权回放。
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(0));
+        QVERIFY(!ui.play->isEnabled());
+        QCOMPARE(api.requests.size(), qsizetype(1));
+    }
+
+    void playback_query_pending_disables_play()
+    {
+        platform_client client;
+        record_fixture api;
+        QVERIFY(api.start(client));
+        record_query_dialog dialog(client, device, channel);
+        controls ui(dialog);
+        QVERIFY(ui.valid());
+        QSignalSpy requested(&dialog, &record_query_dialog::playback_requested);
+        QVERIFY(requested.isValid());
+        ui.query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 1000);
+        respond(api.requests[0].socket, 200, QJsonDocument(response({row()})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 1, 1000);
+        ui.list->setCurrentItem(ui.list->topLevelItem(0));
+        QVERIFY(ui.play->isEnabled());
+        ui.query->click();
+        QVERIFY(ui.busy());
+        QVERIFY(!ui.play->isEnabled());
+        QCOMPARE(ui.list->topLevelItemCount(), 0);
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(0));
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 1000);
+        respond(api.requests[1].socket, 200, QJsonDocument(response({row(QStringLiteral("new"))})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 1, 1000);
+        QVERIFY(!ui.play->isEnabled());
+        ui.list->setCurrentItem(ui.list->topLevelItem(0));
+        QVERIFY(ui.play->isEnabled());
+        ui.play->click();
+        QCOMPARE(requested.size(), qsizetype(1));
+        QCOMPARE(api.requests.size(), qsizetype(2));
+    }
+
     void successful_directories_data()
     {
         QTest::addColumn<QJsonArray>("records");

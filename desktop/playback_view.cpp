@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include <SDL.h>
+#include <QDebug>
 #include <QMimeData>
 #include <QPainter>
 #include <QJsonArray>
@@ -85,6 +86,83 @@ void playback_view::play(platform_client& client, const play_target& target)
         target.type == play_target::kind::gb_channel ? 25'000 : 10'000);
 }
 
+void playback_view::play_record(platform_client& client, const play_target& target, qint64 start_time, qint64 end_time)
+{
+    stop();
+    final_stats_ = {};
+    if (target.type != play_target::kind::gb_channel || target.id.isEmpty() || target.channel_id.isEmpty() || start_time <= 0 ||
+        end_time <= start_time)
+    {
+        set_status(QStringLiteral("录像回放参数无效"));
+        return;
+    }
+    session_ = new QObject(this);
+    const QPointer<QObject> session = session_;
+    const QPointer<playback_view> view = this;
+    // 平台地址切换不能把旧实例的迟到补偿发送到新平台。
+    const QPointer<platform_client> owner = new platform_client(&client);
+    owner->set_base_url(client.base_url());
+    const auto path =
+        QStringLiteral("/api/devices/%1/channels/%2/playback")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(target.id)), QString::fromLatin1(QUrl::toPercentEncoding(target.channel_id)));
+    set_status(QStringLiteral("%1 · 正在申请录像回放").arg(target.name));
+    // 创建响应必须有界收尾：画面取消后仍读取实例身份，只回收本次独占回放。
+    auto* response_context = new QObject(owner);
+    owner->request(
+        "POST",
+        path,
+        {{QStringLiteral("start_time"), start_time}, {QStringLiteral("end_time"), end_time}},
+        response_context,
+        [view, session, owner, response_context, name = target.name](platform_response response)
+        {
+            response_context->deleteLater();
+            const auto object = response.document.object();
+            const auto id = object.value(QStringLiteral("playback_id")).toString();
+            const auto release = [owner, id]()
+            {
+                if (!owner)
+                {
+                    return;
+                }
+                if (id.isEmpty())
+                {
+                    owner->deleteLater();
+                    return;
+                }
+                owner->request("DELETE",
+                               QStringLiteral("/api/playbacks/%1").arg(QString::fromLatin1(QUrl::toPercentEncoding(id))),
+                               {},
+                               owner,
+                               [owner](platform_response result)
+                               {
+                                   if (!result.ok() && result.status != 404)
+                                   {
+                                       qWarning().noquote() << QStringLiteral("独占录像回放回收失败：") + result.error;
+                                   }
+                                   owner->deleteLater();
+                               });
+            };
+            const QUrl url(object.value(QStringLiteral("ps_url")).toString(), QUrl::StrictMode);
+            const bool valid = response.ok() && response.status == 201 && !id.isEmpty() && url.isValid() && !url.isRelative() &&
+                               (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https")) && !url.host().isEmpty() &&
+                               !url.authority(QUrl::FullyEncoded).contains(QLatin1Char('@')) && !url.hasQuery() && !url.hasFragment() &&
+                               url.path().startsWith(QStringLiteral("/play/gb28181/%1/").arg(id)) && url.path().endsWith(QStringLiteral(".ps"));
+            if (!view || !session || !valid)
+            {
+                release();
+                if (view && session)
+                {
+                    view->set_status(response.ok() ? QStringLiteral("平台返回的录像实例或媒体地址无效")
+                                                   : QStringLiteral("录像回放申请失败：%1").arg(response.error));
+                }
+                return;
+            }
+            QObject::connect(session, &QObject::destroyed, owner, release);
+            view->start_decoder(name, url, playback_mode::finite);
+        },
+        20'000);
+}
+
 void playback_view::wait_for_gb_media(
     platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline)
 {
@@ -148,10 +226,10 @@ void playback_view::wait_for_gb_media(
         static_cast<int>(std::max<qint64>(1, std::min<qint64>(5000, deadline.remainingTime()))));
 }
 
-void playback_view::start_decoder(const QString& name, const QUrl& url)
+void playback_view::start_decoder(const QString& name, const QUrl& url, playback_mode mode)
 {
     // 解码线程独立保活至 finished，关闭画面不在 GUI 中等待网络线程。
-    auto* decoder = new decode_thread(url, QSize(std::max(160, width()), std::max(100, height())), QCoreApplication::instance());
+    auto* decoder = new decode_thread(url, QSize(std::max(160, width()), std::max(100, height())), mode, QCoreApplication::instance());
     decoder_ = decoder;
     connect(decoder,
             &QThread::finished,
@@ -159,13 +237,20 @@ void playback_view::start_decoder(const QString& name, const QUrl& url)
             [this, decoder]()
             {
                 update_media();
+                if (decoder->mode() == playback_mode::finite)
+                {
+                    return;
+                }
                 final_stats_ = decoder->snapshot();
                 decoder_.clear();
                 timer_.stop();
                 reset_audio();
                 set_status(final_stats_.error.isEmpty() ? QStringLiteral("媒体源已结束") : final_stats_.error + QStringLiteral("；请手动重试"));
             });
-    connect(decoder, &QThread::finished, decoder, &QObject::deleteLater);
+    if (mode == playback_mode::realtime)
+    {
+        connect(decoder, &QThread::finished, decoder, &QObject::deleteLater);
+    }
     set_status(QStringLiteral("%1 · 正在等待自然关键帧").arg(name));
     decoder->start();
     timer_.start();
@@ -184,6 +269,14 @@ void playback_view::stop()
     {
         final_stats_ = decoder_->snapshot();
         decoder_->requestInterruption();
+        if (decoder_->mode() == playback_mode::finite)
+        {
+            connect(decoder_, &QThread::finished, decoder_, &QObject::deleteLater);
+            if (decoder_->isFinished())
+            {
+                decoder_->deleteLater();
+            }
+        }
         decoder_.clear();
     }
     timer_.stop();
@@ -193,6 +286,7 @@ void playback_view::stop()
     image_ = {};
     wall_pts_ = no_media_timestamp;
     shown_pts_ = no_media_timestamp;
+    shown_end_pts_ = no_media_timestamp;
     rendered_frames_ = 0;
     set_status(QStringLiteral("已停止"));
 }
@@ -259,21 +353,25 @@ void playback_view::update_media()
         timer_.stop();
         return;
     }
-    auto frames = decoder_->take_video_frames();
+    const bool finite = decoder_->mode() == playback_mode::finite;
+    // 先观察线程结束，再取队列；反过来可能漏掉两步之间入队的最后一批。
+    const bool finished_before_take = decoder_->isFinished();
+    const bool finite_tail_taken = finished_before_take && video_.empty() && pcm_.empty();
+    auto frames = !finite || video_.size() + decoded_video_capacity <= 16U ? decoder_->take_video_frames() : std::vector<decoded_video_frame>{};
     for (auto& frame : frames)
     {
-        if (video_.size() >= (audible() ? 16U : 4U))
+        if (!finite && video_.size() >= (audible() ? 16U : 4U))
         {
             video_.pop_front();
         }
         video_.push_back(std::move(frame));
-        while (audible() && video_.size() > 1 && video_.front().pts_us != no_media_timestamp && video_.back().pts_us != no_media_timestamp &&
-               video_.back().pts_us - video_.front().pts_us > 500'000)
+        while (!finite && audible() && video_.size() > 1 && video_.front().pts_us != no_media_timestamp &&
+               video_.back().pts_us != no_media_timestamp && video_.back().pts_us - video_.front().pts_us > 500'000)
         {
             video_.pop_front();
         }
     }
-    auto audio = decoder_->take_audio_blocks();
+    auto audio = !finite || pcm_.empty() ? decoder_->take_audio_blocks() : std::vector<decoded_audio_block>{};
     if (audible())
     {
         for (auto& block : audio)
@@ -286,7 +384,7 @@ void playback_view::update_media()
             queued += block.pcm.size();
         }
         // 有界保留最近的 PCM；真实 PTS 跳变由下面的连续性检查处理。
-        while (queued > 57'600 && pcm_.size() > 1)
+        while (!finite && queued > decoded_pcm_capacity && pcm_.size() > 1)
         {
             queued -= pcm_.front().pcm.size();
             pcm_.pop_front();
@@ -300,7 +398,8 @@ void playback_view::update_media()
         while (audio_id_ != 0 && !pcm_.empty() && SDL_GetQueuedAudioSize(audio_id_) < 19'200)
         {
             auto& block = pcm_.front();
-            if (audio_end_pts_ != no_media_timestamp && block.pts_us != no_media_timestamp && std::abs(block.pts_us - audio_end_pts_) > 100'000)
+            if (!finite && audio_end_pts_ != no_media_timestamp && block.pts_us != no_media_timestamp &&
+                std::abs(block.pts_us - audio_end_pts_) > 100'000)
             {
                 SDL_ClearQueuedAudio(audio_id_);
             }
@@ -313,18 +412,23 @@ void playback_view::update_media()
             }
             if (block.pts_us != no_media_timestamp)
             {
+                if (finite && wall_pts_ == no_media_timestamp)
+                {
+                    wall_pts_ = block.pts_us;
+                    wall_clock_.start();
+                }
                 audio_end_pts_ = block.pts_us + block.pcm.size() * 1'000'000 / 192'000;
             }
             pcm_.pop_front();
         }
-        if (audio_id_ != 0 && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PAUSED && SDL_GetQueuedAudioSize(audio_id_) >= 9'600)
+        if (audio_id_ != 0 && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PAUSED && SDL_GetQueuedAudioSize(audio_id_) >= (finite ? 1U : 9'600U))
         {
             SDL_PauseAudioDevice(audio_id_, 0);
         }
     }
 
     // 已声明音轨的有声播放先建立音频时钟，避免首帧按视频时钟抢跑后再回跳。
-    if (audible() && !decoder_->snapshot().audio_codec.isEmpty() && SDL_GetAudioDeviceStatus(audio_id_) != SDL_AUDIO_PLAYING)
+    if (!finite && audible() && !decoder_->snapshot().audio_codec.isEmpty() && SDL_GetAudioDeviceStatus(audio_id_) != SDL_AUDIO_PLAYING)
     {
         return;
     }
@@ -355,22 +459,49 @@ void playback_view::update_media()
         }
         auto frame = std::move(video_.front());
         video_.pop_front();
-        if (!video_.empty() && frame.pts_us != no_media_timestamp && clock != no_media_timestamp && frame.pts_us < clock - 100'000)
+        if (!finite && !video_.empty() && frame.pts_us != no_media_timestamp && clock != no_media_timestamp && frame.pts_us < clock - 100'000)
         {
             continue;
         }
         shown_pts_ = frame.pts_us;
+        const auto fps = decoder_->snapshot().video_fps;
+        shown_end_pts_ = shown_pts_ == no_media_timestamp
+                             ? no_media_timestamp
+                             : shown_pts_ + (frame.duration_us > 0 ? frame.duration_us : (fps > 0 ? static_cast<qint64>(1'000'000 / fps) : 40'000));
         image_ = std::move(frame.image);
         ++rendered_frames_;
-        set_status(QStringLiteral("实时预览 · 已解码 %1 帧 / 显示 %2 帧").arg(decoder_->snapshot().video_frames).arg(rendered_frames_));
+        set_status((finite ? QStringLiteral("录像回放 · 已解码 %1 帧 / 显示 %2 帧") : QStringLiteral("实时预览 · 已解码 %1 帧 / 显示 %2 帧"))
+                       .arg(decoder_->snapshot().video_frames)
+                       .arg(rendered_frames_));
+        if (finite)
+        {
+            break;
+        }
     }
     if (decoder_->isFinished())
     {
+        const auto stats = decoder_->snapshot();
+        if (finite && stats.error.isEmpty() &&
+            (!finite_tail_taken || !video_.empty() || !pcm_.empty() || (shown_end_pts_ != no_media_timestamp && clock < shown_end_pts_) ||
+             (audible() && (SDL_GetQueuedAudioSize(audio_id_) != 0 || (audio_end_pts_ != no_media_timestamp && clock < audio_end_pts_)))))
+        {
+            return;
+        }
         final_stats_ = decoder_->snapshot();
+        if (finite)
+        {
+            decoder_->deleteLater();
+            delete session_;
+            session_ = nullptr;
+        }
         decoder_.clear();
         timer_.stop();
         reset_audio();
-        set_status(final_stats_.error.isEmpty() ? QStringLiteral("媒体源已结束") : final_stats_.error + QStringLiteral("；请手动重试"));
+        video_.clear();
+        pcm_.clear();
+        set_status(final_stats_.error.isEmpty()
+                       ? (finite ? QStringLiteral("录像传输及呈现已结束；不代表请求范围库存完整") : QStringLiteral("媒体源已结束"))
+                       : final_stats_.error + QStringLiteral("；请手动重试"));
     }
 }
 

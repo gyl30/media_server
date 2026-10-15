@@ -2,11 +2,11 @@
 
 Linux x86_64 原生 Qt Widgets 客户端，沿用传统桌面监控原型。当前支持1/4/9/16画面观看，不是完整 GB28181 平台功能验收；实测硬件、媒体及边界见 [阶段二验证](../docs/qt_monitor_client_stage2.md)。
 
-控制面使用 signaling HTTP API；每个画面独立申请一次性播放票据，媒体使用 FFmpeg 的 RTSP/TCP 输入。不嵌入网页，不维护另一套 VLC 播放器，也不新增私有传输协议。
+控制面使用 signaling HTTP API；每个画面独立申请一次性播放票据，实时媒体使用 FFmpeg 的 RTSP/TCP 输入。独立历史回放采用平台有限 TCP/RTP-PS 通道，经 HTTP chunked 输入同一 FFmpeg 解码器。不嵌入网页，不维护另一套 VLC 播放器。
 
 ## 构建
 
-需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network（测试还需 Test）、SDL2 ≥2.0.20，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，FFmpeg 9.0.1。
+需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network（测试还需 Test）、SDL2 ≥2.0.20、Boost ≥1.89 头文件，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。Boost.Beast 只用于有限 HTTP 分帧解析，不链接 Boost.Context。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，Boost 1.92.0，FFmpeg 9.0.1；有限录像还要求 SDK 启用 MPEG-PS demuxer。
 
 ```sh
 PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig" cmake -S desktop -B build-desktop \
@@ -32,7 +32,9 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 “云台”页对当前树中明确选中的国标通道提供八方向点动、变倍与 STOP；目标区同时显示父 ID 与通道 ID，不跟随播放画面的选中状态。方向速度 1–255（默认64），变倍1–15（默认4），按钮不自动重复。平台以300毫秒为点动等待上限，随后独立尝试 STOP；手动 STOP 可提前结束等待，重复 STOP 不取消正在发送的 STOP。SIP 200 只是受理，界面始终显示物理结果未确认。当前通道的 STOP 在普通查询或点动等待期间仍可用；它替换当前 UI 等待，原动作最终 STOP 的结果此后只在平台日志可查。切树、刷新或关窗只隔离 UI 回调，不撤销已发 HTTP/SIP。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/ptz`；网络中断或进程崩溃不能保证物理停止，真实设备动作尚待验收。详见 [点动与停止验证](../docs/qt_monitor_client_stage3_ptz.md)。
 
-选中国标通道后可打开独立“录像查询”窗口，手动填写设备当地墙上时间和类型。开窗不发请求，窗口固定父/通道，切换树不暗改目标；刷新、换平台、关闭及重新打开会取消旧查询。查询等待平台15秒，客户端20秒，每次最多1000条，超限提示缩小范围。显示设备原样目录，不按路径或内容去重；“设备声明N条、已收到N条”不代表唯一库存或文件可回放。取消不停止实时观看、共享上游或PTZ。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/records/query`，仅支持目录查询，历史回放和下载尚未实现。详见 [录像查询子集](../docs/qt_monitor_client_stage4_record_query.md)。
+选中国标通道后可打开独立“录像查询”窗口，手动填写设备当地墙上时间和类型。开窗不发请求，窗口固定父/通道，切换树不暗改目标；刷新、换平台、关闭及重新打开会取消旧查询。查询等待平台15秒，客户端20秒，每次最多1000条，超限提示缩小范围。显示设备原样目录，不按路径或内容去重；“设备声明N条、已收到N条”不代表唯一库存或文件可回放。取消不停止实时观看、共享上游或PTZ。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/records/query`。详见 [录像查询子集](../docs/qt_monitor_client_stage4_record_query.md)。
+
+明确选择目录项并核对设备 UTC 偏移后，可“在选中画面回放”。时间按固定偏移换算，不自动推断历史夏令时；文件路径不作为 URL。客户端创建独占历史实例并一次认领有限 PS 输入；关闭、替换、失败及自然呈现结束只 DELETE 本次实例，不停止其他实时上游。有限队列背压、不主动丢帧；正常结束表示传输和解码呈现结束，不证明请求范围库存完整。同会话 INFO 暂停、恢复、seek 和下载尚未实现，物理 NVR 验收未完成。详见 [有限呈现增量](../docs/qt_monitor_client_stage4_finite_view.md)。
 
 ## 观看与生命周期
 
@@ -65,7 +67,7 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、历史回放、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、完整历史回放控制、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 

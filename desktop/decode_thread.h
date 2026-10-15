@@ -11,11 +11,20 @@
 #include <QThread>
 #include <QString>
 #include <QByteArray>
+#include <QWaitCondition>
 
 namespace media_server
 {
 
 inline constexpr qint64 no_media_timestamp = std::numeric_limits<qint64>::min();
+inline constexpr size_t decoded_video_capacity = 4;
+inline constexpr qsizetype decoded_pcm_capacity = 57600;
+
+enum class playback_mode
+{
+    realtime,
+    finite
+};
 
 struct decoded_video_frame
 {
@@ -58,13 +67,14 @@ class decode_thread final : public QThread
     Q_OBJECT
 
    public:
-    decode_thread(QUrl url, QSize output_size, QObject* parent = nullptr);
+    decode_thread(QUrl url, QSize output_size, playback_mode mode = playback_mode::realtime, QObject* parent = nullptr);
 
    public:
     std::vector<decoded_video_frame> take_video_frames();
     std::vector<decoded_audio_block> take_audio_blocks();
     decoder_snapshot snapshot() const;
     void set_output_size(QSize size);
+    playback_mode mode() const;
 
    protected:
     void run() override;
@@ -75,8 +85,10 @@ class decode_thread final : public QThread
    private:
     QUrl url_;
     QSize output_size_;
+    playback_mode mode_;
     qint64 io_deadline_us_{};
     mutable QMutex mutex_;
+    QWaitCondition consumed_;
     std::vector<decoded_video_frame> video_frames_;
     std::vector<decoded_audio_block> audio_blocks_;
     qsizetype pcm_bytes_{};
