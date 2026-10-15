@@ -41,6 +41,7 @@
 
 #include "desktop/playback_view.h"
 #include "desktop/monitor_window.h"
+#include "desktop/record_query_dialog.h"
 
 using namespace media_server;
 
@@ -314,6 +315,154 @@ class monitor_window_test final : public QObject
     Q_OBJECT
 
    private slots:
+    void record_query_entry_and_fixed_target()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* open = window.findChild<QPushButton*>(QStringLiteral("open_record_query"));
+        QVERIFY(tree && open);
+        QVERIFY(!open->isEnabled());
+        QVERIFY(QTest::qWaitFor(
+            [&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2 && tree->topLevelItem(2)->childCount() == 3; },
+            2000));
+        for (auto* item : {tree->topLevelItem(0), tree->topLevelItem(0)->child(0), tree->topLevelItem(2)->child(0)})
+        {
+            tree->setCurrentItem(item);
+            QVERIFY(!open->isEnabled());
+            open->click();
+            QVERIFY(!window.findChild<record_query_dialog*>());
+        }
+        QVERIFY(select_gb_channel(window));
+        QVERIFY(open->isEnabled());
+        open->click();
+        QPointer<record_query_dialog> first = window.findChild<record_query_dialog*>();
+        QVERIFY(first && first->isVisible());
+        QCOMPARE(first->windowModality(), Qt::NonModal);
+        auto* first_query = first->findChild<QPushButton*>(QStringLiteral("record_query"));
+        QVERIFY(first_query);
+        QVERIFY(select_gb_channel(window, 1));
+        QVERIFY(first->isVisible());
+        first_query->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 1000));
+        QCOMPARE(api.queries[0].path, QByteArray("/api/devices/34020000001320000001/channels/34020000001310000001/records/query"));
+        const auto old_peer = api.queries[0].socket;
+        open->click();
+        QVERIFY(QTest::qWaitFor([&] { return first.isNull(); }, 1000));
+        auto* second = window.findChild<record_query_dialog*>();
+        QVERIFY(second && second->isVisible());
+        second->findChild<QPushButton*>(QStringLiteral("record_query"))->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 2; }, 1000));
+        QCOMPARE(api.queries[1].path, QByteArray("/api/devices/34020000001320000002/channels/34020000001310000001/records/query"));
+        QVERIFY(QTest::qWaitFor([&] { return old_peer.isNull(); }, 1000));
+        window.close();
+    }
+
+    void record_query_listing_lifetime_data()
+    {
+        QTest::addColumn<QString>("action");
+        for (const auto& action : {"refresh", "platform", "close", "destruct"})
+        {
+            QTest::newRow(action) << QString::fromLatin1(action);
+        }
+    }
+
+    void record_query_listing_lifetime()
+    {
+        QFETCH(QString, action);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        auto window = std::make_unique<monitor_window>();
+        QVERIFY(select_gb_channel(*window));
+        window->findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
+        QPointer<record_query_dialog> dialog = window->findChild<record_query_dialog*>();
+        QVERIFY(dialog);
+        dialog->findChild<QPushButton*>(QStringLiteral("record_query"))->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 1000));
+        QPointer<QNetworkReply> reply;
+        for (auto* candidate : window->findChildren<QNetworkReply*>())
+        {
+            if (candidate->url().path().endsWith(QStringLiteral("/records/query")))
+            {
+                reply = candidate;
+            }
+        }
+        const auto peer = api.queries[0].socket;
+        QVERIFY(reply && peer);
+        platform_fixture second(true);
+        if (action == QStringLiteral("destruct"))
+        {
+            window.reset();
+        }
+        else if (action == QStringLiteral("close"))
+        {
+            window->close();
+        }
+        else
+        {
+            if (action == QStringLiteral("platform"))
+            {
+                QVERIFY(second.start());
+                window->findChild<QLineEdit*>(QStringLiteral("platform_address"))
+                    ->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+            }
+            window->findChild<QPushButton*>(QStringLiteral("refresh_devices"))->click();
+        }
+        QVERIFY(QTest::qWaitFor([&] { return dialog.isNull() && reply.isNull() && peer.isNull(); }, 1000));
+        if (window && action != QStringLiteral("close"))
+        {
+            QVERIFY(select_gb_channel(*window));
+            auto& active = action == QStringLiteral("platform") ? second : api;
+            window->findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
+            auto* fresh = window->findChild<record_query_dialog*>();
+            QVERIFY(fresh);
+            fresh->findChild<QPushButton*>(QStringLiteral("record_query"))->click();
+            const auto expected = action == QStringLiteral("platform") ? 1 : 2;
+            QVERIFY(QTest::qWaitFor([&] { return active.queries.size() == expected; }, 1000));
+            window->close();
+        }
+    }
+
+    void record_query_keeps_live_and_ptz_independent()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        QVERIFY(select_gb_channel(window));
+        auto* left = window.findChild<QPushButton*>(QStringLiteral("ptz_left"));
+        auto* stop = window.findChild<QPushButton*>(QStringLiteral("ptz_stop"));
+        auto* open = window.findChild<QPushButton*>(QStringLiteral("open_record_query"));
+        QVERIFY(left && stop && open);
+        left->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 1000));
+        const auto ptz = pending_ptz(window);
+        QVERIFY(ptz && open->isEnabled());
+        open->click();
+        auto* dialog = window.findChild<record_query_dialog*>();
+        QVERIFY(dialog);
+        auto* query = dialog->findChild<QPushButton*>(QStringLiteral("record_query"));
+        auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("record_cancel"));
+        QVERIFY(query && cancel);
+        query->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 2; }, 1000));
+        QVERIFY(!ptz->isFinished() && stop->isEnabled());
+        respond(api.queries[0].socket, 200, QJsonDocument(ptz_response(QStringLiteral("left"))).toJson());
+        QVERIFY(QTest::qWaitFor([&] { return left->isEnabled(); }, 1000));
+        QVERIFY(!query->isEnabled() && cancel->isEnabled());
+        // 真实观看请求在查询期间仍可发出；这里只验证独立所有权，不宣称实际解码。
+        tree->itemDoubleClicked(tree->topLevelItem(2)->child(0), 0);
+        QVERIFY(QTest::qWaitFor([&] { return api.plays.size() == 1; }, 1000));
+        const auto play_peer = api.plays[0].socket;
+        const auto play_status = slot_view(window, 1)->status();
+        cancel->click();
+        QVERIFY(play_peer && play_peer->state() == QAbstractSocket::ConnectedState);
+        QCOMPARE(slot_view(window, 1)->status(), play_status);
+        QVERIFY(left->isEnabled() && stop->isEnabled());
+        window.close();
+    }
+
     void preset_control_widgets_exist()
     {
         platform_fixture api(true);

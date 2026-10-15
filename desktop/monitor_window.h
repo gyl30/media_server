@@ -3,6 +3,7 @@
 
 #include <array>
 
+#include <QPointer>
 #include <QMainWindow>
 #include <QVariantMap>
 
@@ -22,6 +23,7 @@ namespace media_server
 {
 
 class playback_view;
+class record_query_dialog;
 
 class monitor_window final : public QMainWindow
 {
@@ -43,6 +45,7 @@ class monitor_window final : public QMainWindow
     void stop_all();
     void take_snapshot();
     void query_catalog();
+    void open_record_query();
     void reset_device_query();
     void set_control_busy(bool busy);
     void query_device(const QString& command);
@@ -55,6 +58,7 @@ class monitor_window final : public QMainWindow
     platform_client client_;
     QObject* listing_{};
     QObject* control_context_{};
+    QPointer<record_query_dialog> record_dialog_;
     std::array<playback_view*, 16> views_{};
     playback_view* selected_{};
     quint32 audio_id_{};
@@ -63,6 +67,7 @@ class monitor_window final : public QMainWindow
     QComboBox* view_layout_;
     QPushButton* sound_;
     QPushButton* catalog_;
+    QPushButton* record_query_;
     QPushButton* device_info_;
     QPushButton* device_status_;
     QLabel* device_target_;

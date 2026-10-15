@@ -75,6 +75,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/devices/{device_id}/catalog", s.handleCatalogQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/query", s.handleDeviceQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/presets/query", s.handleDeviceQuery)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/records/query", s.handleRecordQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/ptz", s.handlePTZ)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/play", s.handleChannelPlay)
 	routes.HandleFunc("POST /api/play", s.handlePlay)

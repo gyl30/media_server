@@ -10,10 +10,13 @@ import (
 )
 
 type manscdpQuery struct {
-	XMLName  xml.Name `xml:"Query"`
-	CmdType  string   `xml:"CmdType"`
-	SN       int      `xml:"SN"`
-	DeviceID string   `xml:"DeviceID"`
+	XMLName   xml.Name `xml:"Query"`
+	CmdType   string   `xml:"CmdType"`
+	SN        int      `xml:"SN"`
+	DeviceID  string   `xml:"DeviceID"`
+	StartTime string   `xml:"StartTime,omitempty"`
+	EndTime   string   `xml:"EndTime,omitempty"`
+	Type      string   `xml:"Type,omitempty"`
 }
 
 type catalogChannel struct {

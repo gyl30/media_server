@@ -37,6 +37,7 @@
 
 #include "desktop/playback_view.h"
 #include "desktop/monitor_window.h"
+#include "desktop/record_query_dialog.h"
 
 namespace media_server
 {
@@ -48,6 +49,7 @@ monitor_window::monitor_window(QWidget* parent)
       view_layout_(new QComboBox(this)),
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
       catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
+      record_query_(new QPushButton(QStringLiteral("录像查询"), this)),
       device_info_(new QPushButton(QStringLiteral("设备信息"), this)),
       device_status_(new QPushButton(QStringLiteral("设备状态"), this)),
       device_target_(new QLabel(this)),
@@ -158,7 +160,11 @@ monitor_window::monitor_window(QWidget* parent)
     side->addWidget(address_);
     side->addWidget(connection_);
     catalog_->setObjectName(QStringLiteral("catalog_query"));
-    side->addWidget(catalog_);
+    record_query_->setObjectName(QStringLiteral("open_record_query"));
+    auto* queries = new QHBoxLayout;
+    queries->addWidget(catalog_);
+    queries->addWidget(record_query_);
+    side->addLayout(queries);
     devices_->setHeaderLabel(QStringLiteral("设备与通道"));
     devices_->setObjectName(QStringLiteral("device_tree"));
     devices_->setDragEnabled(true);
@@ -327,6 +333,7 @@ monitor_window::monitor_window(QWidget* parent)
     connect(address_, &QLineEdit::returnPressed, this, &monitor_window::reload_devices);
     connect(devices_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) { play_item(item); });
     connect(catalog_, &QPushButton::clicked, this, &monitor_window::query_catalog);
+    connect(record_query_, &QPushButton::clicked, this, &monitor_window::open_record_query);
     connect(devices_, &QTreeWidget::currentItemChanged, this, [this]() { reset_device_query(); });
     connect(device_info_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceInfo")); });
     connect(device_status_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceStatus")); });
@@ -424,6 +431,10 @@ monitor_window::monitor_window(QWidget* parent)
 
 monitor_window::~monitor_window()
 {
+    if (record_dialog_)
+    {
+        record_dialog_->close();
+    }
     stop_all();
     if (audio_id_ != 0)
     {
@@ -538,6 +549,25 @@ void monitor_window::query_catalog()
                     });
 }
 
+void monitor_window::open_record_query()
+{
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    if (!listing_ || data.value(QStringLiteral("kind")).toString() != QStringLiteral("gb_channel"))
+    {
+        return;
+    }
+    if (record_dialog_)
+    {
+        record_dialog_->close();
+    }
+    record_dialog_ =
+        new record_query_dialog(client_, data.value(QStringLiteral("id")).toString(), data.value(QStringLiteral("channel_id")).toString(), this);
+    record_dialog_->setAttribute(Qt::WA_DeleteOnClose);
+    connect(listing_, &QObject::destroyed, record_dialog_, &QDialog::reject);
+    record_dialog_->show();
+}
+
 void monitor_window::reset_device_query()
 {
     delete control_context_;
@@ -545,6 +575,7 @@ void monitor_window::reset_device_query()
     const auto* item = devices_->currentItem();
     const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
     const auto kind = data.value(QStringLiteral("kind")).toString();
+    record_query_->setEnabled(listing_ && kind == QStringLiteral("gb_channel"));
     set_control_busy(false);
     const auto id = data.value(QStringLiteral("id")).toString();
     device_target_->setText(kind == QStringLiteral("gb_channel")  ? id + QLatin1Char('\n') + data.value(QStringLiteral("channel_id")).toString()
