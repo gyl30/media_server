@@ -34,7 +34,7 @@
 - 内部实验依赖和正式发行依赖分开。正常服务器 SDK 与系统安装保持不动，独立 decoder SDK/包保留配置、来源、许可及 SHA。
 - 每阶段保留 RED/GREEN 和原始证据；清理只针对本轮已核对身份的进程/可再生中间产物，不清理他人资产或历史原始数据。
 
-## 当前检查点（2026-10-15）
+## 当前检查点（2026-10-16）
 
 阶段一完成开发与定向验收：已验证真实 GB 模拟设备的冷点播、H.264/PCMA、AAC/无音频、请求/解码取消和新旧回调隔离；GB 冷首开旧 RED 保留，新增派生 `live.media_ready` 后不重签票即可正常播放。最终 shared SDK 正常和 ASan+UBSan 桌面 CTest 均4/4通过（39.01/39.14秒），Go 全量 test/race/vet 通过；后续修改须重新验证，不能继承本次结论。
 
@@ -61,3 +61,5 @@
 录像回放前置审查发现既有实时 INVITE 取消期间的成功响应未被 ACK/BYE、以及重传 ACK 的 CSeq/Route 错误，先独立修复，不复制缺陷到回放。平台改用公开事务单 owner 等待、Init 前安装 ACK 重传回调和同一窄对话请求构造器；不新增对话 registry、后台 goroutine、持久状态或关闭标志。详见[邀请取消与 ACK 生命周期](qt_monitor_client_sip_lifecycle.md)。该修复不代表历史回放已实现；录像首尾、独立会话所有权及实际控制仍须单独设计和验证。
 
 阶段四继续采用独立有限传输，不把历史录像接入实时 `media_stream`：TCP/RTP 原始 PS 通过一次授权 HTTP chunked 通道交给 FFmpeg。传输正常结束与录像内容完整严格区分；私有真实媒体组合已验证逐帧及 PCM 参考一致和异常结束，自然注销及 sanitizer 结果单列。详见[有限录像传输子集](qt_monitor_client_stage4_finite_transport.md)。signaling 历史 owner/票据/INVITE/121/INFO、Qt 有限背压及显示和音频尾部排空仍须后续实现，不把这个组件标记为完整历史回放。
+
+接续增量已实现独立历史信令 owner、GET 一次认领后 INVITE、Playback SDP、121/远端 BYE 的有界收尾与失败补偿。详见[历史回放信令 owner 增量](qt_monitor_client_stage4_playback_owner.md)。当前 Go 全量 test/race/vet 通过；同一源码实际实时四格 193 项断言通过，独立历史 normal/ASan × AAC/PCMA 四组逐帧/PCM 精确一致、资源归零。解码组件不是 Qt 有限呈现验收，INFO、暂停/恢复/seek、下载、物理 NVR 与后续阶段仍未完成。回归另外稳定复现并最小修正原推流 SQLite 错误返回身份的合同缺陷，保留原失败并按独立逻辑审查提交，不改变原子消费 SQL 或忙锁策略。原 Claude 第 51/52 轮因额度限制退出，未当作批准；提交前由本机 Codex 独立只读复审两轮（含认领/DELETE、ACK 后结束、对账 Stopping、SSRC 释放与 201 写出时序的逐条追问），SQL 修复与历史 owner 均无 P0/P1。

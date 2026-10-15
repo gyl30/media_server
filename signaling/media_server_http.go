@@ -28,6 +28,13 @@ type gb28181ReceiverRequest struct {
 	ssrc        uint32
 }
 
+type receiverKind int
+
+const (
+	liveReceiver receiverKind = iota
+	playbackReceiver
+)
+
 type pullCreateRequest struct {
 	StreamID string  `json:"stream_id"`
 	URL      string  `json:"url"`
@@ -69,7 +76,7 @@ func (c *mediaServerHTTPClient) timeoutContext() (context.Context, context.Cance
 	return context.WithTimeout(context.Background(), c.client.Timeout)
 }
 
-func (c *mediaServerHTTPClient) createUDPReceiver(ctx context.Context, receiver gb28181ReceiverRequest) (uint16, error) {
+func (c *mediaServerHTTPClient) createReceiver(ctx context.Context, receiver gb28181ReceiverRequest, kind receiverKind) (uint16, error) {
 	requestBody := struct {
 		StreamID    string `json:"stream_id"`
 		Transport   string `json:"transport"`
@@ -78,16 +85,21 @@ func (c *mediaServerHTTPClient) createUDPReceiver(ctx context.Context, receiver 
 	}{
 		StreamID: receiver.streamID, Transport: "udp", PayloadType: receiver.payloadType, SSRC: receiver.ssrc,
 	}
-	responseBody := struct {
+	path := "/gb28181/receiver/create"
+	if kind == playbackReceiver {
+		path = "/gb28181/receiver/playback/create"
+		requestBody.Transport = "tcp_passive"
+	}
+	response := struct {
 		RTPPort uint16 `json:"rtp_port"`
 	}{}
-	if err := c.post(ctx, c.server.controlURL+"/gb28181/receiver/create", requestBody, http.StatusCreated, &responseBody); err != nil {
+	if err := c.post(ctx, c.server.controlURL+path, requestBody, http.StatusCreated, &response); err != nil {
 		return 0, err
 	}
-	if responseBody.RTPPort == 0 || responseBody.RTPPort%2 != 0 {
+	if response.RTPPort == 0 || (kind == liveReceiver && response.RTPPort%2 != 0) {
 		return 0, fmt.Errorf("invalid media server create response")
 	}
-	return responseBody.RTPPort, nil
+	return response.RTPPort, nil
 }
 
 func (c *mediaServerHTTPClient) deleteReceiver(ctx context.Context, streamID string) error {

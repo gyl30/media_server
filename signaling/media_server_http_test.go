@@ -113,7 +113,7 @@ func TestGBReceiverRequestsUseOnlyStreamIdentity(t *testing.T) {
 	}))
 	t.Cleanup(media.Close)
 	client := newMediaServerHTTPClient(mediaServer{controlURL: media.URL}, time.Second)
-	port, err := client.createUDPReceiver(t.Context(), gb28181ReceiverRequest{streamID: "run-id", payloadType: 96, ssrc: 123})
+	port, err := client.createReceiver(t.Context(), gb28181ReceiverRequest{streamID: "run-id", payloadType: 96, ssrc: 123}, liveReceiver)
 	if err != nil || port != 30000 {
 		t.Fatalf("receiver create port=%d err=%v", port, err)
 	}

@@ -40,21 +40,32 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	runContext, cancel := context.WithCancel(ctx)
 	sipContext, cancelSIP := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelSIP()
-	results := make(chan error, 2)
-	go func() { results <- server.serve(sipContext) }()
-	go func() { results <- infrastructure.serve(runContext) }()
+	sipDone, httpDone := make(chan struct{}), make(chan struct{})
+	var sipError, httpError error
+	go func() {
+		sipError = server.serve(sipContext)
+		close(sipDone)
+	}()
+	go func() {
+		httpError = infrastructure.serve(runContext)
+		close(httpDone)
+	}()
 	go infrastructure.resumeSources(runContext)
-	first := <-results
+	select {
+	case <-httpDone:
+	case <-sipDone:
+	}
 	cancel()
-	cancelSIP()
-	second := <-results
+	<-httpDone
 	infrastructure.shutdownRTSPPulls(context.Background())
 	live.shutdown(context.Background())
 	infrastructure.shutdownPushRuns(context.Background())
-	if first != nil {
-		return first
+	cancelSIP()
+	<-sipDone
+	if sipError != nil {
+		return sipError
 	}
-	return second
+	return httpError
 }
 
 func main() {

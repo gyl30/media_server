@@ -12,6 +12,14 @@ const pushRegistrationGrace = 3 * time.Second
 // reconcileMedia 让信令状态跟随媒体服务器上实际运行的接收会话：
 // 媒体侧已结束的直播和 RTSP 拉流被清理，信令不认识的遗留接收会话被删除。
 func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
+	// 运行上限由历史 context 表达；即使媒体 HTTP 不可达，也先请求已到期 owner 结束。
+	s.live.stopMatching(ctx, func(session *liveSession) bool {
+		if session.key.historyID != "" && session.state == liveStreaming && session.ctx.Err() != nil {
+			s.logger.Warn("playback application deadline reached; transfer may be incomplete", "stream_id", session.streamID, "error", session.ctx.Err())
+			return true
+		}
+		return false
+	})
 	now := s.live.sip.now()
 	// 先快照再查询：快照中的会话在查询前已在媒体侧创建，查询结果缺失即表示已结束。
 	lives := s.live.streamingSessions()
@@ -115,7 +123,7 @@ func (s *liveService) streamingSessions() []*liveSession {
 	defer s.mu.Unlock()
 	var sessions []*liveSession
 	for _, session := range s.sessions {
-		if session.state == liveStreaming {
+		if session.state == liveStreaming || (session.key.historyID != "" && session.state == liveStopping) {
 			sessions = append(sessions, session)
 		}
 	}

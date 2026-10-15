@@ -13,11 +13,12 @@ import (
 )
 
 type manscdpEnvelope struct {
-	XMLName  xml.Name
-	CmdType  string `xml:"CmdType"`
-	SN       int    `xml:"SN"`
-	DeviceID string `xml:"DeviceID"`
-	Status   string `xml:"Status"`
+	XMLName    xml.Name
+	CmdType    string `xml:"CmdType"`
+	SN         int    `xml:"SN"`
+	DeviceID   string `xml:"DeviceID"`
+	Status     string `xml:"Status"`
+	NotifyType string `xml:"NotifyType"`
 }
 
 func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
@@ -46,6 +47,10 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if message.XMLName.Local == "Response" && (message.CmdType == "DeviceInfo" || message.CmdType == "DeviceStatus" || message.CmdType == "PresetQuery" || message.CmdType == "RecordInfo") {
 		s.handleDeviceQueryResponse(req, tx)
+		return
+	}
+	if message.XMLName.Local == "Notify" && message.CmdType == "MediaStatus" && message.NotifyType == "121" {
+		s.live.handlePlaybackEnd(req, tx, message.DeviceID)
 		return
 	}
 	if message.CmdType != "Keepalive" || message.XMLName.Local != "Notify" || message.Status != "OK" {

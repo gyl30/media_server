@@ -108,7 +108,7 @@ func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs,
 	var streamID string
 	if source.LiveID != "" {
 		for _, session := range s.live.sessions {
-			if session.streamID == source.LiveID {
+			if session.streamID == source.LiveID && session.key.historyID == "" {
 				streamID = session.streamID
 			}
 		}
@@ -191,7 +191,7 @@ func (s *infrastructureServer) handlePlay(writer http.ResponseWriter, request *h
 
 func (s *infrastructureServer) streamRunningLocked(streamID string) bool {
 	for _, session := range s.live.sessions {
-		if session.streamID == streamID && session.state == liveStreaming {
+		if session.streamID == streamID && session.key.historyID == "" && session.state == liveStreaming {
 			_, stopping := s.live.stoppingDevices[session.key.deviceID]
 			return !stopping
 		}
@@ -277,6 +277,18 @@ func (s *infrastructureServer) consumeStreamToken(ctx context.Context, value, op
 	}
 	if reason != "" {
 		return reason
+	}
+	for _, session := range s.live.sessions {
+		if session.key.historyID != streamID {
+			continue
+		}
+		_, stopping := s.live.stoppingDevices[session.key.deviceID]
+		if stopping || session.state != livePreparing || session.ctx.Err() != nil {
+			return "playback_not_prepared"
+		}
+		delete(s.tokens.tokens, value)
+		close(session.claimed)
+		return ""
 	}
 	if !s.streamRunningLocked(streamID) {
 		return "source_not_running"

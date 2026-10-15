@@ -41,6 +41,7 @@ const (
 type liveKey struct {
 	deviceID  string
 	channelID string
+	historyID string
 }
 
 type liveSession struct {
@@ -52,7 +53,9 @@ type liveSession struct {
 	invite      *sip.Request
 	answer      *sip.Response
 	callID      string
+	ctx         context.Context
 	cancel      context.CancelFunc
+	claimed     chan struct{}
 	established chan struct{}
 	done        chan struct{}
 	cleanupErr  error
@@ -147,7 +150,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 			return liveView{}, ctx.Err()
 		}
 	}
-	ssrc, err := s.ssrcs.acquire()
+	ssrc, err := s.ssrcs.acquire(liveReceiver)
 	if err != nil {
 		s.mu.Unlock()
 		return liveView{}, err
@@ -155,7 +158,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	operationContext, cancel := context.WithCancel(ctx)
 	session := &liveSession{
 		key: key, streamID: uuid.NewString(), ssrc: ssrc,
-		state: livePreparing, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
+		state: livePreparing, ctx: operationContext, cancel: cancel, established: make(chan struct{}), done: make(chan struct{}),
 	}
 	s.sessions[key] = session
 	s.mu.Unlock()
@@ -170,32 +173,11 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		s.remove(session)
 		return liveView{}, errChannelOffline
 	}
-	rtpPort, err := s.media.createUDPReceiver(operationContext, gb28181ReceiverRequest{
-		streamID: session.streamID, payloadType: livePayloadType, ssrc: ssrc,
-	})
+	rtpPort, err := s.prepareReceiver(operationContext, session)
 	if err != nil {
-		_, rejected := errors.AsType[*mediaServerHTTPRejection](err)
-		networkError, networkFailure := errors.AsType[*net.OpError](err)
-		ambiguousCreate := !rejected && !(networkFailure && networkError.Op == "dial")
-		cleanupConfirmed := !ambiguousCreate
-		if ambiguousCreate {
-			cleanupContext, cleanupCancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
-			cleanupCancel()
-			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
-			if !cleanupConfirmed {
-				s.logger.Warn("live create compensation failed", "stream_id", session.streamID, "error", cleanupErr)
-			}
-		}
 		s.mu.Lock()
-		if current, ok := s.sessions[session.key]; ok && current == session && !cleanupConfirmed {
-			markCleanupPendingLocked(session, err)
-		}
 		view := makeLiveView(session)
 		s.mu.Unlock()
-		if cleanupConfirmed {
-			s.remove(session)
-		}
 		return view, err
 	}
 	s.mu.Lock()
@@ -207,12 +189,52 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	session.state = liveInviting
 	s.mu.Unlock()
 
-	sdpBody, err := buildLiveUDPSDP(liveSDPParameters{
-		channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: rtpPort, payloadType: livePayloadType, ssrc: ssrc,
-	})
+	sdpBody, err := buildGBSDP(liveSDPParameters{
+		channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: session.rtpPort, payloadType: livePayloadType, ssrc: ssrc,
+	}, 0, 0, liveReceiver)
 	if err != nil {
 		return s.finishFailedStart(session, err, false)
 	}
+	return s.invite(operationContext, session, device, sdpBody)
+}
+
+func (s *liveService) prepareReceiver(ctx context.Context, session *liveSession) (uint16, error) {
+	kind := liveReceiver
+	if session.key.historyID != "" {
+		kind = playbackReceiver
+	}
+	rtpPort, err := s.media.createReceiver(ctx, gb28181ReceiverRequest{
+		streamID: session.streamID, payloadType: livePayloadType, ssrc: session.ssrc,
+	}, kind)
+	if err == nil {
+		return rtpPort, nil
+	}
+	_, rejected := errors.AsType[*mediaServerHTTPRejection](err)
+	networkError, networkFailure := errors.AsType[*net.OpError](err)
+	ambiguousCreate := !rejected && !(networkFailure && networkError.Op == "dial")
+	cleanupConfirmed := !ambiguousCreate
+	if ambiguousCreate {
+		cleanupContext, cleanupCancel := s.media.timeoutContext()
+		cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
+		cleanupCancel()
+		cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
+		if !cleanupConfirmed {
+			s.logger.Warn("live create compensation failed", "stream_id", session.streamID, "error", cleanupErr)
+		}
+	}
+	s.mu.Lock()
+	if s.sessions[session.key] == session && !cleanupConfirmed {
+		markCleanupPendingLocked(session, err)
+	}
+	s.mu.Unlock()
+	if cleanupConfirmed {
+		s.remove(session)
+	}
+	return 0, err
+}
+
+func (s *liveService) invite(operationContext context.Context, session *liveSession, device registeredDevice, sdpBody []byte) (liveView, error) {
+	channelID, ssrc := session.key.channelID, session.ssrc
 	recipient := *device.contact.Clone()
 	recipient.User = channelID
 	request := sip.NewRequest(sip.INVITE, recipient)
@@ -355,7 +377,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	answerErr := fmt.Errorf("INVITE answer is not SDP")
 	deviceSSRC := ssrc
 	if strings.EqualFold(mediaType, "application/sdp") {
-		deviceSSRC, answerErr = validateLiveUDPAnswer(answer.Body(), livePayloadType, ssrc)
+		deviceSSRC, answerErr = validateGBAnswer(answer.Body(), livePayloadType, ssrc, session.key.historyID != "")
 	}
 	if answerErr == nil && deviceSSRC != ssrc {
 		// 设备在 y= 中改用了自己的 SSRC，接收端必须按设备实际发送的值过滤。
@@ -400,7 +422,7 @@ func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
 func (s *liveService) stopLiveID(ctx context.Context, liveID string) error {
 	s.mu.Lock()
 	for _, session := range s.sessions {
-		if session.streamID == liveID {
+		if session.streamID == liveID && session.key.historyID == "" {
 			return s.stopSessionLocked(ctx, session)
 		}
 	}
@@ -429,6 +451,7 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 		return s.waitForStop(ctx, session, established)
 	}
 	if session.state == liveStopping {
+		session.cancel()
 		done := session.done
 		s.mu.Unlock()
 		return s.waitForStop(ctx, session, done)
@@ -490,15 +513,7 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 
 func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 	if sendBye && session.answer != nil {
-		byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
-		response, err := s.sip.client.Do(byeContext, newLiveDialogRequest(session.invite, session.answer, sip.BYE))
-		if err == nil && response.StatusCode != 200 {
-			err = sipgo.ErrDialogResponse{Res: response}
-		}
-		if err != nil {
-			s.logger.Warn("live BYE failed", "stream_id", session.streamID, "error", err)
-		}
-		cancel()
+		s.sendBye(session)
 	}
 	cleanupContext, cancel := s.media.timeoutContext()
 	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID)
@@ -515,6 +530,18 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 	s.mu.Unlock()
 	s.remove(session)
 	return nil
+}
+
+func (s *liveService) sendBye(session *liveSession) {
+	byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
+	defer cancel()
+	response, err := s.sip.client.Do(byeContext, newLiveDialogRequest(session.invite, session.answer, sip.BYE))
+	if err == nil && response.StatusCode != 200 {
+		err = sipgo.ErrDialogResponse{Res: response}
+	}
+	if err != nil {
+		s.logger.Warn("live BYE failed", "stream_id", session.streamID, "error", err)
+	}
 }
 
 func markCleanupPendingLocked(session *liveSession, err error) {
@@ -536,17 +563,17 @@ func (s *liveService) remove(session *liveSession) {
 	s.mu.Unlock()
 }
 
-func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.ServerTransaction) {
+func (s *liveService) dialogSession(request *sip.Request) *liveSession {
 	callID := request.CallID()
 	dialogID, dialogError := sip.DialogIDFromRequestUAC(request)
 	if callID == nil || dialogError != nil {
-		_ = transaction.Respond(sip.NewResponseFromRequest(request, 481, "Call/Transaction Does Not Exist", nil))
-		return
+		return nil
 	}
 	s.mu.Lock()
 	var session *liveSession
 	for _, candidate := range s.sessions {
-		if candidate.callID == callID.Value() && candidate.state == liveStreaming && candidate.answer != nil {
+		if candidate.callID == callID.Value() && candidate.answer != nil &&
+			(candidate.state == liveStreaming || (candidate.key.historyID != "" && candidate.state == liveInviting)) {
 			candidateID, err := sip.DialogIDFromResponse(candidate.answer)
 			if err != nil || candidateID != dialogID {
 				continue
@@ -557,7 +584,22 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 	}
 	s.mu.Unlock()
 	if session == nil || !s.sip.devices.registeredSource(session.key.deviceID, request.Source(), s.sip.now()) {
+		return nil
+	}
+	return session
+}
+
+func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.ServerTransaction) {
+	session := s.dialogSession(request)
+	if session == nil {
 		_ = transaction.Respond(sip.NewResponseFromRequest(request, 481, "Call/Transaction Does Not Exist", nil))
+		return
+	}
+	if session.key.historyID != "" {
+		if err := transaction.Respond(sip.NewResponseFromRequest(request, 200, "OK", nil)); err != nil {
+			s.logger.Warn("playback remote BYE response failed", "stream_id", session.streamID, "error", err)
+		}
+		s.finishPlayback(session, false)
 		return
 	}
 	s.mu.Lock()

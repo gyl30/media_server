@@ -48,7 +48,7 @@ func TestLiveAnswerCompatibility(t *testing.T) {
 		{"invalid y", build(replace("y=", "y=abc")), 0, false},
 	}
 	for _, item := range cases {
-		ssrc, err := validateLiveUDPAnswer(item.body, 96, requested)
+		ssrc, err := validateGBAnswer(item.body, 96, requested, false)
 		if (err == nil) != item.valid || (item.valid && ssrc != item.ssrc) {
 			t.Errorf("%s: ssrc=%d err=%v", item.name, ssrc, err)
 		}

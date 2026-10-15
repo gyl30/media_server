@@ -198,7 +198,7 @@ func TestLiveRemoteByeKeepsInviteRetransmissionACK(t *testing.T) {
 		t.Fatal("streaming session missing before remote BYE")
 	}
 	s.live.ssrcs.mu.Lock()
-	_, allocated := s.live.ssrcs.active[session.ssrc]
+	_, allocated := s.live.ssrcs.active[session.ssrc%10000]
 	s.live.ssrcs.mu.Unlock()
 	if !allocated {
 		t.Fatal("session SSRC was not allocated")

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -17,7 +18,10 @@ type liveSDPParameters struct {
 	ssrc        uint32
 }
 
-func buildLiveUDPSDP(parameters liveSDPParameters) ([]byte, error) {
+func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, kind receiverKind) ([]byte, error) {
+	if kind == playbackReceiver && (startTime < 0 || endTime <= startTime) {
+		return nil, fmt.Errorf("invalid playback SDP time range")
+	}
 	ip := net.ParseIP(parameters.mediaIP)
 	if ip == nil || ip.IsUnspecified() || parameters.rtpPort == 0 || parameters.payloadType > 127 || parameters.ssrc == 0 || !validDigits(parameters.channelID, 20) {
 		return nil, fmt.Errorf("invalid live SDP parameters")
@@ -46,6 +50,14 @@ func buildLiveUDPSDP(parameters liveSDPParameters) ([]byte, error) {
 			},
 		}},
 	}
+	if kind == playbackReceiver {
+		description.SessionName = "Playback"
+		description.URI = &url.URL{Opaque: parameters.channelID + ":0"}
+		description.TimeDescriptions[0].Timing = sdp.Timing{StartTime: uint64(startTime), StopTime: uint64(endTime)}
+		media := description.MediaDescriptions[0]
+		media.MediaName.Protos = []string{"TCP", "RTP", "AVP"}
+		media.Attributes = append(media.Attributes, sdp.NewAttribute("setup", "passive"), sdp.NewAttribute("connection", "new"))
+	}
 	body, err := description.Marshal()
 	if err != nil {
 		return nil, err
@@ -54,10 +66,10 @@ func buildLiveUDPSDP(parameters liveSDPParameters) ([]byte, error) {
 	return body, nil
 }
 
-// validateLiveUDPAnswer 校验设备 200 OK 的 SDP 并返回设备实际使用的 SSRC。
+// validateGBAnswer 校验设备 200 OK 的 SDP 并返回设备实际使用的 SSRC。
 // 与 wvp、Monibuca 一致：y= 缺失时沿用请求的 SSRC，y= 不同时以设备为准；
 // f= 和 s= 只是描述信息，不参与校验。
-func validateLiveUDPAnswer(body []byte, payloadType uint8, requestedSSRC uint32) (uint32, error) {
+func validateGBAnswer(body []byte, payloadType uint8, requestedSSRC uint32, playback bool) (uint32, error) {
 	var standard strings.Builder
 	ssrc := requestedSSRC
 	seenY := false
@@ -75,6 +87,8 @@ func validateLiveUDPAnswer(body []byte, payloadType uint8, requestedSSRC uint32)
 			}
 			ssrc = uint32(value)
 		case strings.HasPrefix(line, "f="):
+		case playback && strings.HasPrefix(line, "u="):
+			// GB 简捷 URI 可为数字设备 ID 加参数，并非 RFC URI；这里只校验媒体协商。
 		case line != "":
 			standard.WriteString(line)
 			standard.WriteString("\r\n")
@@ -88,7 +102,11 @@ func validateLiveUDPAnswer(body []byte, payloadType uint8, requestedSSRC uint32)
 		return 0, fmt.Errorf("invalid live SDP session")
 	}
 	media := description.MediaDescriptions[0]
-	if media.MediaName.Media != "video" || media.MediaName.Port.Value <= 0 || strings.Join(media.MediaName.Protos, "/") != "RTP/AVP" ||
+	protocol := "RTP/AVP"
+	if playback {
+		protocol = "TCP/RTP/AVP"
+	}
+	if media.MediaName.Media != "video" || media.MediaName.Port.Value <= 0 || strings.Join(media.MediaName.Protos, "/") != protocol ||
 		len(media.MediaName.Formats) != 1 || media.MediaName.Formats[0] != strconv.Itoa(int(payloadType)) {
 		return 0, fmt.Errorf("invalid live SDP media")
 	}
@@ -108,6 +126,19 @@ func validateLiveUDPAnswer(body []byte, payloadType uint8, requestedSSRC uint32)
 	// 省略方向时按 SDP 默认 sendrecv，只拒绝明确不发送媒体的应答。
 	if direction == "recvonly" || direction == "inactive" {
 		return 0, fmt.Errorf("device SDP does not send media")
+	}
+	if playback {
+		setup, hasSetup := media.Attribute("setup")
+		connection, hasConnection := media.Attribute("connection")
+		if !hasSetup {
+			setup, _ = description.Attribute("setup")
+		}
+		if !hasConnection {
+			connection, _ = description.Attribute("connection")
+		}
+		if setup != "active" || connection != "new" {
+			return 0, fmt.Errorf("invalid playback SDP TCP negotiation")
+		}
 	}
 	return ssrc, nil
 }

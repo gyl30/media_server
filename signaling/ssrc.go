@@ -24,11 +24,11 @@ func newSSRCAllocator(domain string) (*ssrcAllocator, error) {
 	return &ssrcAllocator{prefix: uint32(prefix) * 10000, next: 1, active: make(map[uint32]struct{})}, nil
 }
 
-func (a *ssrcAllocator) acquire() (uint32, error) {
+func (a *ssrcAllocator) acquire(kind receiverKind) (uint32, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for range 9999 {
-		candidate := a.prefix + a.next
+		candidate := a.next
 		a.next++
 		if a.next == 10000 {
 			a.next = 1
@@ -37,7 +37,11 @@ func (a *ssrcAllocator) acquire() (uint32, error) {
 			continue
 		}
 		a.active[candidate] = struct{}{}
-		return candidate, nil
+		ssrc := a.prefix + candidate
+		if kind == playbackReceiver {
+			ssrc += 1000000000
+		}
+		return ssrc, nil
 	}
 	return 0, fmt.Errorf("no GB28181 SSRC available")
 }
@@ -45,5 +49,5 @@ func (a *ssrcAllocator) acquire() (uint32, error) {
 func (a *ssrcAllocator) release(ssrc uint32) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	delete(a.active, ssrc)
+	delete(a.active, ssrc%10000)
 }

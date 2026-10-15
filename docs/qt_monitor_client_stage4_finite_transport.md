@@ -72,7 +72,7 @@ ASan 运行保留 `makecontext/swapcontext` 支持不完整的 runtime warning�
 | `logs/pool-asan-directed-01.log` | 相同场景 ASan+UBSan、LSan 启用，2/2 CTest，20.16 秒 |
 | `logs/pool-normal-full-build-01.log`、`logs/pool-asan-full-build-01.log` | 本增量正常和 ASan+UBSan 的全部目标构建成功，不复用前一提交的构建结论 |
 | `logs/pool-normal-full-ctest-01.log` | 本增量正常构建完整串行 CTest 69/69 通过，456.20 秒 |
-| 本增量完整 ASan CTest | NOT_RUN；仅新定向 2/2 和新冻结 ELF 的实际媒体 12 项通过。前一提交完整 ASan 69/69 的历史结果仍保留，但不冒充本增量已重跑全量 |
+| `logs/pool-asan-full-ctest-01.log` | 后续补跑本端口增量完整串行 ASan+UBSan CTest 69/69，459.02 秒，退出 0；detect_leaks=1、halt_on_error=1。原定向 2/2 和冻结 ELF 的实际媒体 12 项另列，不拿前一提交结果替代本次全量 |
 | 端口生命周期 | 原 17 场景保持；每次最终清理后池 4 项全部可取回、旧端口可 bind。新增池耗尽、真实 TCP bind 冲突不重试、失败后回收、新 owner 复用后旧 owner 多次关闭不归还新租约 |
 | HTTP 契约 | 保留原 26 请求，新增 15 请求；实际控制授权、四字段及显式端口拒绝、TCP 连接、普通 TCP 空 201、普通 UDP 响应与实际 RTP/RTCP bind 占用对照。两个测试进程使用各自小池，不共享固定监听端口 |
 | `server-media-pool-normal-01/result.json`、`server-media-pool-asan-01/result.json` | 正常/ASan 各 12 项组件断言通过，8 份双轨 PS 与 4 种异常条件，逐帧/PCM/PS 验收不变；各自 receiver 自然注销 12/12，服务退出 0，无 sanitizer 错误 |
@@ -83,7 +83,11 @@ Claude Code 第 44/45 轮完成设计与代码只读复审，无阻断；不把�
 
 端口池耗尽、真实 bind 失败及旧对象重复关闭有直接测试；没有单独强制注入 socket open、listen 或订阅失败，这些出口的归还行为由共用失败返回和 owner 清理路径审查确认，不冒称已注入所有内部失败。
 
+完整 ASan 补跑于 2026-10-16 完成；执行前后 ELF SHA 与上述 `pool-transport-elf/media_server-asan` 一致，使用 `/usr/bin/g++-16`、独立 Boost 1.92 ASan 前缀及 `/home/gyl/bin/ffmpeg`，未重配或绕过兼容守卫。有效 sanitizer 编译优化仍为 `-O1`，不因 RelWithDebInfo 名称声称是纯 `-O2` 插桩运行。终端汇总日志 SHA `a55cf2d97de141e9fe07aad0513ab3df9aac23ea38fb06c5d973e82daba9dedb`，完整子测试输出另存 `logs/pool-asan-full-ctest-01.LastTest.log`，SHA `d8ff4d7223a4f6e28a32a977048f2c0cd799180edead8a1b110868723488a77a`；未检出 AddressSanitizer/LeakSanitizer 错误、DEADLYSIGNAL 或 UBSan runtime error。协程 runtime 支持警告仍不等于全第三方插桩证明。本轮测试进程已全部退出；原有失败与旧日志没有删除。
+
 ## 后续仍须完成
+
+以下是本传输提交时的边界。随后新增的历史信令 owner、真实 Go/SIP/有限媒体组合及当前验证结果见[历史回放信令 owner 增量](qt_monitor_client_stage4_playback_owner.md)；不反向改写本页组件测试当时使用 fake verify 的事实。
 
 1. signaling 独立历史会话 owner、一次 60 秒播放票据、GET attach 后 INVITE、绝对期限和停止/失败回收。
 2. `Playback` SDP 与时间范围、SIP 121/BYE/FIN 各自事实、INFO 序列及 PAUSE/恢复/seek。

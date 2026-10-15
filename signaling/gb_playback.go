@@ -1,0 +1,259 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
+
+	"github.com/emiago/sipgo/sip"
+	"github.com/google/uuid"
+)
+
+// 这是 1x 回放的应用资源上限，不是设备已交付全部录像的保证。
+const playbackCompletionGrace = time.Minute
+const playbackDrainTimeout = 20 * time.Second
+
+type playbackTicket struct {
+	PlaybackID string    `json:"playback_id"`
+	PSURL      string    `json:"ps_url"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Deadline   time.Time `json:"deadline"`
+}
+
+func (s *infrastructureServer) handlePlaybackCreate(writer http.ResponseWriter, request *http.Request) {
+	var command struct {
+		StartTime int64 `json:"start_time"`
+		EndTime   int64 `json:"end_time"`
+	}
+	deviceID, channelID := request.PathValue("device_id"), request.PathValue("channel_id")
+	if !validDigits(deviceID, 20) || !validDigits(channelID, 20) || !decodeJSON(writer, request, &command) || command.StartTime <= 0 || command.EndTime <= command.StartTime ||
+		command.EndTime-command.StartTime > int64((time.Duration(math.MaxInt64)-s.tokenTTL-playbackCompletionGrace)/time.Second) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	result, err := s.startPlayback(request.Context(), deviceID, channelID, command.StartTime, command.EndTime)
+	if err != nil {
+		switch {
+		case errors.Is(err, errDeviceNotFound):
+			writeHTTPError(writer, http.StatusNotFound, "device_not_found")
+		case errors.Is(err, errChannelNotFound):
+			writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
+		case errors.Is(err, errDeviceOffline):
+			writeHTTPError(writer, http.StatusConflict, "device_offline")
+		case errors.Is(err, errDeviceStopping):
+			writeHTTPError(writer, http.StatusConflict, "device_stopping")
+		default:
+			s.logger.Error("playback prepare failed", "playback_id", result.PlaybackID, "error", err)
+			failure := map[string]string{"error": "playback_start_failed"}
+			s.live.mu.Lock()
+			if session := s.live.sessions[liveKey{deviceID: deviceID, channelID: channelID, historyID: result.PlaybackID}]; session != nil && session.state == liveCleanupPending {
+				failure["playback_id"] = result.PlaybackID
+			}
+			s.live.mu.Unlock()
+			writeJSON(writer, http.StatusBadGateway, failure)
+		}
+		return
+	}
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(writer).Encode(result); err != nil || request.Context().Err() != nil {
+		cleanupContext, cancel := s.media.timeoutContext()
+		defer cancel()
+		_ = s.live.stopPlaybackID(cleanupContext, result.PlaybackID)
+	}
+}
+
+func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, channelID string, startTime, endTime int64) (playbackTicket, error) {
+	live := s.live
+	live.mu.Lock()
+	if _, err := live.sip.deviceStore.get(ctx, deviceID); err != nil {
+		live.mu.Unlock()
+		return playbackTicket{}, err
+	}
+	if _, stopping := live.stoppingDevices[deviceID]; stopping {
+		live.mu.Unlock()
+		return playbackTicket{}, errDeviceStopping
+	}
+	if _, online := live.sip.devices.getOnline(deviceID, live.sip.now()); !online {
+		live.mu.Unlock()
+		return playbackTicket{}, errDeviceOffline
+	}
+	if _, exists := live.sip.channels.get(deviceID, channelID); !exists {
+		live.mu.Unlock()
+		return playbackTicket{}, errChannelNotFound
+	}
+	ssrc, err := live.ssrcs.acquire(playbackReceiver)
+	if err != nil {
+		live.mu.Unlock()
+		return playbackTicket{}, err
+	}
+	operationContext, cancel := context.WithTimeout(context.Background(), time.Duration(endTime-startTime)*time.Second+s.tokenTTL+playbackCompletionGrace)
+	id := uuid.NewString()
+	session := &liveSession{
+		key: liveKey{deviceID: deviceID, channelID: channelID, historyID: id}, streamID: id, ssrc: ssrc,
+		state: livePreparing, ctx: operationContext, cancel: cancel, claimed: make(chan struct{}), established: make(chan struct{}), done: make(chan struct{}),
+	}
+	live.sessions[session.key] = session
+	live.mu.Unlock()
+	type prepared struct {
+		ticket playbackTicket
+		err    error
+	}
+	result := make(chan prepared, 1)
+	go func() {
+		defer close(session.established)
+		port, err := live.prepareReceiver(operationContext, session)
+		if err != nil {
+			result <- prepared{ticket: playbackTicket{PlaybackID: id}, err: err}
+			return
+		}
+		live.mu.Lock()
+		session.rtpPort = port
+		if session.state != livePreparing || operationContext.Err() != nil {
+			live.mu.Unlock()
+			_, err := live.finishFailedStart(session, context.Canceled, false)
+			result <- prepared{ticket: playbackTicket{PlaybackID: id}, err: err}
+			return
+		}
+		value, err := newStreamToken()
+		if err != nil {
+			live.mu.Unlock()
+			_, err = live.finishFailedStart(session, err, false)
+			result <- prepared{ticket: playbackTicket{PlaybackID: id}, err: err}
+			return
+		}
+		expiresAt := live.sip.now().Add(s.tokenTTL)
+		s.tokens.mu.Lock()
+		s.tokens.tokens[value] = streamToken{streamID: id, expiresAt: expiresAt}
+		s.tokens.mu.Unlock()
+		live.mu.Unlock()
+		deadline, _ := operationContext.Deadline()
+		host := net.JoinHostPort(s.media.server.mediaIP, strconv.Itoa(int(s.media.server.httpPort)))
+		psURL := (&url.URL{Scheme: "http", Host: host, Path: "/play/gb28181/" + id + "/" + value + ".ps"}).String()
+		result <- prepared{ticket: playbackTicket{PlaybackID: id, PSURL: psURL, ExpiresAt: expiresAt, Deadline: deadline}}
+		timer := time.NewTimer(s.tokenTTL)
+		defer timer.Stop()
+		select {
+		case <-session.claimed:
+		case <-timer.C:
+			_, err := live.finishFailedStart(session, fmt.Errorf("playback ticket expired without claim"), false)
+			live.logger.Info("playback unclaimed receiver ended", "stream_id", id, "error", err)
+			return
+		case <-operationContext.Done():
+			_, _ = live.finishFailedStart(session, operationContext.Err(), false)
+			return
+		}
+		live.mu.Lock()
+		device, online := live.sip.devices.getOnline(deviceID, live.sip.now())
+		_, channelExists := live.sip.channels.get(deviceID, channelID)
+		if session.state != livePreparing || operationContext.Err() != nil || !online || !channelExists {
+			live.mu.Unlock()
+			_, err := live.finishFailedStart(session, fmt.Errorf("playback target changed before INVITE"), false)
+			live.logger.Warn("playback invite abandoned", "stream_id", id, "error", err)
+			return
+		}
+		session.state = liveInviting
+		live.mu.Unlock()
+		body, err := buildGBSDP(liveSDPParameters{
+			channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: port, payloadType: livePayloadType, ssrc: ssrc,
+		}, startTime, endTime, playbackReceiver)
+		if err != nil {
+			_, err = live.finishFailedStart(session, err, false)
+		} else {
+			_, err = live.invite(operationContext, session, device, body)
+		}
+		if err != nil {
+			live.logger.Warn("playback INVITE failed", "stream_id", id, "error", err)
+		}
+	}()
+	select {
+	case prepared := <-result:
+		if ctx.Err() == nil {
+			return prepared.ticket, prepared.err
+		}
+	case <-ctx.Done():
+	}
+	cleanupContext, cleanupCancel := s.media.timeoutContext()
+	defer cleanupCancel()
+	live.mu.Lock()
+	_ = live.stopSessionLocked(cleanupContext, session)
+	return playbackTicket{PlaybackID: id}, ctx.Err()
+}
+
+func (s *liveService) stopPlaybackID(ctx context.Context, id string) error {
+	s.mu.Lock()
+	for _, session := range s.sessions {
+		if session.streamID == id && session.key.historyID != "" {
+			return s.stopSessionLocked(ctx, session)
+		}
+	}
+	s.mu.Unlock()
+	return errLiveNotFound
+}
+
+func (s *infrastructureServer) handlePlaybackDelete(writer http.ResponseWriter, request *http.Request) {
+	id := request.PathValue("playback_id")
+	if !validUUIDv4(id) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if err := s.live.stopPlaybackID(request.Context(), id); err != nil {
+		if errors.Is(err, errLiveNotFound) {
+			writeHTTPError(writer, http.StatusNotFound, "playback_not_found")
+		} else {
+			s.logger.Error("playback stop failed", "playback_id", id, "error", err)
+			writeHTTPError(writer, http.StatusBadGateway, "playback_stop_failed")
+		}
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *liveService) handlePlaybackEnd(request *sip.Request, transaction sip.ServerTransaction, channelID string) {
+	session := s.dialogSession(request)
+	if session == nil || session.key.historyID == "" || session.key.channelID != channelID {
+		_ = transaction.Respond(sip.NewResponseFromRequest(request, 481, "Call/Transaction Does Not Exist", nil))
+		return
+	}
+	if err := transaction.Respond(sip.NewResponseFromRequest(request, 200, "OK", nil)); err != nil {
+		s.logger.Warn("playback MediaStatus response failed", "stream_id", session.streamID, "error", err)
+	}
+	s.finishPlayback(session, true)
+}
+
+func (s *liveService) finishPlayback(session *liveSession, sendBye bool) {
+	// ACK 后设备可立即通知结束，而 INVITE owner 还在校验 SDP 或更新接收 SSRC。
+	<-session.established
+	s.mu.Lock()
+	if s.sessions[session.key] != session || session.state != liveStreaming {
+		s.mu.Unlock()
+		return
+	}
+	session.state = liveStopping
+	s.tokens.revokeStream(session.streamID)
+	s.mu.Unlock()
+	go func() {
+		if sendBye {
+			s.sendBye(session)
+		}
+		// SIP 结束并不证明 TCP 媒体尾部已排空；给现有接收器一个有界收尾窗口。
+		timer := time.NewTimer(playbackDrainTimeout)
+		defer timer.Stop()
+		select {
+		case <-session.ctx.Done():
+		case <-timer.C:
+			s.logger.Warn("playback drain deadline reached; transfer may be incomplete", "stream_id", session.streamID)
+		}
+		if err := s.cleanup(session, false); err != nil {
+			s.logger.Warn("playback end cleanup failed", "stream_id", session.streamID, "error", err)
+		}
+	}()
+}
