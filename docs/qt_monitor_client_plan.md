@@ -38,6 +38,10 @@
 
 阶段一完成开发与定向验收：已验证真实 GB 模拟设备的冷点播、H.264/PCMA、AAC/无音频、请求/解码取消和新旧回调隔离；GB 冷首开旧 RED 保留，新增派生 `live.media_ready` 后不重签票即可正常播放。最终 shared SDK 正常和 ASan+UBSan 桌面 CTest 均4/4通过（39.01/39.14秒），Go 全量 test/race/vet 通过；后续修改须重新验证，不能继承本次结论。
 
-音画同步采用独立 X11+私有 Pulse 数字回环；最终 shared SDK 代码的 AAC 11 个标记（含首个）偏差 −20.500～+0.500ms，PCMA 10 个标记偏差 −19.521～−9.521ms。10 分钟 AAC 的稳态漂移另有证据，不替代真实设备扬声器，也不抹去旧起播偏差。反复关闭/重开音频设备的切换停顿已用同会话 Pause/Clear 复用修复，16 秒严格切换验证通过；停止仍关闭设备。真实 ASan AAC/PCMA/冷GB播放已验证，内部包搬移/依赖及包内实际 GUI 播放、声音开关、正常窗口关闭通过，GUI持续观察10.846秒。Claude Code 第10/11轮复审提出的阶段一门槛已兑现；详情见 [阶段一验证](qt_monitor_client_stage1.md)。内部包不等于公共分发许可已闭合。真实第二机、16 路和后六阶段不继承历史 PASS。
+音画同步采用独立 X11+私有 Pulse 数字回环；最终 shared SDK 代码的 AAC 11 个标记（含首个）偏差 −20.500～+0.500ms，PCMA 10 个标记偏差 −19.521～−9.521ms。10 分钟 AAC 的稳态漂移另有证据，不替代真实设备扬声器，也不抹去旧起播偏差。反复关闭/重开音频设备的切换停顿已用同会话 Pause/Clear 复用修复，16 秒严格切换验证通过；停止仍关闭设备（阶段一行为，阶段二已改为归还窗口设备借用）。真实 ASan AAC/PCMA/冷GB播放已验证，内部包搬移/依赖及包内实际 GUI 播放、声音开关、正常窗口关闭通过，GUI持续观察10.846秒。Claude Code 第10/11轮复审提出的阶段一门槛已兑现；详情见 [阶段一验证](qt_monitor_client_stage1.md)。内部包不等于公共分发许可已闭合。真实第二机、16 路和后六阶段不继承历史 PASS。
 
 原始私有证据目录：DEV `/var/tmp/media-server-qt-stage1-bFmYuf/`；GB `/tmp/qt-gb-plan-WDjxT3VH/`；Claude 会话记录 `/tmp/qt-client-plan-claude-JuZHjy/`。原始日志可能含授权，不提交 Git，也不公开复制。
+
+阶段二完成：1/4/9/16布局、选择/拖放替换/停止、唯一音频设备借用、全屏/比例/抓图/偏好及主动Catalog。i7-13700KF上的同源16路独立RTSP/CPU解码，H.264 Main1080p25约4Mbps+AAC，30秒共同窗口每路749帧、双轨持续进展；不是16不同源或正式容量基线。实际双音源50次切声、GB四格共享唯一INVITE/停三留一、viewer退出不停止上游通过。最终桌面normal及ASan+UBSan各4/4 CTest（各61个QTest、无失败/跳过），Go全量test/race/vet通过；内部包整体搬移、包内实际GUI播放/声音/正常退出通过。详情及原始失败边界见 [阶段二验证](qt_monitor_client_stage2.md)。
+
+阶段二证据：DEV `/var/tmp/media-server-qt-stage2-main-7Do5ny4N/`、`/var/tmp/media-server-qt-stage2-GwavyowG/`、`/var/tmp/media-server-qt-stage2-audio50-VlVrz8/`。下一阶段仍需实现DeviceInfo/DeviceStatus/PTZ/预置位；当前只完成观看里程碑，不等同完整GB平台GO。

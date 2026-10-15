@@ -3,10 +3,15 @@
 #include <algorithm>
 
 #include <SDL.h>
+#include <QMimeData>
 #include <QPainter>
 #include <QJsonArray>
+#include <QDropEvent>
+#include <QDataStream>
 #include <QJsonObject>
 #include <QMouseEvent>
+#include <QResizeEvent>
+#include <QDragEnterEvent>
 #include <QCoreApplication>
 
 #include "desktop/playback_view.h"
@@ -18,6 +23,7 @@ namespace media_server
 playback_view::playback_view(QWidget* parent) : QWidget(parent)
 {
     setMinimumSize(160, 100);
+    setAcceptDrops(true);
     set_status(QStringLiteral("双击右侧设备通道开始预览"));
     timer_.setInterval(10);
     connect(&timer_, &QTimer::timeout, this, &playback_view::update_media);
@@ -195,37 +201,46 @@ void playback_view::reset_audio()
 {
     if (audio_id_ != 0)
     {
-        SDL_CloseAudioDevice(audio_id_);
+        SDL_PauseAudioDevice(audio_id_, 1);
+        SDL_ClearQueuedAudio(audio_id_);
         audio_id_ = 0;
+        emit audible_changed(false);
     }
     audio_period_bytes_ = 0;
     audio_end_pts_ = no_media_timestamp;
 }
 
-void playback_view::set_audible(bool audible)
+void playback_view::set_audible(quint32 audio_id, int period_bytes)
 {
-    if (audible_ == audible)
+    if (audio_id_ == audio_id)
     {
         return;
     }
-    audible_ = audible;
-    if (audio_id_ != 0)
-    {
-        SDL_PauseAudioDevice(audio_id_, 1);
-        SDL_ClearQueuedAudio(audio_id_);
-    }
-    audio_end_pts_ = no_media_timestamp;
+    reset_audio();
     pcm_.clear();
-    const auto anchor = !audible_ && !video_.empty() && video_.back().pts_us != no_media_timestamp ? video_.back().pts_us : shown_pts_;
+    const auto anchor = audio_id == 0 && !video_.empty() && video_.back().pts_us != no_media_timestamp ? video_.back().pts_us : shown_pts_;
     if (anchor != no_media_timestamp)
     {
         wall_pts_ = anchor;
         wall_clock_.restart();
     }
-    emit audible_changed(audible_);
+    audio_id_ = audio_id;
+    audio_period_bytes_ = period_bytes;
+    if (audio_id_ != 0)
+    {
+        SDL_PauseAudioDevice(audio_id_, 1);
+        SDL_ClearQueuedAudio(audio_id_);
+        emit audible_changed(true);
+    }
 }
 
-bool playback_view::audible() const { return audible_; }
+bool playback_view::audible() const { return audio_id_ != 0; }
+const QImage& playback_view::image() const { return image_; }
+void playback_view::set_keep_aspect(bool keep)
+{
+    keep_aspect_ = keep;
+    update();
+}
 QString playback_view::status() const { return status_; }
 decoder_snapshot playback_view::snapshot() const { return decoder_ ? decoder_->snapshot() : final_stats_; }
 quint64 playback_view::rendered_frames() const { return rendered_frames_; }
@@ -247,19 +262,19 @@ void playback_view::update_media()
     auto frames = decoder_->take_video_frames();
     for (auto& frame : frames)
     {
-        if (video_.size() >= (audible_ ? 16U : 4U))
+        if (video_.size() >= (audible() ? 16U : 4U))
         {
             video_.pop_front();
         }
         video_.push_back(std::move(frame));
-        while (audible_ && video_.size() > 1 && video_.front().pts_us != no_media_timestamp && video_.back().pts_us != no_media_timestamp &&
+        while (audible() && video_.size() > 1 && video_.front().pts_us != no_media_timestamp && video_.back().pts_us != no_media_timestamp &&
                video_.back().pts_us - video_.front().pts_us > 500'000)
         {
             video_.pop_front();
         }
     }
     auto audio = decoder_->take_audio_blocks();
-    if (audible_)
+    if (audible())
     {
         for (auto& block : audio)
         {
@@ -276,30 +291,9 @@ void playback_view::update_media()
             queued -= pcm_.front().pcm.size();
             pcm_.pop_front();
         }
-        if (!pcm_.empty() && audio_id_ == 0)
-        {
-            SDL_AudioSpec wanted{};
-            wanted.freq = 48'000;
-            wanted.format = AUDIO_S16SYS;
-            wanted.channels = 2;
-            wanted.samples = 512;
-            SDL_AudioSpec obtained{};
-            audio_id_ = SDL_OpenAudioDevice(nullptr, 0, &wanted, &obtained, 0);
-            if (audio_id_ == 0)
-            {
-                set_audible(false);
-                set_status(QStringLiteral("无法启动音频设备；继续静音解码"));
-                emit playback_error(status_);
-            }
-            else
-            {
-                audio_period_bytes_ = obtained.samples * 4;
-            }
-        }
         if (audio_id_ != 0 && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_STOPPED)
         {
-            reset_audio();
-            set_audible(false);
+            set_audible(0, 0);
             set_status(QStringLiteral("音频设备已断开；继续静音解码"));
             emit playback_error(status_);
         }
@@ -312,8 +306,7 @@ void playback_view::update_media()
             }
             if (SDL_QueueAudio(audio_id_, block.pcm.constData(), static_cast<Uint32>(block.pcm.size())) != 0)
             {
-                reset_audio();
-                set_audible(false);
+                set_audible(0, 0);
                 set_status(QStringLiteral("音频输出失败；继续静音解码"));
                 emit playback_error(status_);
                 break;
@@ -331,7 +324,7 @@ void playback_view::update_media()
     }
 
     // 已声明音轨的有声播放先建立音频时钟，避免首帧按视频时钟抢跑后再回跳。
-    if (audible_ && !decoder_->snapshot().audio_codec.isEmpty() && (audio_id_ == 0 || SDL_GetAudioDeviceStatus(audio_id_) != SDL_AUDIO_PLAYING))
+    if (audible() && !decoder_->snapshot().audio_codec.isEmpty() && SDL_GetAudioDeviceStatus(audio_id_) != SDL_AUDIO_PLAYING)
     {
         return;
     }
@@ -388,18 +381,64 @@ void playback_view::paintEvent(QPaintEvent*)
     if (!image_.isNull())
     {
         QSize size = image_.size();
-        size.scale(this->size(), Qt::KeepAspectRatio);
+        size.scale(this->size(), keep_aspect_ ? Qt::KeepAspectRatio : Qt::IgnoreAspectRatio);
         painter.drawImage(QRect(QPoint((width() - size.width()) / 2, (height() - size.height()) / 2), size), image_);
     }
     painter.setPen(QColor(226, 231, 235));
     painter.fillRect(QRect(0, height() - 30, width(), 30), QColor(0, 0, 0, 160));
     painter.drawText(rect().adjusted(10, 0, -8, -5), Qt::AlignBottom | Qt::AlignLeft, status_);
+    if (property("selected").toBool())
+    {
+        painter.setPen(QPen(QColor(34, 146, 220), 2));
+        painter.drawRect(rect().adjusted(1, 1, -1, -1));
+    }
 }
 
 void playback_view::mousePressEvent(QMouseEvent* event)
 {
     emit selected();
     QWidget::mousePressEvent(event);
+}
+
+void playback_view::resizeEvent(QResizeEvent* event)
+{
+    if (decoder_)
+    {
+        decoder_->set_output_size(event->size());
+    }
+    QWidget::resizeEvent(event);
+}
+
+void playback_view::dragEnterEvent(QDragEnterEvent* event)
+{
+    if (event->mimeData()->hasFormat(QStringLiteral("application/x-qabstractitemmodeldatalist")))
+    {
+        event->acceptProposedAction();
+    }
+}
+
+void playback_view::dropEvent(QDropEvent* event)
+{
+    auto bytes = event->mimeData()->data(QStringLiteral("application/x-qabstractitemmodeldatalist"));
+    QDataStream stream(&bytes, QIODevice::ReadOnly);
+    int row = 0;
+    int column = 0;
+    QMap<int, QVariant> roles;
+    stream >> row >> column >> roles;
+    if (stream.status() != QDataStream::Ok || !stream.atEnd() || column != 0)
+    {
+        return;
+    }
+    const auto data = roles.value(Qt::UserRole).toMap();
+    const auto kind = data.value(QStringLiteral("kind")).toString();
+    if ((kind != QStringLiteral("gb_channel") && kind != QStringLiteral("source") && kind != QStringLiteral("push_device")) ||
+        data.value(QStringLiteral("id")).toString().isEmpty() ||
+        (kind == QStringLiteral("gb_channel") && data.value(QStringLiteral("channel_id")).toString().isEmpty()))
+    {
+        return;
+    }
+    emit dropped(data);
+    event->acceptProposedAction();
 }
 
 }    // namespace media_server

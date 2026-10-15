@@ -1,19 +1,32 @@
+#include <algorithm>
+
+#include <SDL.h>
+#include <QMenu>
 #include <QLabel>
 #include <QTimer>
 #include <QVariant>
+#include <QCheckBox>
+#include <QComboBox>
 #include <QLineEdit>
+#include <QSaveFile>
 #include <QSettings>
 #include <QSplitter>
+#include <QShortcut>
 #include <QTabWidget>
 #include <QStatusBar>
 #include <QJsonArray>
+#include <QDateTime>
 #include <QPushButton>
 #include <QCloseEvent>
+#include <QFileDialog>
 #include <QTreeWidget>
+#include <QGridLayout>
+#include <QKeySequence>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QApplication>
 #include <QSignalBlocker>
+#include <QStandardPaths>
 
 #include "desktop/playback_view.h"
 #include "desktop/monitor_window.h"
@@ -24,7 +37,10 @@ namespace media_server
 monitor_window::monitor_window(QWidget* parent)
     : QMainWindow(parent),
       client_(this),
-      view_(new playback_view(this)),
+      grid_(new QGridLayout),
+      view_layout_(new QComboBox(this)),
+      sound_(new QPushButton(QStringLiteral("开启声音"), this)),
+      catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
       devices_(new QTreeWidget(this)),
       address_(new QLineEdit(this)),
       connection_(new QLabel(this))
@@ -35,7 +51,71 @@ monitor_window::monitor_window(QWidget* parent)
     auto* layout = new QVBoxLayout(central);
     layout->setContentsMargins(4, 4, 4, 4);
     auto* split = new QSplitter(central);
-    split->addWidget(view_);
+    auto* videos = new QWidget(split);
+    videos->setLayout(grid_);
+    grid_->setContentsMargins(0, 0, 0, 0);
+    grid_->setSpacing(2);
+    for (std::size_t index = 0; index < views_.size(); ++index)
+    {
+        auto* view = new playback_view(videos);
+        views_[index] = view;
+        view->setObjectName(QStringLiteral("view_%1").arg(index + 1, 2, 10, QLatin1Char('0')));
+        connect(view, &playback_view::selected, this, [this, view]() { select_view(view); });
+        connect(view,
+                &playback_view::dropped,
+                this,
+                [this, view](const QVariantMap& data)
+                {
+                    select_view(view);
+                    play_data(data, view);
+                });
+        connect(view,
+                &playback_view::audible_changed,
+                this,
+                [this, view](bool)
+                {
+                    if (selected_ == view)
+                    {
+                        const QSignalBlocker blocked(sound_);
+                        sound_->setChecked(view->audible());
+                        sound_->setText(view->audible() ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
+                    }
+                });
+        connect(view,
+                &playback_view::playback_error,
+                this,
+                [this](const QString& error)
+                {
+                    if (audio_id_ != 0 && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_STOPPED)
+                    {
+                        SDL_CloseAudioDevice(audio_id_);
+                        audio_id_ = 0;
+                    }
+                    statusBar()->showMessage(error);
+                });
+        view->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(view,
+                &QWidget::customContextMenuRequested,
+                this,
+                [this, view](const QPoint& position)
+                {
+                    select_view(view);
+                    QMenu menu(this);
+                    for (int count : {1, 4, 9, 16})
+                    {
+                        auto* action = menu.addAction(QStringLiteral("%1画面").arg(count));
+                        action->setCheckable(true);
+                        action->setChecked(view_layout_->currentData().toInt() == count);
+                        connect(action, &QAction::triggered, this, [this, count]() { view_layout_->setCurrentIndex(view_layout_->findData(count)); });
+                    }
+                    menu.addSeparator();
+                    menu.addAction(QStringLiteral("停止此画面"), view, &playback_view::stop);
+                    menu.addAction(QStringLiteral("停止全部"), this, &monitor_window::stop_all);
+                    menu.addAction(QStringLiteral("抓图"), this, &monitor_window::take_snapshot);
+                    menu.exec(view->mapToGlobal(position));
+                });
+    }
+    split->addWidget(videos);
     auto* sidebar = new QWidget(split);
     sidebar->setMinimumWidth(260);
     sidebar->setMaximumWidth(420);
@@ -55,8 +135,13 @@ monitor_window::monitor_window(QWidget* parent)
     address_->setText(QSettings().value(QStringLiteral("platform_url"), QStringLiteral("http://127.0.0.1:9090")).toString());
     side->addWidget(address_);
     side->addWidget(connection_);
+    catalog_->setObjectName(QStringLiteral("catalog_query"));
+    side->addWidget(catalog_);
     devices_->setHeaderLabel(QStringLiteral("设备与通道"));
     devices_->setObjectName(QStringLiteral("device_tree"));
+    devices_->setDragEnabled(true);
+    devices_->setDragDropMode(QAbstractItemView::DragOnly);
+    devices_->setSelectionMode(QAbstractItemView::SingleSelection);
     side->addWidget(devices_, 1);
     auto* controls = new QTabWidget(sidebar);
     for (const auto& title : {QStringLiteral("基本"), QStringLiteral("云台"), QStringLiteral("预置位")})
@@ -89,37 +174,229 @@ monitor_window::monitor_window(QWidget* parent)
     }
     tabs->setFixedHeight(34);
     bottom->addWidget(tabs, 1);
-    auto* sound = new QPushButton(QStringLiteral("开启声音"), central);
-    sound->setCheckable(true);
+    view_layout_->setObjectName(QStringLiteral("view_layout"));
+    for (int count : {1, 4, 9, 16})
+    {
+        view_layout_->addItem(QStringLiteral("%1画面").arg(count), count);
+    }
+    auto* aspect = new QCheckBox(QStringLiteral("保持比例"), central);
+    aspect->setObjectName(QStringLiteral("keep_aspect"));
+    aspect->setChecked(QSettings().value(QStringLiteral("keep_aspect"), true).toBool());
+    auto* screenshot = new QPushButton(QStringLiteral("抓图"), central);
+    screenshot->setObjectName(QStringLiteral("snapshot"));
+    auto* fullscreen = new QPushButton(QStringLiteral("全屏"), central);
+    fullscreen->setObjectName(QStringLiteral("fullscreen"));
+    sound_->setCheckable(true);
+    sound_->setObjectName(QStringLiteral("sound_toggle"));
     auto* stop = new QPushButton(QStringLiteral("停止预览"), central);
-    bottom->addWidget(sound);
+    stop->setObjectName(QStringLiteral("stop_preview"));
+    auto* stop_everything = new QPushButton(QStringLiteral("停止全部"), central);
+    stop_everything->setObjectName(QStringLiteral("stop_all"));
+    bottom->addWidget(view_layout_);
+    bottom->addWidget(aspect);
+    bottom->addWidget(screenshot);
+    bottom->addWidget(fullscreen);
+    bottom->addWidget(sound_);
     bottom->addWidget(stop);
+    bottom->addWidget(stop_everything);
     layout->addLayout(bottom);
     setCentralWidget(central);
     statusBar()->showMessage(QStringLiteral("Linux x86_64 · H.264 · RTSP/TCP · 默认静音"));
     connect(refresh, &QPushButton::clicked, this, &monitor_window::reload_devices);
     connect(address_, &QLineEdit::returnPressed, this, &monitor_window::reload_devices);
     connect(devices_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) { play_item(item); });
-    connect(stop, &QPushButton::clicked, view_, &playback_view::stop);
-    connect(sound,
+    connect(catalog_, &QPushButton::clicked, this, &monitor_window::query_catalog);
+    connect(stop, &QPushButton::clicked, this, [this]() { selected_->stop(); });
+    connect(stop_everything, &QPushButton::clicked, this, &monitor_window::stop_all);
+    connect(screenshot, &QPushButton::clicked, this, &monitor_window::take_snapshot);
+    connect(view_layout_, &QComboBox::currentIndexChanged, this, [this]() { set_layout(view_layout_->currentData().toInt()); });
+    connect(aspect,
+            &QCheckBox::toggled,
+            this,
+            [this](bool keep)
+            {
+                for (auto* view : views_)
+                {
+                    view->set_keep_aspect(keep);
+                }
+                QSettings().setValue(QStringLiteral("keep_aspect"), keep);
+            });
+    connect(fullscreen, &QPushButton::clicked, this, [this]() { isFullScreen() ? showNormal() : showFullScreen(); });
+    auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    connect(escape,
+            &QShortcut::activated,
+            this,
+            [this]()
+            {
+                if (isFullScreen())
+                {
+                    showNormal();
+                }
+            });
+    connect(sound_,
             &QPushButton::toggled,
             this,
-            [this, sound](bool enabled)
+            [this](bool enabled)
             {
-                view_->set_audible(enabled);
-                sound->setText(enabled ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
+                for (auto* view : views_)
+                {
+                    view->set_audible(0, 0);
+                }
+                if (!enabled)
+                {
+                    return;
+                }
+                if (audio_id_ == 0)
+                {
+                    SDL_AudioSpec wanted{};
+                    wanted.freq = 48'000;
+                    wanted.format = AUDIO_S16SYS;
+                    wanted.channels = 2;
+                    wanted.samples = 512;
+                    SDL_AudioSpec obtained{};
+                    audio_id_ = SDL_OpenAudioDevice(nullptr, 0, &wanted, &obtained, 0);
+                    if (audio_id_ == 0)
+                    {
+                        const QSignalBlocker blocked(sound_);
+                        sound_->setChecked(false);
+                        statusBar()->showMessage(QStringLiteral("无法打开音频设备，继续静音观看"));
+                        return;
+                    }
+                    audio_period_bytes_ = obtained.samples * 4;
+                }
+                selected_->set_audible(audio_id_, audio_period_bytes_);
             });
-    connect(view_,
-            &playback_view::audible_changed,
-            sound,
-            [sound](bool enabled)
-            {
-                const QSignalBlocker blocked(sound);
-                sound->setChecked(enabled);
-                sound->setText(enabled ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
-            });
-    connect(view_, &playback_view::playback_error, this, [this](const QString& error) { statusBar()->showMessage(error); });
+    select_view(views_.front());
+    for (auto* view : views_)
+    {
+        view->set_keep_aspect(aspect->isChecked());
+    }
+    const auto saved_count = QSettings().value(QStringLiteral("view_count"), 1).toInt();
+    const auto saved_index = view_layout_->findData(saved_count);
+    view_layout_->setCurrentIndex(saved_index < 0 ? 0 : saved_index);
+    set_layout(view_layout_->currentData().toInt());
+    const auto geometry = QSettings().value(QStringLiteral("geometry")).toRect();
+    if (geometry.isValid())
+    {
+        setGeometry(geometry);
+    }
     QTimer::singleShot(0, this, &monitor_window::reload_devices);
+}
+
+monitor_window::~monitor_window()
+{
+    stop_all();
+    if (audio_id_ != 0)
+    {
+        SDL_CloseAudioDevice(audio_id_);
+    }
+}
+
+void monitor_window::select_view(playback_view* view)
+{
+    selected_ = view;
+    for (auto* item : views_)
+    {
+        item->setProperty("selected", item == view);
+        item->update();
+    }
+    const QSignalBlocker blocked(sound_);
+    sound_->setChecked(view->audible());
+    sound_->setText(view->audible() ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
+}
+
+void monitor_window::set_layout(int count)
+{
+    const int columns = count == 1 ? 1 : count == 4 ? 2 : count == 9 ? 3 : 4;
+    for (int index = 0; index < static_cast<int>(views_.size()); ++index)
+    {
+        auto* view = views_[index];
+        grid_->removeWidget(view);
+        if (index >= count)
+        {
+            view->stop();
+            view->hide();
+            continue;
+        }
+        grid_->addWidget(view, index / columns, index % columns);
+        view->show();
+    }
+    // QGridLayout 保留曾使用过的行列；显式清除旧 stretch，避免缩布局后留空白。
+    for (int index = 0; index < 4; ++index)
+    {
+        grid_->setRowStretch(index, index < columns ? 1 : 0);
+        grid_->setColumnStretch(index, index < columns ? 1 : 0);
+    }
+    if (std::find(views_.begin(), views_.begin() + count, selected_) == views_.begin() + count)
+    {
+        select_view(views_.front());
+    }
+    QSettings().setValue(QStringLiteral("view_count"), count);
+}
+
+void monitor_window::stop_all()
+{
+    for (auto* view : views_)
+    {
+        view->stop();
+    }
+}
+
+void monitor_window::take_snapshot()
+{
+    const auto image = selected_->image();
+    if (image.isNull())
+    {
+        statusBar()->showMessage(QStringLiteral("当前画面没有可保存的图像"));
+        return;
+    }
+    const auto path =
+        QFileDialog::getSaveFileName(this,
+                                     QStringLiteral("保存当前画面"),
+                                     QStandardPaths::writableLocation(QStandardPaths::PicturesLocation) + QStringLiteral("/监控-") +
+                                         QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz")) + QStringLiteral(".png"),
+                                     QStringLiteral("PNG 图像 (*.png)"));
+    if (path.isEmpty())
+    {
+        return;
+    }
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || !image.save(&file, "PNG") || !file.commit())
+    {
+        statusBar()->showMessage(QStringLiteral("保存抓图失败，请检查路径和可用空间"));
+        return;
+    }
+    statusBar()->showMessage(QStringLiteral("已保存当前显示分辨率的图像"));
+}
+
+void monitor_window::query_catalog()
+{
+    auto* item = devices_->currentItem();
+    if (!item)
+    {
+        connection_->setText(QStringLiteral("请先选择国标设备或通道"));
+        return;
+    }
+    const auto data = item->data(0, Qt::UserRole).toMap();
+    const auto kind = data.value(QStringLiteral("kind")).toString();
+    if (kind != QStringLiteral("gb_device") && kind != QStringLiteral("gb_channel"))
+    {
+        connection_->setText(QStringLiteral("目录查询仅用于国标设备"));
+        return;
+    }
+    catalog_->setEnabled(false);
+    const auto path =
+        QStringLiteral("/api/devices/%1/catalog").arg(QString::fromLatin1(QUrl::toPercentEncoding(data.value(QStringLiteral("id")).toString())));
+    client_.request("POST",
+                    path,
+                    {},
+                    listing_,
+                    [this](platform_response response)
+                    {
+                        catalog_->setEnabled(true);
+                        connection_->setText(response.ok() ? QStringLiteral("目录查询已受理，请稍后双击设备刷新通道")
+                                                           : QStringLiteral("目录查询失败：%1").arg(response.error));
+                    });
 }
 
 void monitor_window::reload_devices()
@@ -134,11 +411,12 @@ void monitor_window::reload_devices()
     client_.set_base_url(base);
     if (client_.base_url() != previous)
     {
-        view_->stop();
+        stop_all();
     }
     QSettings().setValue(QStringLiteral("platform_url"), base.toString());
     delete listing_;
     listing_ = new QObject(this);
+    catalog_->setEnabled(true);
     devices_->clear();
     connection_->setText(QStringLiteral("正在查询设备…"));
     auto* gb = new QTreeWidgetItem(devices_, {QStringLiteral("GB28181 设备")});
@@ -249,7 +527,14 @@ void monitor_window::play_item(QTreeWidgetItem* item)
                         });
         return;
     }
-    if (kind != QStringLiteral("gb_channel") && kind != QStringLiteral("source") && kind != QStringLiteral("push_device"))
+    play_data(data, selected_);
+}
+
+void monitor_window::play_data(const QVariantMap& data, playback_view* view)
+{
+    const auto kind = data.value(QStringLiteral("kind")).toString();
+    const auto id = data.value(QStringLiteral("id")).toString();
+    if (id.isEmpty() || (kind != QStringLiteral("gb_channel") && kind != QStringLiteral("source") && kind != QStringLiteral("push_device")))
     {
         return;
     }
@@ -260,12 +545,12 @@ void monitor_window::play_item(QTreeWidgetItem* item)
     target.id = id;
     target.channel_id = data.value(QStringLiteral("channel_id")).toString();
     target.name = data.value(QStringLiteral("name")).toString();
-    view_->play(client_, target);
+    view->play(client_, target);
 }
 
 void monitor_window::closeEvent(QCloseEvent* event)
 {
-    view_->stop();
+    stop_all();
     delete listing_;
     listing_ = nullptr;
     for (auto* worker : qApp->findChildren<decode_thread*>())
@@ -280,6 +565,7 @@ void monitor_window::closeEvent(QCloseEvent* event)
             return;
         }
     }
+    QSettings().setValue(QStringLiteral("geometry"), isFullScreen() ? normalGeometry() : geometry());
     event->accept();
 }
 

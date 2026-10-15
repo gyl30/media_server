@@ -1,26 +1,35 @@
 #include <vector>
+#include <memory>
 #include <cstring>
 
 #include <QFile>
 #include <SDL.h>
 #include <QTimer>
+#include <QPainter>
 #include <QThread>
 #include <QPointer>
+#include <QSettings>
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
 #include <QTextStream>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QTreeWidget>
 #include <QGridLayout>
 #include <QScopeGuard>
 #include <QApplication>
+#include <QTemporaryDir>
 #include <QElapsedTimer>
 #include <QJsonDocument>
 #include <QCommandLineParser>
 #include <QCommandLineOption>
+#include <QTreeWidgetItemIterator>
 
 #include "desktop/playback_view.h"
 #include "desktop/platform_client.h"
+#include "desktop/monitor_window.h"
 
 namespace media_server
 {
@@ -114,6 +123,12 @@ int main(int argc, char** argv)
         QStringLiteral("output"), QStringLiteral("New JSON result file; an existing file is never overwritten."), QStringLiteral("PATH"));
     const QCommandLineOption audible_option(QStringLiteral("audible"),
                                             QStringLiteral("Enable audio output on the first view only; default is muted decoding."));
+    const QCommandLineOption monitor_option(
+        QStringLiteral("monitor-window"), QStringLiteral("Exercise the real monitor window using simulated UI input; views must be 1, 4, 9 or 16."));
+    const QCommandLineOption stop_others_option(
+        QStringLiteral("stop-others-after-observation"),
+        QStringLiteral(
+            "After healthy observation, stop all but the last view and verify it for three seconds; requires --monitor-window and views > 1."));
     const QCommandLineOption toggle_audio_option(
         QStringLiteral("toggle-audio"),
         QStringLiteral("With --audible, toggle the first view every two observation seconds to exercise device cleanup."));
@@ -126,6 +141,8 @@ int main(int argc, char** argv)
                        seconds_option,
                        output_option,
                        audible_option,
+                       monitor_option,
+                       stop_others_option,
                        toggle_audio_option});
     parser.process(arguments);
     bool views_valid = false;
@@ -136,9 +153,12 @@ int main(int argc, char** argv)
     const bool push_target = !parser.value(push_option).isEmpty();
     const bool source_target = !parser.value(source_option).isEmpty();
     const bool gb_target = !parser.value(gb_device_option).isEmpty();
+    const bool monitor_mode = parser.isSet(monitor_option);
     if (!parser.positionalArguments().isEmpty() || !platform_client::valid_base_url(platform_url) || push_target + source_target + gb_target != 1 ||
         gb_target != !parser.value(gb_channel_option).isEmpty() || (parser.isSet(toggle_audio_option) && !parser.isSet(audible_option)) ||
-        parser.value(output_option).isEmpty() || !views_valid || view_count < 1 || view_count > 16 || !seconds_valid || seconds < 1 || seconds > 3600)
+        parser.value(output_option).isEmpty() || !views_valid || view_count < 1 || view_count > 16 || !seconds_valid || seconds < 1 ||
+        seconds > 3600 || (monitor_mode && view_count != 1 && view_count != 4 && view_count != 9 && view_count != 16) ||
+        (parser.isSet(stop_others_option) && (!monitor_mode || view_count <= 1)))
     {
         QTextStream(stderr) << "Invalid or missing arguments; use --help.\n";
         return 2;
@@ -168,22 +188,73 @@ int main(int argc, char** argv)
         return 2;
     }
     const auto audio_cleanup = qScopeGuard([]() { SDL_Quit(); });
-    QWidget window;
-    window.setWindowTitle(QStringLiteral("Real RTSP playback probe"));
-    auto* layout = new QGridLayout(&window);
+    SDL_AudioDeviceID audio_id = 0;
+    int audio_period_bytes = 0;
+    const auto device_cleanup = qScopeGuard(
+        [&]()
+        {
+            if (audio_id != 0)
+            {
+                SDL_CloseAudioDevice(audio_id);
+            }
+        });
+    if (parser.isSet(audible_option) && !monitor_mode)
+    {
+        SDL_AudioSpec wanted{};
+        wanted.freq = 48'000;
+        wanted.format = AUDIO_S16SYS;
+        wanted.channels = 2;
+        wanted.samples = 512;
+        SDL_AudioSpec obtained{};
+        audio_id = SDL_OpenAudioDevice(nullptr, 0, &wanted, &obtained, 0);
+        if (audio_id == 0)
+        {
+            QTextStream(stderr) << "Cannot open the requested audio output: " << SDL_GetError() << '\n';
+            return 2;
+        }
+        audio_period_bytes = obtained.samples * 4;
+    }
+    QTemporaryDir settings;
+    if (monitor_mode)
+    {
+        if (!settings.isValid())
+        {
+            QTextStream(stderr) << "Cannot create isolated monitor-window settings.\n";
+            return 2;
+        }
+        app.setOrganizationName(QStringLiteral("media_server_probe"));
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+        QSettings().setValue(QStringLiteral("platform_url"), platform_url.toString());
+        QSettings().setValue(QStringLiteral("view_count"), view_count);
+    }
+    std::unique_ptr<QWidget> window = monitor_mode ? std::unique_ptr<QWidget>(new monitor_window) : std::make_unique<QWidget>();
+    QGridLayout* layout = monitor_mode ? nullptr : new QGridLayout(window.get());
     std::vector<playback_view*> views;
     std::vector<decoder_snapshot> previous;
     std::vector<quint64> previous_rendered(view_count);
     std::vector<qint64> first_frame_ms(view_count, -1);
     for (int index = 0; index < view_count; ++index)
     {
-        auto* view = new playback_view(&window);
-        view->set_audible(false);
+        auto* view = monitor_mode ? window->findChild<playback_view*>(QStringLiteral("view_%1").arg(index + 1, 2, 10, QLatin1Char('0')))
+                                  : new playback_view(window.get());
+        if (!view)
+        {
+            QTextStream(stderr) << "The real monitor window is missing a requested view.\n";
+            return 2;
+        }
         views.push_back(view);
-        layout->addWidget(view, index / 4, index % 4);
+        if (layout)
+        {
+            layout->addWidget(view, index / 4, index % 4);
+        }
     }
-    window.resize(view_count == 1 ? 640 : 1280, view_count <= 4 ? 400 : 800);
-    window.show();
+    if (!monitor_mode)
+    {
+        window->setWindowTitle(QStringLiteral("Real RTSP playback probe"));
+        window->resize(view_count == 1 ? 640 : 1280, view_count <= 4 ? 400 : 800);
+    }
+    window->show();
 
     QElapsedTimer elapsed;
     elapsed.start();
@@ -191,16 +262,23 @@ int main(int argc, char** argv)
     QJsonArray assertions;
     QJsonArray shutdown_samples;
     QJsonArray audio_switches;
+    QJsonArray intentional_stop_samples;
     const auto started_utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     bool failed = false;
     bool stopping = false;
     bool shutdown_timeout = false;
     bool expected_audio_output = parser.isSet(audible_option);
+    bool requested_channels = false;
+    int started_views = 0;
     qint64 observation_start_ms = -1;
     qint64 last_sample_ms = -1;
     qint64 shutdown_start_ms = -1;
     qint64 destruction_start_ms = -1;
     qint64 last_shutdown_sample_ms = -1;
+    qint64 survivor_start_ms = -1;
+    decoder_snapshot survivor_baseline;
+    quint64 survivor_rendered = 0;
+    std::vector<QPointer<decode_thread>> survivor_threads;
     std::vector<QPointer<decode_thread>> threads;
     std::vector<decoder_snapshot> initial;
     std::vector<quint64> initial_rendered;
@@ -209,6 +287,13 @@ int main(int argc, char** argv)
         assertions.append(QJsonObject{{"name", name}, {"view", view}, {"passed", passed}, {"elapsed_ms", elapsed.elapsed()}});
         failed = failed || !passed;
     };
+    const auto select_view = [](playback_view* view)
+    {
+        QMouseEvent press(QEvent::MouseButtonPress, QPointF(view->rect().center()), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent release(QEvent::MouseButtonRelease, QPointF(view->rect().center()), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(view, &press);
+        QApplication::sendEvent(view, &release);
+    };
     auto sample = [&](const QString& phase)
     {
         QJsonArray values;
@@ -216,6 +301,13 @@ int main(int argc, char** argv)
         {
             auto value = snapshot_json(*views[index]);
             value.insert(QStringLiteral("view"), index);
+            const auto position = views[index]->mapTo(window.get(), QPoint{});
+            value.insert(QStringLiteral("geometry"),
+                         QJsonObject{{"x", position.x()},
+                                     {"y", position.y()},
+                                     {"width", views[index]->width()},
+                                     {"height", views[index]->height()},
+                                     {"visible", views[index]->isVisible()}});
             values.append(value);
         }
         samples.append(QJsonObject{{"elapsed_ms", elapsed.elapsed()}, {"phase", phase}, {"views", values}});
@@ -233,20 +325,41 @@ int main(int argc, char** argv)
         {
             threads.emplace_back(thread);
         }
-        for (auto* view : views)
+        if (monitor_mode)
         {
-            view->stop();
+            auto* stop = window->findChild<QPushButton*>(QStringLiteral("stop_all"));
+            check(QStringLiteral("real_stop_all_button_present"), stop != nullptr);
+            if (stop)
+            {
+                stop->click();
+            }
+            window->close();
+        }
+        else
+        {
+            for (auto* view : views)
+            {
+                view->stop();
+            }
         }
     };
     for (int index = 0; index < view_count; ++index)
     {
-        views[index]->set_audible(parser.isSet(audible_option) && index == 0);
+        if (monitor_mode)
+        {
+            break;
+        }
         play_target target;
         target.type = gb_target ? play_target::kind::gb_channel : source_target ? play_target::kind::source : play_target::kind::push_device;
         target.id = parser.value(gb_target ? gb_device_option : source_target ? source_option : push_option);
         target.channel_id = parser.value(gb_channel_option);
         target.name = QStringLiteral("probe %1").arg(index);
         views[index]->play(client, target);
+        ++started_views;
+        if (index == 0 && parser.isSet(audible_option))
+        {
+            views[index]->set_audible(audio_id, audio_period_bytes);
+        }
     }
 
     QTimer timer;
@@ -325,6 +438,10 @@ int main(int argc, char** argv)
                         descendants_finished = descendants_finished && !thread->isRunning();
                     }
                     check(QStringLiteral("no_running_decoder_descendants"), descendants_finished);
+                    if (monitor_mode)
+                    {
+                        check(QStringLiteral("real_monitor_window_closed"), !window->isVisible());
+                    }
                     int passed = 0;
                     for (const auto& value : assertions)
                     {
@@ -335,35 +452,140 @@ int main(int argc, char** argv)
                     {
                         first_frames.append(value < 0 ? QJsonValue(QJsonValue::Null) : QJsonValue(value));
                     }
-                    QJsonObject result{{"schema", 1},
-                                       {"started_utc", started_utc},
-                                       {"qt_version", QString::fromLatin1(qVersion())},
-                                       {"process_id", QString::number(QCoreApplication::applicationPid())},
-                                       {"qpa_platform", QGuiApplication::platformName()},
-                                       {"first_frame_ms", first_frames},
-                                       {"views", view_count},
-                                       {"requested_seconds", seconds},
-                                       {"first_frame_deadline_ms", 15'000},
-                                       {"observation_start_ms", observation_start_ms},
-                                       {"audible_first_requested", parser.isSet(audible_option)},
-                                       {"audio_switches", audio_switches},
-                                       {"audio_output_evidence", QStringLiteral("audible flag and decoded PCM only; not acoustic measurement")},
-                                       {"elapsed_ms", now},
-                                       {"shutdown_wait_ms", now - shutdown_start_ms},
-                                       {"destruction_wait_ms", now - destruction_start_ms},
-                                       {"shutdown_timeout", shutdown_timeout},
-                                       {"passed_assertions", passed},
-                                       {"failed_assertions", assertions.size() - passed},
-                                       {"exit_status", failed ? 1 : 0},
-                                       {"result", failed ? QStringLiteral("FAIL") : QStringLiteral("PASS")},
-                                       {"assertions", assertions},
-                                       {"samples", samples},
-                                       {"shutdown_samples", shutdown_samples}};
+                    QJsonObject result{
+                        {"schema", 1},
+                        {"started_utc", started_utc},
+                        {"qt_version", QString::fromLatin1(qVersion())},
+                        {"process_id", QString::number(QCoreApplication::applicationPid())},
+                        {"qpa_platform", QGuiApplication::platformName()},
+                        {"first_frame_ms", first_frames},
+                        {"views", view_count},
+                        {"monitor_window", monitor_mode},
+                        {"input_evidence",
+                         monitor_mode
+                             ? QStringLiteral("linked real monitor_window; simulated mouse and tree UI signals, not gb_monitor ELF automation")
+                             : QStringLiteral("direct playback_view API")},
+                        {"started_views", started_views},
+                        {"requested_seconds", seconds},
+                        {"first_frame_deadline_ms", 15'000},
+                        {"observation_start_ms", observation_start_ms},
+                        {"audible_first_requested", parser.isSet(audible_option)},
+                        {"audio_switches", audio_switches},
+                        {"intentional_stop_phase", intentional_stop_samples},
+                        {"audio_output_evidence", QStringLiteral("audible flag and decoded PCM only; not acoustic measurement")},
+                        {"elapsed_ms", now},
+                        {"shutdown_wait_ms", now - shutdown_start_ms},
+                        {"destruction_wait_ms", now - destruction_start_ms},
+                        {"shutdown_timeout", shutdown_timeout},
+                        {"passed_assertions", passed},
+                        {"failed_assertions", assertions.size() - passed},
+                        {"exit_status", failed ? 1 : 0},
+                        {"result", failed ? QStringLiteral("FAIL") : QStringLiteral("PASS")},
+                        {"assertions", assertions},
+                        {"samples", samples},
+                        {"shutdown_samples", shutdown_samples}};
                     const auto data = QJsonDocument(result).toJson(QJsonDocument::Indented);
                     const bool saved = output.write(data) == data.size() && output.flush();
                     output.close();
                     timer.stop();
                     app.exit(saved ? (failed ? 1 : 0) : 2);
+                }
+                return;
+            }
+
+            if (survivor_start_ms >= 0)
+            {
+                if (now - survivor_start_ms < 3000)
+                {
+                    return;
+                }
+                const auto stats = views.back()->snapshot();
+                check(QStringLiteral("survivor_video_render_and_pts_continue"),
+                      stats.error.isEmpty() && !stats.ended && stats.video_frames > survivor_baseline.video_frames &&
+                          stats.last_video_pts_us > survivor_baseline.last_video_pts_us && views.back()->rendered_frames() > survivor_rendered,
+                      view_count - 1);
+                check(QStringLiteral("survivor_audio_decode_and_pts_continue"),
+                      stats.audio_codec == survivor_baseline.audio_codec &&
+                          (stats.audio_codec.isEmpty() ||
+                           (stats.audio_frames > survivor_baseline.audio_frames && stats.pcm_samples > survivor_baseline.pcm_samples &&
+                            stats.last_audio_pts_us > survivor_baseline.last_audio_pts_us)),
+                      view_count - 1);
+                int destroyed = 0;
+                for (const auto& worker : survivor_threads)
+                {
+                    destroyed += worker.isNull() ? 1 : 0;
+                }
+                check(QStringLiteral("intentionally_stopped_decoder_objects_destroyed"), destroyed == view_count - 1);
+                intentional_stop_samples.append(QJsonObject{{"phase", "survivor_after_3_seconds"},
+                                                            {"elapsed_ms", now},
+                                                            {"survivor", snapshot_json(*views.back())},
+                                                            {"destroyed_decoders", destroyed}});
+                stop_all();
+                return;
+            }
+
+            if (monitor_mode && started_views == 0)
+            {
+                auto* tree = window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+                QTreeWidgetItem* target = nullptr;
+                const auto wanted_kind = gb_target       ? QStringLiteral("gb_channel")
+                                         : source_target ? QStringLiteral("source")
+                                                         : QStringLiteral("push_device");
+                const auto wanted_id = parser.value(gb_target ? gb_device_option : source_target ? source_option : push_option);
+                if (tree)
+                {
+                    for (QTreeWidgetItemIterator item(tree); *item; ++item)
+                    {
+                        const auto data = (*item)->data(0, Qt::UserRole).toMap();
+                        if (data.value(QStringLiteral("id")).toString() != wanted_id)
+                        {
+                            continue;
+                        }
+                        const auto kind = data.value(QStringLiteral("kind")).toString();
+                        if (gb_target && kind == QStringLiteral("gb_device") && !requested_channels)
+                        {
+                            requested_channels = true;
+                            tree->itemDoubleClicked(*item, 0);
+                            return;
+                        }
+                        if (kind == wanted_kind &&
+                            (!gb_target || data.value(QStringLiteral("channel_id")).toString() == parser.value(gb_channel_option)))
+                        {
+                            target = *item;
+                            break;
+                        }
+                    }
+                }
+                if (!target)
+                {
+                    if (now >= 15'000)
+                    {
+                        check(QStringLiteral("monitor_tree_target_ready_within_15_seconds"), false);
+                        stop_all();
+                    }
+                    return;
+                }
+                check(QStringLiteral("monitor_tree_target_ready_within_15_seconds"), now <= 15'000);
+                if (failed)
+                {
+                    stop_all();
+                    return;
+                }
+                for (auto* view : views)
+                {
+                    select_view(view);
+                    tree->itemDoubleClicked(target, 0);
+                    ++started_views;
+                }
+                if (parser.isSet(audible_option))
+                {
+                    select_view(views.front());
+                    auto* sound = window->findChild<QPushButton*>(QStringLiteral("sound_toggle"));
+                    check(QStringLiteral("real_sound_button_present"), sound != nullptr);
+                    if (sound)
+                    {
+                        sound->click();
+                    }
                 }
                 return;
             }
@@ -409,6 +631,19 @@ int main(int argc, char** argv)
                               index);
                     }
                     sample(QStringLiteral("observation_start"));
+                    if (monitor_mode)
+                    {
+                        auto image = window->grab();
+                        if (auto* address = window->findChild<QWidget*>(QStringLiteral("platform_address")))
+                        {
+                            QPainter redact(&image);
+                            redact.fillRect(QRect(address->mapTo(window.get(), QPoint{}), address->size()), Qt::black);
+                        }
+                        QFile screenshot(output.fileName() + QStringLiteral(".png"));
+                        check(QStringLiteral("redacted_monitor_screenshot_saved"),
+                              screenshot.open(QIODevice::WriteOnly | QIODevice::NewOnly) &&
+                                  screenshot.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner) && image.save(&screenshot, "PNG"));
+                    }
                 }
                 else if (now >= 15'000)
                 {
@@ -430,7 +665,19 @@ int main(int argc, char** argv)
                 expected_audio_output = expected_audible;
                 QElapsedTimer change;
                 change.start();
-                views.front()->set_audible(expected_audible);
+                if (monitor_mode)
+                {
+                    auto* sound = window->findChild<QPushButton*>(QStringLiteral("sound_toggle"));
+                    check(QStringLiteral("real_sound_button_present"), sound != nullptr);
+                    if (sound)
+                    {
+                        sound->click();
+                    }
+                }
+                else
+                {
+                    views.front()->set_audible(expected_audible ? audio_id : 0, expected_audible ? audio_period_bytes : 0);
+                }
                 audio_switches.append(
                     QJsonObject{{"elapsed_ms", now}, {"audible", expected_audible}, {"call_us", QString::number(change.nsecsElapsed() / 1000)}});
             }
@@ -484,7 +731,35 @@ int main(int argc, char** argv)
                                   index);
                         }
                     }
-                    stop_all();
+                    if (parser.isSet(stop_others_option) && !failed)
+                    {
+                        survivor_start_ms = now;
+                        survivor_baseline = views.back()->snapshot();
+                        survivor_rendered = views.back()->rendered_frames();
+                        for (auto* worker : app.findChildren<decode_thread*>())
+                        {
+                            survivor_threads.emplace_back(worker);
+                        }
+                        auto* stop = window->findChild<QPushButton*>(QStringLiteral("stop_preview"));
+                        check(QStringLiteral("real_stop_preview_button_present"), stop != nullptr);
+                        if (stop)
+                        {
+                            for (int index = 0; index < view_count - 1; ++index)
+                            {
+                                select_view(views[index]);
+                                stop->click();
+                            }
+                        }
+                        intentional_stop_samples.append(QJsonObject{{"phase", "stop_others_after_full_observation"},
+                                                                    {"elapsed_ms", now},
+                                                                    {"intentionally_stopped", view_count - 1},
+                                                                    {"survivor_view", view_count - 1},
+                                                                    {"survivor", snapshot_json(*views.back())}});
+                    }
+                    else
+                    {
+                        stop_all();
+                    }
                 }
             }
         });

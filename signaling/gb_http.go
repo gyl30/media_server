@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -129,4 +130,45 @@ func (s *infrastructureServer) handleChannelList(writer http.ResponseWriter, req
 		response = append(response, item)
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"channels": response})
+}
+
+func (s *infrastructureServer) handleCatalogQuery(writer http.ResponseWriter, request *http.Request) {
+	deviceID := request.PathValue("device_id")
+	if !validDigits(deviceID, 20) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	if _, err := s.live.sip.deviceStore.get(request.Context(), deviceID); err != nil {
+		s.writeDeviceError(writer, err)
+		return
+	}
+	s.live.mu.Lock()
+	if _, stopping := s.live.stoppingDevices[deviceID]; stopping {
+		s.live.mu.Unlock()
+		writeHTTPError(writer, http.StatusConflict, "device_stopping")
+		return
+	}
+	device, online := s.live.sip.devices.getOnline(deviceID, s.live.sip.now())
+	if !online {
+		s.live.mu.Unlock()
+		writeHTTPError(writer, http.StatusConflict, "device_offline")
+		return
+	}
+	sn := int(s.live.sip.catalogSN.Add(1))
+	s.live.sip.channels.beginQuery(deviceID, sn)
+	s.live.mu.Unlock()
+	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
+	defer cancel()
+	if err := s.live.sip.sendCatalogQuery(ctx, device, sn); err != nil {
+		s.live.sip.channels.cancelQuery(deviceID, sn)
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			writeHTTPError(writer, http.StatusGatewayTimeout, "catalog_query_timeout")
+			return
+		}
+		s.logger.Warn("Catalog query failed", "device_id", deviceID, "error", err)
+		writeHTTPError(writer, http.StatusBadGateway, "catalog_query_failed")
+		return
+	}
+	// SIP 受理不代表异步目录响应已经收齐，现有通道查询返回实际收到的目录。
+	writeJSON(writer, http.StatusAccepted, map[string]any{"device_id": deviceID, "sn": sn, "status": "accepted"})
 }

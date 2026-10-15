@@ -59,6 +59,16 @@ decoder_snapshot decode_thread::snapshot() const
     return result;
 }
 
+void decode_thread::set_output_size(QSize size)
+{
+    if (size.isEmpty())
+    {
+        return;
+    }
+    QMutexLocker lock(&mutex_);
+    output_size_ = size;
+}
+
 int decode_thread::interrupt(void* opaque)
 {
     const auto* self = static_cast<decode_thread*>(opaque);
@@ -95,10 +105,13 @@ void decode_thread::run()
         error = tr("无法分配媒体解码资源");
         return;
     }
-    if (!output_size_.isValid())
     {
-        error = tr("视频输出尺寸无效");
-        return;
+        QMutexLocker lock(&mutex_);
+        if (output_size_.isEmpty())
+        {
+            error = tr("视频输出尺寸无效");
+            return;
+        }
     }
     format->interrupt_callback = AVIOInterruptCB{&decode_thread::interrupt, this};
     if (url_.scheme() == QStringLiteral("rtsp"))
@@ -244,7 +257,12 @@ void decode_thread::run()
             {
                 video_deadline_us = av_gettime_relative() + 10000000;
                 decoded_video_frame output;
-                const auto size = QSize(frame->width, frame->height).scaled(output_size_, Qt::KeepAspectRatio);
+                QSize bounds;
+                {
+                    QMutexLocker lock(&mutex_);
+                    bounds = output_size_;
+                }
+                const auto size = QSize(frame->width, frame->height).scaled(bounds, Qt::KeepAspectRatio);
                 output.image = QImage(size, QImage::Format_RGB32);
                 output.pts_us = pts;
                 output.duration_us =

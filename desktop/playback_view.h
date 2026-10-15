@@ -9,6 +9,7 @@
 #include <QWidget>
 #include <QString>
 #include <QPointer>
+#include <QVariantMap>
 #include <QElapsedTimer>
 #include <QDeadlineTimer>
 
@@ -46,14 +47,17 @@ class playback_view final : public QWidget
    public:
     void play(platform_client& client, const play_target& target);
     void stop();
-    void set_audible(bool audible);
+    void set_audible(quint32 audio_id, int period_bytes);
     bool audible() const;
+    void set_keep_aspect(bool keep);
+    const QImage& image() const;
     QString status() const;
     decoder_snapshot snapshot() const;
     quint64 rendered_frames() const;
 
    signals:
     void selected();
+    void dropped(const QVariantMap& data);
     void audible_changed(bool audible);
     void playback_error(const QString& error);
     void status_changed(const QString& status);
@@ -61,6 +65,9 @@ class playback_view final : public QWidget
    protected:
     void paintEvent(QPaintEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
 
    private:
     void update_media();
@@ -86,7 +93,7 @@ class playback_view final : public QWidget
     std::deque<decoded_video_frame> video_;
     std::deque<decoded_audio_block> pcm_;
     quint64 rendered_frames_{};
-    bool audible_{};
+    bool keep_aspect_{true};
 };
 
 }    // namespace media_server

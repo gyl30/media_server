@@ -64,6 +64,7 @@ class decode_thread final : public QThread
     std::vector<decoded_video_frame> take_video_frames();
     std::vector<decoded_audio_block> take_audio_blocks();
     decoder_snapshot snapshot() const;
+    void set_output_size(QSize size);
 
    protected:
     void run() override;

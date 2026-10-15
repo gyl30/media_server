@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QTest>
+#include <QTimer>
 #include <QProcess>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -140,6 +141,62 @@ class decode_thread_test final : public QObject
         }
         QVERIFY(thread.take_video_frames().empty());
         QVERIFY(thread.take_audio_blocks().empty());
+    }
+
+    void output_size_before_start()
+    {
+        decode_thread thread(QUrl::fromLocalFile(directory_.filePath("video-only.mp4")), QSize(640, 360));
+        const auto stop = qScopeGuard(
+            [&]()
+            {
+                thread.requestInterruption();
+                if (!thread.wait(4000))
+                {
+                    qFatal("调整尺寸后解码线程没有退出");
+                }
+            });
+        thread.set_output_size(QSize(128, 128));
+        thread.set_output_size(QSize(0, 0));
+        thread.start();
+        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), 4000);
+        QVERIFY2(thread.snapshot().error.isEmpty(), qPrintable(thread.snapshot().error));
+        const auto frames = thread.take_video_frames();
+        QVERIFY(!frames.empty());
+        for (const auto& frame : frames)
+        {
+            QCOMPARE(frame.image.size(), QSize(128, 96));
+        }
+    }
+
+    void output_size_during_decode()
+    {
+        decode_thread thread(QUrl::fromLocalFile(directory_.filePath("h264-aac.mp4")), QSize(128, 128));
+        const auto stop = qScopeGuard(
+            [&]()
+            {
+                thread.requestInterruption();
+                if (!thread.wait(4000))
+                {
+                    qFatal("并发调整尺寸后解码线程没有退出");
+                }
+            });
+        QTimer resize;
+        int changes = 0;
+        connect(&resize, &QTimer::timeout, this, [&]() { thread.set_output_size(++changes % 2 == 0 ? QSize(128, 128) : QSize(640, 360)); });
+        resize.start(0);
+        thread.start();
+        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), 4000);
+        resize.stop();
+        QVERIFY(changes > 0);
+        const auto stats = thread.snapshot();
+        QVERIFY2(stats.error.isEmpty(), qPrintable(stats.error));
+        QCOMPARE(stats.video_frames, quint64(25));
+        const auto frames = thread.take_video_frames();
+        QVERIFY(!frames.empty());
+        for (const auto& frame : frames)
+        {
+            QVERIFY(frame.image.size() == QSize(128, 96) || frame.image.size() == QSize(480, 360));
+        }
     }
 
     void unsupported_audio()
