@@ -44,9 +44,9 @@ struct finite_http_input
     boost::beast::http::response_parser<boost::beast::http::buffer_body> parser;
     QByteArray wire;
     QThread& thread;
-    qint64& deadline;
+    AVIOInterruptCB interrupt;
 
-    finite_http_input(QThread& owner, qint64& io_deadline) : thread(owner), deadline(io_deadline)
+    finite_http_input(QThread& owner, AVIOInterruptCB io_interrupt) : thread(owner), interrupt(io_interrupt)
     {
         socket.setReadBufferSize(65536);
         parser.header_limit(65536);
@@ -56,7 +56,11 @@ struct finite_http_input
 
     ~finite_http_input() { socket.abort(); }
 
-    int context_error() const { return thread.isInterruptionRequested() ? AVERROR_EXIT : av_gettime_relative() >= deadline ? AVERROR(ETIMEDOUT) : 0; }
+    // 与 FFmpeg 共用同一中断回调，期限按解码线程的进展时基判断。
+    int context_error() const
+    {
+        return thread.isInterruptionRequested() ? AVERROR_EXIT : interrupt.callback(interrupt.opaque) ? AVERROR(ETIMEDOUT) : 0;
+    }
 
     int wait()
     {
@@ -76,7 +80,7 @@ struct finite_http_input
         QObject::connect(&socket, &QAbstractSocket::errorOccurred, &loop, &QEventLoop::quit);
         QObject::connect(&socket, &QSslSocket::encrypted, &loop, &QEventLoop::quit);
         QObject::connect(&socket, &QSslSocket::sslErrors, &loop, &QEventLoop::quit);
-        timer.start(static_cast<int>(std::clamp<qint64>((deadline - av_gettime_relative() + 999) / 1000, 1, 50)));
+        timer.start(50);
         loop.exec();
         return context_error();
     }
@@ -274,8 +278,22 @@ void decode_thread::set_output_size(QSize size)
 
 int decode_thread::interrupt(void* opaque)
 {
-    const auto* self = static_cast<decode_thread*>(opaque);
-    return self->isInterruptionRequested() || av_gettime_relative() >= self->io_deadline_us_;
+    auto* self = static_cast<decode_thread*>(opaque);
+    return self->isInterruptionRequested() || self->progress_now() >= self->io_deadline_us_;
+}
+
+void decode_thread::set_paused(bool paused) { paused_.store(paused); }
+
+qint64 decode_thread::progress_now()
+{
+    // 只在解码线程推进；按调用间隔采样暂停位，近似排除确认暂停的区间。
+    const auto now = av_gettime_relative();
+    if (!paused_.load())
+    {
+        progress_us_ += now - progress_tick_us_;
+    }
+    progress_tick_us_ = now;
+    return progress_us_;
 }
 
 void decode_thread::run()
@@ -329,10 +347,11 @@ void decode_thread::run()
         // 轨道探测期间的数据不回放到实时显示队列。
         format->flags |= AVFMT_FLAG_NOBUFFER;
     }
-    io_deadline_us_ = av_gettime_relative() + 15000000;
+    progress_tick_us_ = av_gettime_relative();
+    io_deadline_us_ = progress_now() + 15000000;
     if (mode_ == playback_mode::finite && (url_.scheme() == QStringLiteral("http") || url_.scheme() == QStringLiteral("https")))
     {
-        http_input = std::make_unique<finite_http_input>(*this, io_deadline_us_);
+        http_input = std::make_unique<finite_http_input>(*this, format->interrupt_callback);
         const auto opened = http_input->open(url_);
         if (opened < 0)
         {
@@ -366,8 +385,8 @@ void decode_thread::run()
     {
         if (!isInterruptionRequested())
         {
-            error = av_gettime_relative() >= io_deadline_us_ || result == AVERROR(ETIMEDOUT) ? tr("连接媒体超时")
-                                                                                             : tr("打开媒体失败：%1").arg(error_text(result));
+            error = progress_now() >= io_deadline_us_ || result == AVERROR(ETIMEDOUT) ? tr("连接媒体超时")
+                                                                                      : tr("打开媒体失败：%1").arg(error_text(result));
         }
         return;
     }
@@ -377,8 +396,8 @@ void decode_thread::run()
         if (!isInterruptionRequested())
         {
             const auto cause = result < 0 ? result : io && io->error < 0 ? io->error : AVERROR(EIO);
-            error = av_gettime_relative() >= io_deadline_us_ || cause == AVERROR(ETIMEDOUT) ? tr("读取媒体轨道超时")
-                                                                                            : tr("读取媒体轨道失败：%1").arg(error_text(cause));
+            error = progress_now() >= io_deadline_us_ || cause == AVERROR(ETIMEDOUT) ? tr("读取媒体轨道超时")
+                                                                                     : tr("读取媒体轨道失败：%1").arg(error_text(cause));
         }
         return;
     }
@@ -443,13 +462,13 @@ void decode_thread::run()
     qint64 next_pcm_pts = no_media_timestamp;
     AVChannelLayout audio_input_layout{};
     const auto layout_cleanup = qScopeGuard([&]() { av_channel_layout_uninit(&audio_input_layout); });
-    qint64 video_deadline_us = av_gettime_relative() + 10000000;
+    qint64 video_deadline_us = progress_now() + 10000000;
     qint64 audio_deadline_us = video_deadline_us;
     const auto wait_for_consumer = [&]()
     {
-        const auto before = av_gettime_relative();
+        const auto before = progress_now();
         consumed_.wait(&mutex_, 50);
-        const auto waited = av_gettime_relative() - before;
+        const auto waited = progress_now() - before;
         video_deadline_us += waited;
         audio_deadline_us += waited;
         return !isInterruptionRequested();
@@ -531,7 +550,7 @@ void decode_thread::run()
                 timestamp == AV_NOPTS_VALUE ? no_media_timestamp : av_rescale_q(timestamp, format->streams[index]->time_base, AVRational{1, 1000000});
             if (index == video_index)
             {
-                video_deadline_us = av_gettime_relative() + 10000000;
+                video_deadline_us = progress_now() + 10000000;
                 decoded_video_frame output;
                 QSize bounds;
                 {
@@ -595,7 +614,7 @@ void decode_thread::run()
             }
             else
             {
-                audio_deadline_us = av_gettime_relative() + 10000000;
+                audio_deadline_us = progress_now() + 10000000;
                 if (!resampler)
                 {
                     const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
@@ -684,7 +703,7 @@ void decode_thread::run()
         {
             return;
         }
-        const auto now = av_gettime_relative();
+        const auto now = progress_now();
         if (now >= video_deadline_us)
         {
             error = tr("视频解码无进展，已超时（10 秒）");

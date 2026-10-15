@@ -158,10 +158,70 @@ void playback_view::play_record(platform_client& client, const play_target& targ
                 return;
             }
             QObject::connect(session, &QObject::destroyed, owner, release);
+            view->record_owner_ = owner;
+            view->record_id_ = id;
             view->start_decoder(name, url, playback_mode::finite);
         },
         20'000);
 }
+
+void playback_view::set_record_paused(bool paused)
+{
+    if (!record_control_ready() || record_paused_ == paused)
+    {
+        return;
+    }
+    request_ = record_owner_->request(
+        "POST",
+        QStringLiteral("/api/playbacks/%1/%2")
+            .arg(QString::fromLatin1(QUrl::toPercentEncoding(record_id_)), paused ? QStringLiteral("pause") : QStringLiteral("resume")),
+        {},
+        session_,
+        [this, paused](platform_response response)
+        {
+            request_.clear();
+            if (!response.ok())
+            {
+                const auto code = response.document.object().value(QStringLiteral("error")).toString();
+                if (!paused && (response.status == 404 || code == QStringLiteral("playback_not_streaming")))
+                {
+                    stop();
+                    set_status(QStringLiteral("录像实例已结束或到期，已停止本次回放"));
+                    return;
+                }
+                // 结果未知时设备可能已执行；不自动发送相反指令。暂停若实际生效，解码进展期限会以错误结束本次回放。
+                // 呈现中的帧状态会覆盖画面文本，失败另经错误信号提示。
+                set_status(paused ? QStringLiteral("暂停未确认：%1；继续播放").arg(response.error)
+                                  : QStringLiteral("继续未确认：%1；本地仍暂停，可重试或停止").arg(response.error));
+                emit playback_error(status_);
+                return;
+            }
+            record_paused_ = paused;
+            decoder_->set_paused(paused);
+            if (paused)
+            {
+                if (wall_pts_ != no_media_timestamp)
+                {
+                    wall_pts_ += wall_clock_.nsecsElapsed() / 1000;
+                }
+                if (audio_id_ != 0)
+                {
+                    SDL_PauseAudioDevice(audio_id_, 1);
+                }
+                set_status(QStringLiteral("录像已暂停；暂停占用本次回放期限，到期后实例由平台回收"));
+                return;
+            }
+            wall_clock_.restart();
+            set_status(QStringLiteral("录像继续回放"));
+        },
+        8'000);
+    set_status(paused ? QStringLiteral("正在请求暂停录像") : QStringLiteral("正在请求继续录像"));
+}
+
+bool playback_view::record_paused() const { return record_paused_; }
+
+// 解码线程结束后尾部仍在呈现，仍可暂停或继续；呈现结束会清空 decoder_。
+bool playback_view::record_control_ready() const { return record_owner_ && decoder_ && !request_; }
 
 void playback_view::wait_for_gb_media(
     platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline)
@@ -279,6 +339,9 @@ void playback_view::stop()
         }
         decoder_.clear();
     }
+    record_owner_.clear();
+    record_id_.clear();
+    record_paused_ = false;
     timer_.stop();
     reset_audio();
     video_.clear();
@@ -421,10 +484,17 @@ void playback_view::update_media()
             }
             pcm_.pop_front();
         }
-        if (audio_id_ != 0 && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PAUSED && SDL_GetQueuedAudioSize(audio_id_) >= (finite ? 1U : 9'600U))
+        if (audio_id_ != 0 && !record_paused_ && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PAUSED &&
+            SDL_GetQueuedAudioSize(audio_id_) >= (finite ? 1U : 9'600U))
         {
             SDL_PauseAudioDevice(audio_id_, 0);
         }
+    }
+
+    // 暂停冻结呈现与尾部判断；解码线程以错误结束时仍按原路径收尾。
+    if (record_paused_ && !(decoder_->isFinished() && !decoder_->snapshot().error.isEmpty()))
+    {
+        return;
     }
 
     // 已声明音轨的有声播放先建立音频时钟，避免首帧按视频时钟抢跑后再回跳。

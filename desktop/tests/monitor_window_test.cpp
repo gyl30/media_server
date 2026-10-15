@@ -452,6 +452,9 @@ class monitor_window_test final : public QObject
         QVERIFY(QTest::qWaitFor([&] { return api.gb_plays.size() == 1; }, 1000));
         const auto live_peer = api.gb_plays[0].socket;
         const auto live_status = live->status();
+        // 回放控制只作用于选中画面的有限回放，实时画面不可暂停。
+        auto* pause = window.findChild<QPushButton*>(QStringLiteral("record_pause"));
+        QVERIFY(pause && !pause->isEnabled());
         // 只保留独立实时观看申请；不把挂起的 HTTP 请求冒称 SIP 上游已建立。
         QTest::mouseClick(first, Qt::LeftButton);
         window.findChild<QPushButton*>(QStringLiteral("open_record_query"))->click();
@@ -470,12 +473,14 @@ class monitor_window_test final : public QObject
         const auto& request = api.record_plays[0];
         QCOMPARE(request.request_line, QByteArray("POST /api/devices/34020000001320000001/channels/34020000001310000001/playback HTTP/1.1"));
         QCOMPARE(request.body, (QJsonObject{{"start_time", 1700000010}, {"end_time", 1700000020}}));
+        QVERIFY(!pause->isEnabled());
         QCOMPARE(other->status(), other_status);
         QVERIFY(live_peer && live_peer->state() == QAbstractSocket::ConnectedState);
         QCOMPARE(live->status(), live_status);
         QCOMPARE(api.gb_plays.size(), 1);
         respond(request.socket, 502, R"({"error":"fixture_rejected"})");
         QVERIFY(QTest::qWaitFor([&] { return target->status().contains(QStringLiteral("录像回放申请失败")); }, 1000));
+        QVERIFY(!pause->isEnabled());
         QCOMPARE(other->status(), other_status);
         QVERIFY(live_peer && live_peer->state() == QAbstractSocket::ConnectedState);
         QCOMPARE(live->status(), live_status);

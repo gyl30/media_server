@@ -1,6 +1,7 @@
 #ifndef DESKTOP_DECODE_THREAD_H
 #define DESKTOP_DECODE_THREAD_H
 
+#include <atomic>
 #include <limits>
 #include <vector>
 
@@ -74,6 +75,7 @@ class decode_thread final : public QThread
     std::vector<decoded_audio_block> take_audio_blocks();
     decoder_snapshot snapshot() const;
     void set_output_size(QSize size);
+    void set_paused(bool paused);
     playback_mode mode() const;
 
    protected:
@@ -81,12 +83,16 @@ class decode_thread final : public QThread
 
    private:
     static int interrupt(void* opaque);
+    qint64 progress_now();
 
    private:
     QUrl url_;
     QSize output_size_;
     playback_mode mode_;
     qint64 io_deadline_us_{};
+    std::atomic<bool> paused_{};
+    qint64 progress_us_{};
+    qint64 progress_tick_us_{};
     mutable QMutex mutex_;
     QWaitCondition consumed_;
     std::vector<decoded_video_frame> video_frames_;

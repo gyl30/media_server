@@ -48,6 +48,7 @@ monitor_window::monitor_window(QWidget* parent)
       grid_(new QGridLayout),
       view_layout_(new QComboBox(this)),
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
+      record_pause_(new QPushButton(QStringLiteral("暂停回放"), this)),
       catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
       record_query_(new QPushButton(QStringLiteral("录像查询"), this)),
       device_info_(new QPushButton(QStringLiteral("设备信息"), this)),
@@ -103,6 +104,16 @@ monitor_window::monitor_window(QWidget* parent)
                         const QSignalBlocker blocked(sound_);
                         sound_->setChecked(view->audible());
                         sound_->setText(view->audible() ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
+                    }
+                });
+        connect(view,
+                &playback_view::status_changed,
+                this,
+                [this, view]()
+                {
+                    if (selected_ == view)
+                    {
+                        update_record_pause();
                     }
                 });
         connect(view,
@@ -315,6 +326,7 @@ monitor_window::monitor_window(QWidget* parent)
     fullscreen->setObjectName(QStringLiteral("fullscreen"));
     sound_->setCheckable(true);
     sound_->setObjectName(QStringLiteral("sound_toggle"));
+    record_pause_->setObjectName(QStringLiteral("record_pause"));
     auto* stop = new QPushButton(QStringLiteral("停止预览"), central);
     stop->setObjectName(QStringLiteral("stop_preview"));
     auto* stop_everything = new QPushButton(QStringLiteral("停止全部"), central);
@@ -324,6 +336,7 @@ monitor_window::monitor_window(QWidget* parent)
     bottom->addWidget(screenshot);
     bottom->addWidget(fullscreen);
     bottom->addWidget(sound_);
+    bottom->addWidget(record_pause_);
     bottom->addWidget(stop);
     bottom->addWidget(stop_everything);
     layout->addLayout(bottom);
@@ -379,6 +392,7 @@ monitor_window::monitor_window(QWidget* parent)
                     showNormal();
                 }
             });
+    connect(record_pause_, &QPushButton::clicked, this, [this]() { selected_->set_record_paused(!selected_->record_paused()); });
     connect(sound_,
             &QPushButton::toggled,
             this,
@@ -436,6 +450,11 @@ monitor_window::~monitor_window()
         record_dialog_->close();
     }
     stop_all();
+    // 基类析构删除子画面时 stop() 仍会发信号，此时本窗口已不完整；先断开画面到本窗口的回调。
+    for (auto* view : views_)
+    {
+        disconnect(view, nullptr, this, nullptr);
+    }
     if (audio_id_ != 0)
     {
         SDL_CloseAudioDevice(audio_id_);
@@ -453,6 +472,13 @@ void monitor_window::select_view(playback_view* view)
     const QSignalBlocker blocked(sound_);
     sound_->setChecked(view->audible());
     sound_->setText(view->audible() ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
+    update_record_pause();
+}
+
+void monitor_window::update_record_pause()
+{
+    record_pause_->setEnabled(selected_->record_control_ready());
+    record_pause_->setText(selected_->record_paused() ? QStringLiteral("继续回放") : QStringLiteral("暂停回放"));
 }
 
 void monitor_window::set_layout(int count)

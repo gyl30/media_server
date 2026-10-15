@@ -6,7 +6,7 @@
 
 录像目录中的设备墙上时间，经用户确认的固定 UTC 偏移换算为 Unix 秒，再申请独立回放。目录的 `file_path` 只作展示，不能当作可播放 URL。当前不自动推断设备时区或历史夏令时，偏移默认值来自本机当前值，操作员必须核对。
 
-当前尚未实现同会话 INFO 暂停、恢复或 seek。不能把重新签票、重开范围或本地停止呈现称为协议暂停/seek。下载、真实 NVR 库存完整性和物理音视频设备验收也不在本增量的 PASS 范围内。
+同会话 INFO 暂停/恢复见下文“暂停与继续”；seek 与倍速尚未实现。不能把重新签票、重开范围或本地停止呈现称为协议暂停/seek。下载、真实 NVR 库存完整性和物理音视频设备验收也不在本增量的 PASS 范围内。
 
 ## 所有权与有限缓冲
 
@@ -117,3 +117,38 @@ daemon、parec、runner 均退出 0 并回收，前后桌面原有 Pulse PID/sta
 原 Claude 第 51/52 轮因额度限制未完成，不作为批准。本机 Codex 0.162.1 只读复审三轮：首轮无 P0/P1；追问 Beast 分帧、背压持锁、`deleteLater` 重复、实例回收与 PTS 偏移时发现上述零字节 P0；修复后复审无 P0/P1，并同意以上两项边界按文档说明处理。原始问答在 DEV `/var/tmp/qt-claude-owner-work/codex-review/qt-round{1,2,3}.*`；讨论不替代测试。
 
 INFO 控制、物理设备或整个阶段四仍未通过，不能由上述结果推导。
+
+## 暂停与继续
+
+主窗口“暂停回放/继续回放”只作用于选中画面中仍在呈现的有限回放；创建中、实时画面、在途控制或呈现结束后不可用。请求发往创建时固定的平台与 `playback_id`，在途控制复用画面的 `request_`，回调以本次 session 为 context，停止或换实例后迟到响应不再生效。
+
+平台 HTTP 204 后才冻结：记录当前呈现时钟，暂停 SDL 设备但保留音频借用、已排 PCM、视频队列与当前图像；`update_media()` 仍有界取数并向已暂停的 SDL 排队，但不出队视频、不判尾部结束，解码线程以错误结束时照常收尾。继续 204 后从冻结位置重启时钟并由原逻辑恢复 SDL，不跳帧、不重解码。解码线程的 I/O、视频与音频进展期限改用只在解码线程推进的进展时基，按调用间隔采样暂停位，近似排除确认暂停的区间；实时模式从不暂停，行为不变。有限 HTTP 输入改为复用 FFmpeg 中断回调判断期限。
+
+失败语义不增加状态：暂停未确认时继续播放并经 `playback_error` 提示（逐帧状态会覆盖画面文本）；若设备实际已暂停，10 秒进展期限会以错误结束本次回放。继续未确认时保持本地暂停，可再次继续或停止；继续返回 404 或 `playback_not_streaming` 时结束本次回放并照常 DELETE。暂停期间界面不会自动发现服务端到期，用户继续时才确认；暂停占用的是本次回放的绝对预算。暂停中切换有声画面沿用 `set_audible()` 清本地 PCM 的既有行为。
+
+主窗口析构的 `QWidget` 阶段删除子画面时，画面 `stop()` 仍会发出状态信号。新增的状态连接使 UBSan 在 `asan-ctest-01` 中真实报告访问已部分析构的 `monitor_window`；修复为析构开始、`stop_all()` 之后断开各画面到主窗口的连接，ASan 主窗口 156 项随后通过。证据：DEV `/var/tmp/qt-claude-owner-work/pause-qt/asan-ctest-01.LastTest.log`、`asan-monitor-02.log`。
+
+### 测试素材
+
+2 秒素材在连接保持打开时，FFmpeg 轨道探测要等到 EOF 才出画面（CLI 管道已复现），无法在呈现中途暂停。为此用原素材相同的 ireader PS muxer 私有生成 8 秒 H.264 Main 320x240 25fps（GOP 25）+ PCMA 8 kHz 素材 `pcma-long-noend.ps`，与原素材副本一起放在 DEV `/var/tmp/qt-claude-owner-work/fixtures-v2/`（`SHA256SUMS.txt`）；生成源码与输入在 `/var/tmp/qt-claude-owner-work/long-ps/`。原素材目录未修改。完整桌面 CTest 的 `FINITE_PS_TEST_FIXTURE_DIR` 改指该目录。
+
+### 自动化测试
+
+`finite_playback_view_test` 新增：`pause_resume_ps` 三行（静音与 SDL dummy 在满队列背压时第 5 帧暂停，静音在已排空数据、阻塞于 HTTP 读取时第 125 帧暂停），暂停 12 秒内无新数据、帧数不变、解码线程未超时、SDL 保持暂停且队列不减，恢复后 200/200 帧与同 SDK 参考逐帧一致、无丢帧、PCM 384,000 样本；`resume_after_eof_while_paused` 在解码线程已结束、尾部仍在呈现时暂停和继续，50/50 帧一致；`control_failures` 覆盖暂停 502 继续播放、继续 409 busy 保持暂停、继续 404 结束并 DELETE。`monitor_window_test` 断言暂停按钮对实时、创建中和创建失败画面不可用。有限视图 CTest 超时由 90 秒调整为 150 秒。
+
+最终桌面全套（修复析构回调后，编译源码清单 `full-02.source-SHA256SUMS` 运行前后一致；其间只修改了非编译输入的 README）：
+
+| 配置 | 证据日志 | 结果 |
+| --- | --- | --- |
+| RelWithDebInfo | `pause-qt/normal-ctest-02.log`、`.LastTest.log` | 6/6 CTest；372 项 QTest，无失败/跳过；200.43 秒 |
+| ASan+UBSan | `pause-qt/asan-ctest-02.log`、`.LastTest.log` | 6/6 CTest；372 项 QTest，无失败/跳过；202.02 秒；未检出 sanitizer 报告 |
+
+`asan-ctest-01` 的 UBSan 失败，以及有限视图失败轮次 `finite-01`～`finite-04`（一半 2 秒素材探测等待、控制可用条件过严、状态文本被覆盖）保留在同目录，不覆盖成 PASS；`finite-05` 起为修复后的 19/19 通过轮次。
+
+### 真实组合
+
+私有 overlay 与探针：DEV `/var/tmp/qt-claude-owner-work/pause-integration/`（`private_pause_overlay_test.go`、`probe/finite_view_pause_probe.cpp`）。实际 Qt `play_record`/暂停/继续 → 生产 Go HTTP 与 INFO → 受控 UDP SIP 设备 → 冻结的新 C++ 有限通道 ELF（`elf/`）；设备按 1x 节奏发送 RFC4571，收到 PAUSE 停发、PLAY 从原位置继续再 FIN。`run-03-path.txt` 指向的结果中 normal/ASan × 静音/SDL dummy 四组通过（Go 143.45 秒）：第 60 帧暂停 22.0 秒，暂停期间帧数不变、解码线程仍运行、dummy 组 SDL 为暂停状态；设备侧暂停前后发送字节相同；INFO 外层 CSeq 为 INVITE+1/+2、内层同值，BYE 为 INVITE+3；创建/控制/DELETE/INVITE 为 1/2/1/1；200/200 帧与参考逐帧一致，无丢帧，PCM 384,000；owner、票据、SSRC、接收器归零，服务端与探针退出 0。
+
+保留的失败：`run-01` 探针用默认粗定时器，22 秒暂停实际 21.6 秒，探针自身断言失败；`run-02` 的 Go 侧观察在恢复后才采样设备字节，与恢复发送竞态多计 1 个包。两者均为私有夹具缺陷，分别改用精确定时器、在处理 PLAY 前采样后重跑，未修改产品代码或放宽断言。
+
+边界：受控设备不是物理 NVR，组合为 offscreen 与 SDL dummy，不是显示器或声学验收；数字 Pulse 回环未对暂停重做。1x 节奏下从申请到首帧约 5.2 秒，来自 FFmpeg 对有限 PS 的轨道探测，是本增量之前已有的启动时延，未调整探测参数。真实设备对附录 B 起始行、空体或内层响应、暂停后在途数据量的行为仍待物理设备验证。

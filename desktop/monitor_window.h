@@ -42,6 +42,7 @@ class monitor_window final : public QMainWindow
     void play_data(const QVariantMap& data, playback_view* view);
     void set_layout(int count);
     void select_view(playback_view* view);
+    void update_record_pause();
     void stop_all();
     void take_snapshot();
     void query_catalog();
@@ -66,6 +67,7 @@ class monitor_window final : public QMainWindow
     QGridLayout* grid_;
     QComboBox* view_layout_;
     QPushButton* sound_;
+    QPushButton* record_pause_;
     QPushButton* catalog_;
     QPushButton* record_query_;
     QPushButton* device_info_;
