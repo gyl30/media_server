@@ -24,7 +24,9 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 选中国标设备或通道后可“查询目录”；202及界面“已受理”仅表示SIP MESSAGE被接受，稍后手动双击设备查看实际返回的通道，不表示目录已收齐。
 
-右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路。它只是阶段三的查询子集，PTZ/预置位仍未实现；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
+右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
+
+选中国标通道后，“预置位”页可查询该通道实际返回的编号和名称；空列表是有效结果。编号保留设备返回的字符串，不按后续控制指令的数值范围截断。查询与基本页请求串行，不缓存、不自动刷新；切换目标立即清空旧列表。该功能要求同版本 signaling 的 `POST /api/devices/{id}/channels/{channel_id}/presets/query`；设置、调用、删除及云台动作尚未实现。详见 [预置位查询验证](../docs/qt_monitor_client_stage3_presets.md)。
 
 ## 观看与生命周期
 

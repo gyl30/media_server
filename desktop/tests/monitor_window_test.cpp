@@ -14,11 +14,14 @@
 #include <QSettings>
 #include <QIODevice>
 #include <QByteArray>
+#include <QJsonArray>
+#include <QJsonValue>
 #include <QDropEvent>
 #include <QEventLoop>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QDataStream>
+#include <QStringList>
 #include <QScopeGuard>
 #include <QJsonObject>
 #include <QPushButton>
@@ -167,6 +170,11 @@ QByteArray device_query_response(const QString& id, const QString& command, cons
     return QJsonDocument(response).toJson(QJsonDocument::Compact);
 }
 
+QJsonObject preset_query_response(const QString& device, const QString& channel, const QJsonArray& presets)
+{
+    return {{"device_id", device}, {"channel_id", channel}, {"command", "PresetQuery"}, {"sn", 23}, {"presets", presets}};
+}
+
 QPointer<QNetworkReply> pending_device_query(monitor_window& window)
 {
     for (auto* reply : window.findChildren<QNetworkReply*>())
@@ -218,6 +226,354 @@ class monitor_window_test final : public QObject
         QCoreApplication::setApplicationName(QStringLiteral("monitor-window-stage2"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings_->path());
+    }
+
+    void preset_query_controls()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* query = window.findChild<QPushButton*>(QStringLiteral("preset_query"));
+        auto* list = window.findChild<QTreeWidget*>(QStringLiteral("preset_list"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("preset_result"));
+        QVERIFY(tree && query && list && result);
+        QCOMPARE(list->columnCount(), 2);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2 &&
+                                     tree->topLevelItem(1)->childCount() == 1 && tree->topLevelItem(2)->childCount() == 3,
+                                 2000);
+        QVERIFY(!query->isEnabled());
+        for (auto* item : {tree->topLevelItem(0), tree->topLevelItem(0)->child(0), tree->topLevelItem(1)->child(0), tree->topLevelItem(2)->child(0)})
+        {
+            tree->setCurrentItem(item);
+            QVERIFY(!query->isEnabled());
+            query->click();
+        }
+        QCOMPARE(api.queries.size(), 0);
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+        tree->setCurrentItem(device->child(0));
+        QVERIFY(query->isEnabled());
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        QCOMPARE(api.queries[0].request_line,
+                 QByteArray("POST /api/devices/34020000001320000001/channels/34020000001310000001/presets/query HTTP/1.1"));
+        QCOMPARE(api.queries[0].body, QJsonObject{});
+        const QStringList identifiers{QStringLiteral("camera-A"), QStringLiteral("1000"), QStringLiteral("中文编号")};
+        const QStringList names{QStringLiteral("<b>literal-preset-name</b>"), QString{}, QStringLiteral("门口")};
+        QJsonArray entries;
+        for (int index = 0; index < identifiers.size(); ++index)
+        {
+            entries.append(QJsonObject{{"preset_id", identifiers[index]}, {"preset_name", names[index]}});
+        }
+        const auto response = preset_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("34020000001310000001"), entries);
+        QVERIFY(!response.contains(QStringLiteral("result")));
+        respond(api.queries[0].socket, 200, QJsonDocument(response).toJson(QJsonDocument::Compact));
+        QTRY_VERIFY_WITH_TIMEOUT(query->isEnabled(), 1000);
+        QCOMPARE(list->topLevelItemCount(), 3);
+        for (int index = 0; index < identifiers.size(); ++index)
+        {
+            QCOMPARE(list->topLevelItem(index)->text(0), identifiers[index]);
+            QCOMPARE(list->topLevelItem(index)->text(1), names[index]);
+            QVERIFY(!(list->topLevelItem(index)->flags() & Qt::ItemIsEditable));
+        }
+        QVERIFY(result->text().contains(QStringLiteral("预置位")) && result->text().contains(QStringLiteral("34020000001310000001")));
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        respond(api.queries[1].socket,
+                200,
+                QJsonDocument(preset_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("34020000001310000001"), {}))
+                    .toJson(QJsonDocument::Compact));
+        QTRY_VERIFY_WITH_TIMEOUT(query->isEnabled(), 1000);
+        QCOMPARE(list->topLevelItemCount(), 0);
+        QVERIFY(result->text().contains(QStringLiteral("预置位")) && !result->text().contains(QStringLiteral("失败")));
+        tree->setCurrentItem(device);
+        QVERIFY(!query->isEnabled());
+        QCOMPARE(list->topLevelItemCount(), 0);
+        window.close();
+    }
+
+    void preset_query_serializes_other_queries_data()
+    {
+        QTest::addColumn<QString>("command");
+        QTest::newRow("info") << QStringLiteral("DeviceInfo");
+        QTest::newRow("status") << QStringLiteral("DeviceStatus");
+    }
+
+    void preset_query_serializes_other_queries()
+    {
+        QFETCH(QString, command);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* query = window.findChild<QPushButton*>(QStringLiteral("preset_query"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        QVERIFY(tree && query && info && status);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+        tree->setCurrentItem(device->child(0));
+        (command == QStringLiteral("DeviceInfo") ? info : status)->click();
+        QVERIFY(!info->isEnabled() && !status->isEnabled() && !query->isEnabled());
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        respond(api.queries[0].socket, 200, device_query_response(QStringLiteral("34020000001320000001"), command, QStringLiteral("ordinary-query")));
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled() && query->isEnabled(), 1000);
+        query->click();
+        QVERIFY(!info->isEnabled() && !status->isEnabled() && !query->isEnabled());
+        info->click();
+        status->click();
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        QVERIFY(api.queries[1].path.endsWith("/presets/query"));
+        respond(api.queries[1].socket,
+                200,
+                QJsonDocument(preset_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("34020000001310000001"), {}))
+                    .toJson(QJsonDocument::Compact));
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled() && query->isEnabled(), 1000);
+        QCOMPARE(api.queries.size(), 2);
+        window.close();
+    }
+
+    void preset_query_invalid_response_data()
+    {
+        QTest::addColumn<int>("http_status");
+        QTest::addColumn<QByteArray>("body");
+        const auto valid = preset_query_response(QStringLiteral("34020000001320000001"),
+                                                 QStringLiteral("34020000001310000001"),
+                                                 {QJsonObject{{"preset_id", "first-valid"}, {"preset_name", "first"}}});
+        auto variant = valid;
+        const auto row = [](const char* name, const QJsonObject& response)
+        { QTest::newRow(name) << 200 << QJsonDocument(response).toJson(QJsonDocument::Compact); };
+        variant["device_id"] = "wrong-device";
+        row("wrong-device", variant);
+        variant = valid;
+        variant["channel_id"] = "wrong-channel";
+        row("wrong-channel", variant);
+        variant = valid;
+        variant["command"] = "DeviceInfo";
+        row("wrong-command", variant);
+        variant = valid;
+        variant.remove("presets");
+        row("missing-list", variant);
+        variant = valid;
+        variant["presets"] = QJsonObject{};
+        row("list-not-array", variant);
+        const char* invalid_names[] = {"entry-not-object", "numeric-id", "missing-id", "empty-id", "numeric-name", "missing-name"};
+        int invalid_index = 0;
+        for (const auto& entry : {QJsonValue(17),
+                                  QJsonValue(QJsonObject{{"preset_id", 1000}, {"preset_name", "numeric-id"}}),
+                                  QJsonValue(QJsonObject{{"preset_name", "missing-id"}}),
+                                  QJsonValue(QJsonObject{{"preset_id", ""}, {"preset_name", "empty-id"}}),
+                                  QJsonValue(QJsonObject{{"preset_id", "second"}, {"preset_name", 7}}),
+                                  QJsonValue(QJsonObject{{"preset_id", "second"}})})
+        {
+            variant = valid;
+            auto entries = valid.value("presets").toArray();
+            entries.append(entry);
+            variant["presets"] = entries;
+            // 每一项在已合法首项之后，保证错误不能留下半个列表。
+            row(invalid_names[invalid_index++], variant);
+        }
+        variant = valid;
+        auto entries = valid.value("presets").toArray();
+        entries.append(QJsonObject{{"preset_id", "first-valid"}, {"preset_name", "duplicate"}});
+        variant["presets"] = entries;
+        row("duplicate-id", variant);
+        QTest::newRow("http-400") << 400 << QByteArray(R"({"error":"invalid_request"})");
+        QTest::newRow("malformed-json") << 200 << QByteArray("{broken");
+    }
+
+    void preset_query_invalid_response()
+    {
+        QFETCH(int, http_status);
+        QFETCH(QByteArray, body);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* query = window.findChild<QPushButton*>(QStringLiteral("preset_query"));
+        auto* list = window.findChild<QTreeWidget*>(QStringLiteral("preset_list"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("preset_result"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        QVERIFY(tree && query && list && result && info && status);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+        tree->setCurrentItem(device->child(0));
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto reply = pending_device_query(window);
+        QVERIFY(reply);
+        respond(api.queries[0].socket, http_status, body);
+        QTRY_VERIFY_WITH_TIMEOUT(query->isEnabled() && info->isEnabled() && status->isEnabled(), 1000);
+        QVERIFY2(result->text().contains(QStringLiteral("预置位")) && result->text().contains(QStringLiteral("失败")), qPrintable(result->text()));
+        QCOMPARE(list->topLevelItemCount(), 0);
+        QTRY_VERIFY_WITH_TIMEOUT(reply.isNull(), 1000);
+        window.close();
+    }
+
+    void preset_query_selection_isolates_late_reply_data()
+    {
+        QTest::addColumn<bool>("return_to_a");
+        QTest::addColumn<int>("old_http_status");
+        QTest::newRow("a-to-b-old-success") << false << 200;
+        QTest::newRow("a-to-b-old-error") << false << 400;
+        QTest::newRow("a-to-b-to-a-old-success") << true << 200;
+        QTest::newRow("a-to-b-to-a-old-error") << true << 400;
+    }
+
+    void preset_query_selection_isolates_late_reply()
+    {
+        QFETCH(bool, return_to_a);
+        QFETCH(int, old_http_status);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* query = window.findChild<QPushButton*>(QStringLiteral("preset_query"));
+        auto* list = window.findChild<QTreeWidget*>(QStringLiteral("preset_list"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("preset_result"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        QVERIFY(tree && query && list && result && info && status);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        auto* a = tree->topLevelItem(0)->child(0);
+        auto* b = tree->topLevelItem(0)->child(1);
+        tree->itemDoubleClicked(a, 0);
+        tree->itemDoubleClicked(b, 0);
+        QTRY_VERIFY_WITH_TIMEOUT(a->childCount() == 1 && b->childCount() == 1, 2000);
+        tree->setCurrentItem(a->child(0));
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto old_reply = pending_device_query(window);
+        QVERIFY(old_reply);
+        respond(api.queries[0].socket,
+                old_http_status,
+                old_http_status == 200
+                    ? QJsonDocument(preset_query_response(QStringLiteral("34020000001320000001"),
+                                                          QStringLiteral("34020000001310000001"),
+                                                          {QJsonObject{{"preset_id", "stale-preset"}, {"preset_name", "stale-preset"}}}))
+                          .toJson(QJsonDocument::Compact)
+                    : QByteArray(R"({"error":"stale-preset"})"));
+        tree->setCurrentItem(b->child(0));
+        if (return_to_a)
+        {
+            tree->setCurrentItem(a->child(0));
+        }
+        QCOMPARE(list->topLevelItemCount(), 0);
+        const auto device = return_to_a ? QStringLiteral("34020000001320000001") : QStringLiteral("34020000001320000002");
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(old_reply.isNull(), 1000);
+        QVERIFY(!query->isEnabled() && !info->isEnabled() && !status->isEnabled());
+        QCOMPARE(list->topLevelItemCount(), 0);
+        QVERIFY(!result->text().contains(QStringLiteral("stale-preset")) && !result->text().contains(QStringLiteral("失败")));
+        QCOMPARE(api.queries[1].path, QByteArray("/api/devices/") + device.toLatin1() + "/channels/34020000001310000001/presets/query");
+        respond(api.queries[1].socket,
+                200,
+                QJsonDocument(preset_query_response(device,
+                                                    QStringLiteral("34020000001310000001"),
+                                                    {QJsonObject{{"preset_id", "fresh-preset"}, {"preset_name", "fresh-preset"}}}))
+                    .toJson(QJsonDocument::Compact));
+        QTRY_VERIFY_WITH_TIMEOUT(query->isEnabled(), 1000);
+        QCOMPARE(list->topLevelItemCount(), 1);
+        QCOMPARE(list->topLevelItem(0)->text(0), QStringLiteral("fresh-preset"));
+        QVERIFY(!result->text().contains(QStringLiteral("stale-preset")));
+        window.close();
+    }
+
+    void preset_query_reset_cancels_callback_data()
+    {
+        QTest::addColumn<QString>("action");
+        QTest::addColumn<int>("old_http_status");
+        for (const auto& action : {QStringLiteral("refresh"), QStringLiteral("platform"), QStringLiteral("close"), QStringLiteral("destruct")})
+        {
+            QTest::newRow((action + QStringLiteral("-success")).toLatin1().constData()) << action << 200;
+            QTest::newRow((action + QStringLiteral("-error")).toLatin1().constData()) << action << 400;
+        }
+    }
+
+    void preset_query_reset_cancels_callback()
+    {
+        QFETCH(QString, action);
+        QFETCH(int, old_http_status);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        auto window = std::make_unique<monitor_window>();
+        window->show();
+        auto* tree = window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* query = window->findChild<QPushButton*>(QStringLiteral("preset_query"));
+        QPointer<QTreeWidget> list = window->findChild<QTreeWidget*>(QStringLiteral("preset_list"));
+        QPointer<QLabel> result = window->findChild<QLabel*>(QStringLiteral("preset_result"));
+        auto* refresh = window->findChild<QPushButton*>(QStringLiteral("refresh_devices"));
+        auto* address = window->findChild<QLineEdit*>(QStringLiteral("platform_address"));
+        QVERIFY(tree && query && list && result && refresh && address);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+        tree->setCurrentItem(device->child(0));
+        query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto old_reply = pending_device_query(*window);
+        const auto peer = api.queries[0].socket;
+        QVERIFY(old_reply && peer);
+        respond(peer,
+                old_http_status,
+                old_http_status == 200
+                    ? QJsonDocument(preset_query_response(QStringLiteral("34020000001320000001"),
+                                                          QStringLiteral("34020000001310000001"),
+                                                          {QJsonObject{{"preset_id", "late-preset"}, {"preset_name", "late-preset"}}}))
+                          .toJson(QJsonDocument::Compact)
+                    : QByteArray(R"({"error":"late-preset"})"));
+        platform_fixture second(true);
+        if (action == QStringLiteral("destruct"))
+        {
+            window.reset();
+            QVERIFY(list.isNull() && result.isNull());
+            QTRY_VERIFY_WITH_TIMEOUT(old_reply.isNull() && peer.isNull(), 1000);
+            return;
+        }
+        if (action == QStringLiteral("close"))
+        {
+            window->close();
+        }
+        else
+        {
+            if (action == QStringLiteral("platform"))
+            {
+                QVERIFY(second.start());
+                address->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+            }
+            refresh->click();
+        }
+        const auto after_reset = result->text();
+        QTRY_VERIFY_WITH_TIMEOUT(old_reply.isNull() && peer.isNull(), 1000);
+        QCOMPARE(list->topLevelItemCount(), 0);
+        QCOMPARE(result->text(), after_reset);
+        QVERIFY(!result->text().contains(QStringLiteral("late-preset")));
+        if (action != QStringLiteral("close"))
+        {
+            QVERIFY(!query->isEnabled());
+            QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+            auto* fresh_device = tree->topLevelItem(0)->child(0);
+            tree->itemDoubleClicked(fresh_device, 0);
+            QTRY_COMPARE_WITH_TIMEOUT(fresh_device->childCount(), 1, 2000);
+            tree->setCurrentItem(fresh_device->child(0));
+            QVERIFY(query->isEnabled());
+            window->close();
+        }
+        else
+        {
+            QVERIFY(!window->isVisible());
+        }
     }
 
     void device_query_targets_and_serialization()
@@ -499,6 +855,38 @@ class monitor_window_test final : public QObject
         {
             respond(api.queries[0].socket, http_status, body);
         }
+        // 保留原Info超时断言；另一个独立窗口在同一10秒内验证PresetQuery超时。
+        platform_fixture preset_api(true);
+        std::unique_ptr<monitor_window> preset_window;
+        QPointer<QNetworkReply> preset_reply;
+        QPointer<QTcpSocket> preset_peer;
+        QPointer<QPushButton> preset_button;
+        QPointer<QLabel> preset_result;
+        if (http_status == 0)
+        {
+            const auto original_address = window.findChild<QLineEdit*>(QStringLiteral("platform_address"))->text();
+            QVERIFY(preset_api.start());
+            preset_window = std::make_unique<monitor_window>();
+            auto* preset_tree = preset_window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+            preset_button = preset_window->findChild<QPushButton*>(QStringLiteral("preset_query"));
+            preset_result = preset_window->findChild<QLabel*>(QStringLiteral("preset_result"));
+            QVERIFY(preset_tree && preset_button && preset_result);
+            QTRY_VERIFY_WITH_TIMEOUT(preset_tree->topLevelItemCount() == 3 && preset_tree->topLevelItem(0)->childCount() == 2, 2000);
+            auto* device = preset_tree->topLevelItem(0)->child(0);
+            preset_tree->itemDoubleClicked(device, 0);
+            QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+            preset_tree->setCurrentItem(device->child(0));
+            preset_button->click();
+            QTRY_COMPARE_WITH_TIMEOUT(preset_api.queries.size(), 1, 2000);
+            preset_reply = pending_device_query(*preset_window);
+            preset_peer = preset_api.queries[0].socket;
+            QVERIFY(preset_reply && preset_peer);
+            QVERIFY(preset_api.queries[0].path.endsWith("/presets/query"));
+            QCOMPARE(window.findChild<QLineEdit*>(QStringLiteral("platform_address"))->text(), original_address);
+            QCOMPARE(reply->url().port(), int(api.server.serverPort()));
+            QCOMPARE(preset_reply->url().port(), int(preset_api.server.serverPort()));
+            QSettings().setValue(QStringLiteral("platform_url"), original_address);
+        }
         QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 12'000);
         QVERIFY2(result->toPlainText().contains(expected, Qt::CaseInsensitive), qPrintable(result->toPlainText()));
         QTRY_VERIFY_WITH_TIMEOUT(reply.isNull(), 1000);
@@ -510,6 +898,17 @@ class monitor_window_test final : public QObject
                 device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceStatus"), QStringLiteral("manual-retry-ok")));
         QTRY_VERIFY_WITH_TIMEOUT(result->toPlainText().contains(QStringLiteral("manual-retry-ok")), 1000);
         QVERIFY(info->isEnabled() && status->isEnabled());
+        if (preset_window)
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(preset_button->isEnabled(), 2000);
+            QVERIFY(preset_result->text().contains(QStringLiteral("预置位")) && preset_result->text().contains(QStringLiteral("timed out")));
+            QVERIFY(preset_window->findChild<QPushButton*>(QStringLiteral("device_info_query"))->isEnabled());
+            QVERIFY(preset_window->findChild<QPushButton*>(QStringLiteral("device_status_query"))->isEnabled());
+            QCOMPARE(preset_window->findChild<QTreeWidget*>(QStringLiteral("preset_list"))->topLevelItemCount(), 0);
+            QTRY_VERIFY_WITH_TIMEOUT(preset_reply.isNull() && preset_peer.isNull(), 1000);
+            preset_window.reset();
+            QVERIFY(preset_button.isNull() && preset_result.isNull());
+        }
         window.close();
     }
 

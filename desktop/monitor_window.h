@@ -44,6 +44,7 @@ class monitor_window final : public QMainWindow
     void query_catalog();
     void reset_device_query();
     void query_device(const QString& command);
+    void query_presets();
 
    private:
     platform_client client_;
@@ -61,6 +62,9 @@ class monitor_window final : public QMainWindow
     QPushButton* device_status_;
     QLabel* device_target_;
     QPlainTextEdit* device_result_;
+    QPushButton* preset_query_;
+    QTreeWidget* preset_list_;
+    QLabel* preset_result_;
     QTreeWidget* devices_;
     QLineEdit* address_;
     QLabel* connection_;

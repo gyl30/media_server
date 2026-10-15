@@ -12,6 +12,7 @@ import (
 
 type pendingDeviceQuery struct {
 	deviceID string
+	targetID string
 	command  string
 	response chan deviceQueryResponse
 }
@@ -34,20 +35,32 @@ type deviceStatus struct {
 }
 
 type deviceQueryResponse struct {
-	DeviceID string        `json:"device_id"`
-	Command  string        `json:"command"`
-	SN       int           `json:"sn"`
-	Result   string        `json:"result"`
-	Info     *deviceInfo   `json:"info,omitempty"`
-	Status   *deviceStatus `json:"status,omitempty"`
+	DeviceID  string          `json:"device_id"`
+	ChannelID string          `json:"channel_id,omitempty"`
+	Command   string          `json:"command"`
+	SN        int             `json:"sn"`
+	Result    string          `json:"result,omitempty"`
+	Info      *deviceInfo     `json:"info,omitempty"`
+	Status    *deviceStatus   `json:"status,omitempty"`
+	Presets   *[]devicePreset `json:"presets,omitempty"`
+}
+
+type devicePreset struct {
+	ID   string `xml:"PresetID" json:"preset_id"`
+	Name string `xml:"PresetName" json:"preset_name"`
 }
 
 func (s *infrastructureServer) handleDeviceQuery(writer http.ResponseWriter, request *http.Request) {
 	deviceID := request.PathValue("device_id")
+	channelID := request.PathValue("channel_id")
 	var command struct {
 		Command string `json:"command"`
 	}
-	if !validDigits(deviceID, 20) || !decodeJSON(writer, request, &command) || (command.Command != "DeviceInfo" && command.Command != "DeviceStatus") {
+	if channelID != "" {
+		command.Command = "PresetQuery"
+	}
+	if !validDigits(deviceID, 20) || (channelID != "" && !validDigits(channelID, 20)) ||
+		(channelID == "" && (!decodeJSON(writer, request, &command) || (command.Command != "DeviceInfo" && command.Command != "DeviceStatus"))) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -68,8 +81,19 @@ func (s *infrastructureServer) handleDeviceQuery(writer http.ResponseWriter, req
 		writeHTTPError(writer, http.StatusConflict, "device_offline")
 		return
 	}
+	if channelID != "" {
+		if _, exists := sipServer.channels.get(deviceID, channelID); !exists {
+			s.live.mu.Unlock()
+			writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
+			return
+		}
+	}
 	sn := int(sipServer.messageSN.Add(1))
-	pending := pendingDeviceQuery{deviceID: deviceID, command: command.Command, response: make(chan deviceQueryResponse, 1)}
+	targetID := deviceID
+	if channelID != "" {
+		targetID = channelID
+	}
+	pending := pendingDeviceQuery{deviceID: deviceID, targetID: targetID, command: command.Command, response: make(chan deviceQueryResponse, 1)}
 	sipServer.pendingQueries[sn] = pending
 	s.live.mu.Unlock()
 	defer func() {
@@ -79,7 +103,7 @@ func (s *infrastructureServer) handleDeviceQuery(writer http.ResponseWriter, req
 	}()
 	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Second)
 	defer cancel()
-	body, err := xml.Marshal(manscdpQuery{CmdType: command.Command, SN: sn, DeviceID: deviceID})
+	body, err := xml.Marshal(manscdpQuery{CmdType: command.Command, SN: sn, DeviceID: targetID})
 	if err == nil {
 		err = sipServer.sendMANSCDP(ctx, device, append([]byte(xml.Header), body...))
 	}
@@ -106,20 +130,41 @@ func (s *infrastructureServer) handleDeviceQuery(writer http.ResponseWriter, req
 
 func (s *sipServer) handleDeviceQueryResponse(req *sip.Request, tx sip.ServerTransaction) {
 	var message struct {
-		XMLName  xml.Name `xml:"Response"`
-		CmdType  string   `xml:"CmdType"`
-		SN       int      `xml:"SN"`
-		DeviceID string   `xml:"DeviceID"`
-		Result   string   `xml:"Result"`
+		XMLName    xml.Name `xml:"Response"`
+		CmdType    string   `xml:"CmdType"`
+		SN         int      `xml:"SN"`
+		DeviceID   string   `xml:"DeviceID"`
+		Result     string   `xml:"Result"`
+		PresetList *struct {
+			Num   *int           `xml:"Num,attr"`
+			Items []devicePreset `xml:"Item"`
+		} `xml:"PresetList"`
 		deviceInfo
 		deviceStatus
 	}
-	if err := decodeMANSCDP(req.Body(), &message); err != nil || (message.Result != "OK" && message.Result != "ERROR") {
+	if err := decodeMANSCDP(req.Body(), &message); err != nil {
+		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+		return
+	}
+	if message.CmdType == "PresetQuery" {
+		if message.PresetList == nil || message.PresetList.Num == nil || *message.PresetList.Num != len(message.PresetList.Items) {
+			s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+			return
+		}
+		seen := make(map[string]struct{}, len(message.PresetList.Items))
+		for _, preset := range message.PresetList.Items {
+			if _, duplicate := seen[preset.ID]; preset.ID == "" || duplicate {
+				s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
+				return
+			}
+			seen[preset.ID] = struct{}{}
+		}
+	} else if message.Result != "OK" && message.Result != "ERROR" {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
 	from := req.From()
-	if from == nil || from.Address.User != message.DeviceID {
+	if from == nil || (message.CmdType != "PresetQuery" && from.Address.User != message.DeviceID) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}
@@ -129,19 +174,29 @@ func (s *sipServer) handleDeviceQueryResponse(req *sip.Request, tx sip.ServerTra
 		return
 	}
 	s.live.mu.Lock()
-	_, stopping := s.live.stoppingDevices[message.DeviceID]
-	if stopping || !s.devices.registeredSource(message.DeviceID, req.Source(), s.now()) {
+	_, stopping := s.live.stoppingDevices[from.Address.User]
+	if stopping || !s.devices.registeredSource(from.Address.User, req.Source(), s.now()) {
 		s.live.mu.Unlock()
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return
 	}
 	pending, ok := s.pendingQueries[message.SN]
-	if ok && pending.deviceID == message.DeviceID && pending.command == message.CmdType {
-		response := deviceQueryResponse{DeviceID: message.DeviceID, Command: message.CmdType, SN: message.SN, Result: message.Result}
+	if ok && message.CmdType == "PresetQuery" && pending.deviceID != from.Address.User {
+		s.live.mu.Unlock()
+		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
+		return
+	}
+	if ok && pending.deviceID == from.Address.User && pending.targetID == message.DeviceID && pending.command == message.CmdType {
+		response := deviceQueryResponse{DeviceID: pending.deviceID, Command: message.CmdType, SN: message.SN, Result: message.Result}
 		if message.CmdType == "DeviceInfo" {
 			response.Info = &message.deviceInfo
-		} else {
+		} else if message.CmdType == "DeviceStatus" {
 			response.Status = &message.deviceStatus
+		} else {
+			response.Result = ""
+			response.ChannelID = pending.targetID
+			presets := append([]devicePreset{}, message.PresetList.Items...)
+			response.Presets = &presets
 		}
 		select {
 		case pending.response <- response:

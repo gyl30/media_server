@@ -44,7 +44,7 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 		s.handleCatalog(req, tx)
 		return
 	}
-	if message.XMLName.Local == "Response" && (message.CmdType == "DeviceInfo" || message.CmdType == "DeviceStatus") {
+	if message.XMLName.Local == "Response" && (message.CmdType == "DeviceInfo" || message.CmdType == "DeviceStatus" || message.CmdType == "PresetQuery") {
 		s.handleDeviceQueryResponse(req, tx)
 		return
 	}

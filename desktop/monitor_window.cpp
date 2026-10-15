@@ -1,6 +1,7 @@
 #include <utility>
 #include <algorithm>
 
+#include <QSet>
 #include <SDL.h>
 #include <QMenu>
 #include <QLabel>
@@ -48,6 +49,9 @@ monitor_window::monitor_window(QWidget* parent)
       device_status_(new QPushButton(QStringLiteral("设备状态"), this)),
       device_target_(new QLabel(this)),
       device_result_(new QPlainTextEdit(this)),
+      preset_query_(new QPushButton(QStringLiteral("查询预置位"), this)),
+      preset_list_(new QTreeWidget(this)),
+      preset_result_(new QLabel(this)),
       devices_(new QTreeWidget(this)),
       address_(new QLineEdit(this)),
       connection_(new QLabel(this))
@@ -167,14 +171,26 @@ monitor_window::monitor_window(QWidget* parent)
     device_result_->setReadOnly(true);
     basic_layout->addWidget(device_result_);
     controls->addTab(basic, QStringLiteral("基本"));
-    for (const auto& title : {QStringLiteral("云台"), QStringLiteral("预置位")})
-    {
-        auto* page = new QWidget(controls);
-        auto* page_layout = new QVBoxLayout(page);
-        page_layout->addWidget(new QLabel(QStringLiteral("%1功能将在后续阶段接入真实设备").arg(title), page));
-        page_layout->addStretch();
-        controls->addTab(page, title);
-    }
+    auto* ptz = new QWidget(controls);
+    auto* ptz_layout = new QVBoxLayout(ptz);
+    ptz_layout->addWidget(new QLabel(QStringLiteral("云台功能将在后续阶段接入真实设备"), ptz));
+    ptz_layout->addStretch();
+    controls->addTab(ptz, QStringLiteral("云台"));
+    auto* presets = new QWidget(controls);
+    auto* preset_layout = new QVBoxLayout(presets);
+    preset_layout->setContentsMargins(4, 4, 4, 4);
+    preset_query_->setObjectName(QStringLiteral("preset_query"));
+    preset_layout->addWidget(preset_query_);
+    preset_list_->setObjectName(QStringLiteral("preset_list"));
+    preset_list_->setHeaderLabels({QStringLiteral("编号"), QStringLiteral("名称")});
+    preset_list_->setRootIsDecorated(false);
+    preset_list_->setSelectionMode(QAbstractItemView::SingleSelection);
+    preset_layout->addWidget(preset_list_, 1);
+    preset_result_->setObjectName(QStringLiteral("preset_result"));
+    preset_result_->setTextFormat(Qt::PlainText);
+    preset_result_->setWordWrap(true);
+    preset_layout->addWidget(preset_result_);
+    controls->addTab(presets, QStringLiteral("预置位"));
     controls->setMaximumHeight(240);
     side->addWidget(controls);
     split->addWidget(sidebar);
@@ -231,6 +247,7 @@ monitor_window::monitor_window(QWidget* parent)
     connect(devices_, &QTreeWidget::currentItemChanged, this, [this]() { reset_device_query(); });
     connect(device_info_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceInfo")); });
     connect(device_status_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceStatus")); });
+    connect(preset_query_, &QPushButton::clicked, this, &monitor_window::query_presets);
     reset_device_query();
     connect(stop, &QPushButton::clicked, this, [this]() { selected_->stop(); });
     connect(stop_everything, &QPushButton::clicked, this, &monitor_window::stop_all);
@@ -435,8 +452,11 @@ void monitor_window::reset_device_query()
     const bool available = listing_ && (kind == QStringLiteral("gb_device") || kind == QStringLiteral("gb_channel"));
     device_info_->setEnabled(available);
     device_status_->setEnabled(available);
+    preset_query_->setEnabled(listing_ && kind == QStringLiteral("gb_channel"));
     device_target_->setText(available ? data.value(QStringLiteral("id")).toString() : QStringLiteral("请选择国标设备或通道"));
     device_result_->clear();
+    preset_list_->clear();
+    preset_result_->setText(kind == QStringLiteral("gb_channel") ? QStringLiteral("请查询当前通道的预置位") : QStringLiteral("请选择国标通道"));
 }
 
 void monitor_window::query_device(const QString& command)
@@ -453,6 +473,7 @@ void monitor_window::query_device(const QString& command)
     control_context_ = new QObject(listing_);
     device_info_->setEnabled(false);
     device_status_->setEnabled(false);
+    preset_query_->setEnabled(false);
     device_result_->setPlainText(
         QStringLiteral("等待设备返回%1…").arg(command == QStringLiteral("DeviceInfo") ? QStringLiteral("信息") : QStringLiteral("状态")));
     const auto path = QStringLiteral("/api/devices/%1/query").arg(QString::fromLatin1(QUrl::toPercentEncoding(id)));
@@ -461,10 +482,11 @@ void monitor_window::query_device(const QString& command)
         path,
         {{QStringLiteral("command"), command}},
         control_context_,
-        [this, id, command](platform_response response)
+        [this, id, command, channel = kind == QStringLiteral("gb_channel")](platform_response response)
         {
             device_info_->setEnabled(true);
             device_status_->setEnabled(true);
+            preset_query_->setEnabled(channel);
             if (!response.ok())
             {
                 device_result_->setPlainText(QStringLiteral("查询失败：%1").arg(response.error));
@@ -515,6 +537,69 @@ void monitor_window::query_device(const QString& command)
                 }
             }
             device_result_->setPlainText(lines.join(QLatin1Char('\n')));
+        });
+}
+
+void monitor_window::query_presets()
+{
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    if (!listing_ || data.value(QStringLiteral("kind")).toString() != QStringLiteral("gb_channel"))
+    {
+        return;
+    }
+    const auto id = data.value(QStringLiteral("id")).toString();
+    const auto channel = data.value(QStringLiteral("channel_id")).toString();
+    delete control_context_;
+    control_context_ = new QObject(listing_);
+    device_info_->setEnabled(false);
+    device_status_->setEnabled(false);
+    preset_query_->setEnabled(false);
+    preset_list_->clear();
+    preset_result_->setText(QStringLiteral("等待通道 %1 返回预置位…").arg(channel));
+    const auto path = QStringLiteral("/api/devices/%1/channels/%2/presets/query")
+                          .arg(QString::fromLatin1(QUrl::toPercentEncoding(id)), QString::fromLatin1(QUrl::toPercentEncoding(channel)));
+    client_.request(
+        "POST",
+        path,
+        {},
+        control_context_,
+        [this, id, channel](platform_response response)
+        {
+            device_info_->setEnabled(true);
+            device_status_->setEnabled(true);
+            preset_query_->setEnabled(true);
+            if (!response.ok())
+            {
+                preset_result_->setText(QStringLiteral("预置位查询失败：%1").arg(response.error));
+                return;
+            }
+            const auto result = response.document.object();
+            const auto presets = result.value(QStringLiteral("presets"));
+            if (result.value(QStringLiteral("device_id")).toString() != id || result.value(QStringLiteral("channel_id")).toString() != channel ||
+                result.value(QStringLiteral("command")).toString() != QStringLiteral("PresetQuery") || !presets.isArray())
+            {
+                preset_result_->setText(QStringLiteral("预置位查询失败：平台返回的通道结果无效"));
+                return;
+            }
+            QSet<QString> identifiers;
+            for (const auto& value : presets.toArray())
+            {
+                const auto preset = value.toObject();
+                const auto identifier = preset.value(QStringLiteral("preset_id"));
+                const auto name = preset.value(QStringLiteral("preset_name"));
+                if (!value.isObject() || !identifier.isString() || identifier.toString().isEmpty() || !name.isString() ||
+                    identifiers.contains(identifier.toString()))
+                {
+                    preset_list_->clear();
+                    preset_result_->setText(QStringLiteral("预置位查询失败：平台返回的预置位列表无效"));
+                    return;
+                }
+                identifiers.insert(identifier.toString());
+                new QTreeWidgetItem(preset_list_, {identifier.toString(), name.toString()});
+            }
+            preset_result_->setText(identifiers.isEmpty() ? QStringLiteral("通道 %1 没有预置位").arg(channel)
+                                                          : QStringLiteral("通道 %1 返回 %2 个预置位").arg(channel).arg(identifiers.size()));
         });
 }
 
