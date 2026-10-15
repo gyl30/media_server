@@ -26,7 +26,9 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
 
-选中国标通道后，“预置位”页可查询该通道实际返回的编号和名称；空列表是有效结果。编号保留设备返回的字符串，不按后续控制指令的数值范围截断。查询与基本页请求串行，不缓存、不自动刷新；切换目标立即清空旧列表。该功能要求同版本 signaling 的 `POST /api/devices/{id}/channels/{channel_id}/presets/query`；设置、调用、删除及云台动作尚未实现。详见 [预置位查询验证](../docs/qt_monitor_client_stage3_presets.md)。
+选中国标通道后，“预置位”页可查询该通道实际返回的编号和名称；空列表是有效结果。编号保留设备返回的字符串，不按后续控制指令的数值范围截断。查询与基本页请求串行，不缓存、不自动刷新；切换目标立即清空旧列表。该功能要求同版本 signaling 的 `POST /api/devices/{id}/channels/{channel_id}/presets/query`；设置、调用、删除尚未实现。详见 [预置位查询验证](../docs/qt_monitor_client_stage3_presets.md)。
+
+“云台”页对当前树中明确选中的国标通道提供八方向点动、变倍与 STOP；目标区同时显示父 ID 与通道 ID，不跟随播放画面的选中状态。方向速度 1–255（默认64），变倍1–15（默认4），按钮不自动重复。平台以300毫秒为点动等待上限，随后独立尝试 STOP；手动 STOP 可提前结束等待，重复 STOP 不取消正在发送的 STOP。SIP 200 只是受理，界面始终显示物理结果未确认。当前通道的 STOP 在普通查询或点动等待期间仍可用；它替换当前 UI 等待，原动作最终 STOP 的结果此后只在平台日志可查。切树、刷新或关窗只隔离 UI 回调，不撤销已发 HTTP/SIP。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/ptz`；网络中断或进程崩溃不能保证物理停止，真实设备动作尚待验收。详见 [点动与停止验证](../docs/qt_monitor_client_stage3_ptz.md)。
 
 ## 观看与生命周期
 
@@ -59,7 +61,7 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。后续 PTZ、录像、下载、报警和对讲入口尚未实现，不以禁用按钮冒充功能。
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、预置位写操作、录像、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 

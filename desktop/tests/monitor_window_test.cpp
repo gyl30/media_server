@@ -7,6 +7,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QPointer>
+#include <QSpinBox>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QCheckBox>
@@ -107,7 +108,7 @@ class platform_fixture final : public QObject
                             }
                             socket->setProperty("answered", true);
                             const auto path = bytes.split(' ').value(1);
-                            if (path.endsWith("/query"))
+                            if (path.endsWith("/query") || path.endsWith("/ptz"))
                             {
                                 queries.append(
                                     {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
@@ -175,6 +176,44 @@ QJsonObject preset_query_response(const QString& device, const QString& channel,
     return {{"device_id", device}, {"channel_id", channel}, {"command", "PresetQuery"}, {"sn", 23}, {"presets", presets}};
 }
 
+const QStringList ptz_commands{QStringLiteral("left"),
+                               QStringLiteral("right"),
+                               QStringLiteral("up"),
+                               QStringLiteral("down"),
+                               QStringLiteral("up_left"),
+                               QStringLiteral("up_right"),
+                               QStringLiteral("down_left"),
+                               QStringLiteral("down_right"),
+                               QStringLiteral("zoom_in"),
+                               QStringLiteral("zoom_out"),
+                               QStringLiteral("stop")};
+
+QJsonObject ptz_response(const QString& command, const QString& device = QStringLiteral("34020000001320000001"))
+{
+    QJsonObject response{{"device_id", device},
+                         {"channel_id", "34020000001310000001"},
+                         {"command", command},
+                         {"stop", "accepted"},
+                         {"physical_result", "unconfirmed"}};
+    if (command != QStringLiteral("stop"))
+    {
+        response.insert(QStringLiteral("start"), QStringLiteral("accepted"));
+    }
+    return response;
+}
+
+QPointer<QNetworkReply> pending_ptz(monitor_window& window)
+{
+    for (auto* reply : window.findChildren<QNetworkReply*>())
+    {
+        if (!reply->isFinished() && reply->url().path().endsWith(QStringLiteral("/ptz")))
+        {
+            return reply;
+        }
+    }
+    return {};
+}
+
 QPointer<QNetworkReply> pending_device_query(monitor_window& window)
 {
     for (auto* reply : window.findChildren<QNetworkReply*>())
@@ -218,6 +257,414 @@ class monitor_window_test final : public QObject
     Q_OBJECT
 
    private slots:
+    void ptz_controls_exist()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* speed = window.findChild<QSpinBox*>(QStringLiteral("ptz_speed"));
+        auto* zoom = window.findChild<QSpinBox*>(QStringLiteral("ptz_zoom_speed"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* target = window.findChild<QLabel*>(QStringLiteral("device_query_target"));
+        QVERIFY(tree && speed && zoom && result && target);
+        QCOMPARE(speed->minimum(), 1);
+        QCOMPARE(speed->maximum(), 255);
+        QCOMPARE(speed->value(), 64);
+        QCOMPARE(zoom->minimum(), 1);
+        QCOMPARE(zoom->maximum(), 15);
+        QCOMPARE(zoom->value(), 4);
+        QCOMPARE(result->textFormat(), Qt::PlainText);
+        for (const auto& command : ptz_commands)
+        {
+            auto* button = window.findChild<QPushButton*>(QStringLiteral("ptz_") + command);
+            QVERIFY2(button, qPrintable(command));
+            QVERIFY(!button->autoRepeat());
+            QVERIFY(!button->isEnabled());
+        }
+        QVERIFY(QTest::qWaitFor(
+            [&]
+            {
+                return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2 && tree->topLevelItem(1)->childCount() == 1 &&
+                       tree->topLevelItem(2)->childCount() == 3;
+            },
+            2000));
+        for (auto* item : {tree->topLevelItem(0), tree->topLevelItem(0)->child(0), tree->topLevelItem(1)->child(0), tree->topLevelItem(2)->child(0)})
+        {
+            tree->setCurrentItem(item);
+            for (const auto& command : ptz_commands)
+            {
+                auto* button = window.findChild<QPushButton*>(QStringLiteral("ptz_") + command);
+                QVERIFY(!button->isEnabled());
+                button->click();
+            }
+        }
+        QCOMPARE(api.queries.size(), 0);
+        auto* device = tree->topLevelItem(0)->child(0);
+        QCOMPARE(target->text(), QStringLiteral("请选择国标设备或通道"));
+        tree->setCurrentItem(device);
+        QCOMPARE(target->text(), QStringLiteral("34020000001320000001"));
+        tree->itemDoubleClicked(device, 0);
+        QVERIFY(QTest::qWaitFor([&] { return device->childCount() == 1; }, 2000));
+        tree->setCurrentItem(device->child(0));
+        QCOMPARE(target->text(), QStringLiteral("34020000001320000001\n34020000001310000001"));
+        for (const auto& command : ptz_commands)
+        {
+            QVERIFY(window.findChild<QPushButton*>(QStringLiteral("ptz_") + command)->isEnabled());
+        }
+        QVERIFY(speed->isEnabled() && zoom->isEnabled());
+        window.close();
+    }
+
+    void ptz_parameters_and_acceptance()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* speed = window.findChild<QSpinBox*>(QStringLiteral("ptz_speed"));
+        auto* zoom = window.findChild<QSpinBox*>(QStringLiteral("ptz_zoom_speed"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* stop = window.findChild<QPushButton*>(QStringLiteral("ptz_stop"));
+        QVERIFY(tree && speed && zoom && result && stop);
+        QVERIFY(QTest::qWaitFor([&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2; }, 2000));
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QVERIFY(QTest::qWaitFor([&] { return device->childCount() == 1; }, 2000));
+        tree->setCurrentItem(device->child(0));
+        int count = 0;
+        for (const auto& command : ptz_commands)
+        {
+            if (command == QStringLiteral("right"))
+            {
+                speed->setValue(255);
+            }
+            if (command == QStringLiteral("up"))
+            {
+                speed->setValue(1);
+            }
+            if (command == QStringLiteral("zoom_out"))
+            {
+                zoom->setValue(15);
+            }
+            auto* button = window.findChild<QPushButton*>(QStringLiteral("ptz_") + command);
+            QVERIFY(button);
+            button->click();
+            ++count;
+            QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == count; }, 2000));
+            const auto& request = api.queries.back();
+            QCOMPARE(request.request_line, QByteArray("POST /api/devices/34020000001320000001/channels/34020000001310000001/ptz HTTP/1.1"));
+            QJsonObject expected{{"command", command}};
+            if (command != QStringLiteral("stop"))
+            {
+                expected.insert(QStringLiteral("speed"), command.startsWith(QStringLiteral("zoom_")) ? zoom->value() : speed->value());
+            }
+            QCOMPARE(request.body, expected);
+            QVERIFY(stop->isEnabled());
+            for (const auto& name : {QStringLiteral("device_info_query"),
+                                     QStringLiteral("device_status_query"),
+                                     QStringLiteral("preset_query"),
+                                     QStringLiteral("ptz_left")})
+            {
+                QVERIFY(!window.findChild<QPushButton*>(name)->isEnabled());
+            }
+            const auto reply = pending_ptz(window);
+            QVERIFY(reply);
+            respond(request.socket, 200, QJsonDocument(ptz_response(command)).toJson(QJsonDocument::Compact));
+            QVERIFY(QTest::qWaitFor([&] { return speed->isEnabled(); }, 2000));
+            QVERIFY(result->text().contains(QStringLiteral("未确认")));
+            QVERIFY(!result->text().contains(QStringLiteral("失败")));
+            QVERIFY(QTest::qWaitFor([&] { return reply.isNull(); }, 1000));
+        }
+        QCOMPARE(api.queries.size(), ptz_commands.size());
+        window.close();
+    }
+
+    void ptz_invalid_response_data()
+    {
+        QTest::addColumn<QString>("command");
+        QTest::addColumn<int>("status");
+        QTest::addColumn<QByteArray>("body");
+        for (const auto& key : {QStringLiteral("device_id"),
+                                QStringLiteral("channel_id"),
+                                QStringLiteral("command"),
+                                QStringLiteral("start"),
+                                QStringLiteral("stop"),
+                                QStringLiteral("physical_result")})
+        {
+            auto wrong = ptz_response(QStringLiteral("left"));
+            wrong.insert(key, QStringLiteral("wrong"));
+            QTest::newRow((QStringLiteral("wrong-") + key).toLatin1().constData()) << QStringLiteral("left") << 200 << QJsonDocument(wrong).toJson();
+            auto missing = ptz_response(QStringLiteral("left"));
+            missing.remove(key);
+            QTest::newRow((QStringLiteral("missing-") + key).toLatin1().constData())
+                << QStringLiteral("left") << 200 << QJsonDocument(missing).toJson();
+        }
+        QTest::newRow("invalid-json") << QStringLiteral("left") << 200 << QByteArray("{broken");
+        QTest::newRow("motion-cannot-be-202") << QStringLiteral("left") << 202 << QJsonDocument(ptz_response(QStringLiteral("left"))).toJson();
+        auto stop_wrong = ptz_response(QStringLiteral("stop"));
+        stop_wrong.insert(QStringLiteral("stop"), QStringLiteral("accepted"));
+        QTest::newRow("stop-202-must-be-requested") << QStringLiteral("stop") << 202 << QJsonDocument(stop_wrong).toJson();
+        stop_wrong.insert(QStringLiteral("stop"), QStringLiteral("requested"));
+        QTest::newRow("stop-200-must-be-accepted") << QStringLiteral("stop") << 200 << QJsonDocument(stop_wrong).toJson();
+        for (const int code : {400, 409, 502})
+        {
+            QTest::newRow(QByteArray::number(code).constData()) << QStringLiteral("left") << code << QByteArray(R"({"error":"ptz_failed"})");
+        }
+    }
+
+    void ptz_invalid_response()
+    {
+        QFETCH(QString, command);
+        QFETCH(int, status);
+        QFETCH(QByteArray, body);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* button = window.findChild<QPushButton*>(QStringLiteral("ptz_") + command);
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        QVERIFY(tree && result && button && info);
+        QVERIFY(QTest::qWaitFor([&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2; }, 2000));
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QVERIFY(QTest::qWaitFor([&] { return device->childCount() == 1; }, 2000));
+        tree->setCurrentItem(device->child(0));
+        button->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 2000));
+        const auto reply = pending_ptz(window);
+        QVERIFY(reply);
+        respond(api.queries[0].socket, status, body);
+        QVERIFY(QTest::qWaitFor([&] { return info->isEnabled(); }, 2000));
+        QVERIFY2(result->text().contains(QStringLiteral("失败")), qPrintable(result->text()));
+        QVERIFY(window.findChild<QPushButton*>(QStringLiteral("ptz_stop"))->isEnabled());
+        QVERIFY(QTest::qWaitFor([&] { return reply.isNull(); }, 1000));
+        window.close();
+    }
+
+    void ptz_stop_preempts_pending_data()
+    {
+        QTest::addColumn<QString>("old_command");
+        QTest::addColumn<int>("old_status");
+        for (const auto& command :
+             {QStringLiteral("DeviceInfo"), QStringLiteral("DeviceStatus"), QStringLiteral("PresetQuery"), QStringLiteral("left")})
+        {
+            QTest::newRow((command + QStringLiteral("-success")).toLatin1().constData()) << command << 200;
+            QTest::newRow((command + QStringLiteral("-error")).toLatin1().constData()) << command << 502;
+        }
+    }
+
+    void ptz_stop_preempts_pending()
+    {
+        QFETCH(QString, old_command);
+        QFETCH(int, old_status);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* stop = window.findChild<QPushButton*>(QStringLiteral("ptz_stop"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* info_result = window.findChild<QPlainTextEdit*>(QStringLiteral("device_query_result"));
+        auto* preset_result = window.findChild<QLabel*>(QStringLiteral("preset_result"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        QVERIFY(tree && stop && result && info_result && preset_result && info);
+        QVERIFY(QTest::qWaitFor([&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2; }, 2000));
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QVERIFY(QTest::qWaitFor([&] { return device->childCount() == 1; }, 2000));
+        tree->setCurrentItem(device->child(0));
+        const auto name = old_command == QStringLiteral("DeviceInfo")     ? QStringLiteral("device_info_query")
+                          : old_command == QStringLiteral("DeviceStatus") ? QStringLiteral("device_status_query")
+                          : old_command == QStringLiteral("PresetQuery")  ? QStringLiteral("preset_query")
+                                                                          : QStringLiteral("ptz_left");
+        window.findChild<QPushButton*>(name)->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 2000));
+        const auto old_reply = old_command == QStringLiteral("left") ? pending_ptz(window) : pending_device_query(window);
+        QVERIFY(old_reply);
+        QVERIFY(stop->isEnabled() && !info->isEnabled());
+        window.findChild<QPushButton*>(QStringLiteral("ptz_right"))->click();
+        QCOMPARE(api.queries.size(), 1);
+        stop->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 2; }, 2000));
+        QCOMPARE(api.queries[1].body, QJsonObject({{"command", "stop"}}));
+        QVERIFY(info_result->toPlainText().isEmpty());
+        QVERIFY(!preset_result->text().contains(QStringLiteral("等待")));
+        const auto waiting = result->text();
+        const auto old_body =
+            old_command == QStringLiteral("PresetQuery")
+                ? QJsonDocument(preset_query_response(QStringLiteral("34020000001320000001"),
+                                                      QStringLiteral("34020000001310000001"),
+                                                      {QJsonObject{{"preset_id", "stale-control"}, {"preset_name", "stale-control"}}}))
+                      .toJson()
+            : old_command == QStringLiteral("left")
+                ? QJsonDocument(ptz_response(old_command)).toJson()
+                : device_query_response(QStringLiteral("34020000001320000001"), old_command, QStringLiteral("stale-control"));
+        respond(api.queries[0].socket, old_status, old_status == 200 ? old_body : QByteArray(R"({"error":"stale-control"})"));
+        QVERIFY(QTest::qWaitFor([&] { return old_reply.isNull(); }, 1000));
+        QCOMPARE(result->text(), waiting);
+        QVERIFY(!info->isEnabled());
+        QVERIFY(stop->isEnabled());
+        QVERIFY(info_result->toPlainText().isEmpty());
+        QCOMPARE(window.findChild<QTreeWidget*>(QStringLiteral("preset_list"))->topLevelItemCount(), 0);
+        auto response = ptz_response(QStringLiteral("stop"));
+        response.insert(QStringLiteral("stop"), QStringLiteral("requested"));
+        respond(api.queries[1].socket, 202, QJsonDocument(response).toJson());
+        QVERIFY(QTest::qWaitFor([&] { return info->isEnabled(); }, 2000));
+        QVERIFY2(result->text().contains(QStringLiteral("未确认")) && !result->text().contains(QStringLiteral("失败")), qPrintable(result->text()));
+        QVERIFY(result->text().contains(QStringLiteral("已请求停止")) && result->text().contains(QStringLiteral("日志")));
+        QCOMPARE(api.queries.size(), 2);
+        window.close();
+    }
+
+    void ptz_repeated_stop_keeps_latest_result()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* stop = window.findChild<QPushButton*>(QStringLiteral("ptz_stop"));
+        auto* result = window.findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* left = window.findChild<QPushButton*>(QStringLiteral("ptz_left"));
+        QVERIFY(tree && stop && result && left);
+        QVERIFY(QTest::qWaitFor([&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2; }, 2000));
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->itemDoubleClicked(device, 0);
+        QVERIFY(QTest::qWaitFor([&] { return device->childCount() == 1; }, 2000));
+        tree->setCurrentItem(device->child(0));
+        stop->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 2000));
+        const auto first = pending_ptz(window);
+        QVERIFY(first);
+        respond(api.queries[0].socket, 502, R"({"error":"stale-first-stop"})");
+        stop->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 2; }, 2000));
+        QVERIFY(QTest::qWaitFor([&] { return first.isNull(); }, 1000));
+        QVERIFY(!left->isEnabled() && stop->isEnabled());
+        QVERIFY(!result->text().contains(QStringLiteral("stale-first-stop")) && !result->text().contains(QStringLiteral("失败")));
+        QCOMPARE(api.queries[0].body, QJsonObject({{"command", "stop"}}));
+        QCOMPARE(api.queries[1].body, QJsonObject({{"command", "stop"}}));
+        respond(api.queries[1].socket, 200, QJsonDocument(ptz_response(QStringLiteral("stop"))).toJson());
+        QVERIFY(QTest::qWaitFor([&] { return left->isEnabled(); }, 2000));
+        QVERIFY(result->text().contains(QStringLiteral("未确认")) && !result->text().contains(QStringLiteral("失败")));
+        window.close();
+    }
+
+    void ptz_target_reset_isolates_late_reply_data()
+    {
+        QTest::addColumn<QString>("action");
+        QTest::addColumn<QString>("command");
+        QTest::addColumn<int>("old_status");
+        for (const auto& action : {QStringLiteral("a-to-b"),
+                                   QStringLiteral("a-to-b-to-a"),
+                                   QStringLiteral("refresh"),
+                                   QStringLiteral("platform"),
+                                   QStringLiteral("close"),
+                                   QStringLiteral("destruct")})
+        {
+            QTest::newRow((action + QStringLiteral("-motion-success")).toLatin1().constData()) << action << QStringLiteral("left") << 200;
+            QTest::newRow((action + QStringLiteral("-stop-error")).toLatin1().constData()) << action << QStringLiteral("stop") << 502;
+        }
+        QTest::newRow("a-to-b-to-a-stop-success") << QStringLiteral("a-to-b-to-a") << QStringLiteral("stop") << 200;
+        QTest::newRow("close-motion-error") << QStringLiteral("close") << QStringLiteral("left") << 502;
+    }
+
+    void ptz_target_reset_isolates_late_reply()
+    {
+        QFETCH(QString, action);
+        QFETCH(QString, command);
+        QFETCH(int, old_status);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        auto window = std::make_unique<monitor_window>();
+        window->show();
+        auto* tree = window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* refresh = window->findChild<QPushButton*>(QStringLiteral("refresh_devices"));
+        auto* address = window->findChild<QLineEdit*>(QStringLiteral("platform_address"));
+        QPointer<QLabel> result = window->findChild<QLabel*>(QStringLiteral("ptz_result"));
+        auto* stop = window->findChild<QPushButton*>(QStringLiteral("ptz_stop"));
+        auto* left = window->findChild<QPushButton*>(QStringLiteral("ptz_left"));
+        QVERIFY(tree && refresh && address && result && stop && left);
+        QVERIFY(QTest::qWaitFor([&] { return tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2; }, 2000));
+        auto* a = tree->topLevelItem(0)->child(0);
+        auto* b = tree->topLevelItem(0)->child(1);
+        tree->itemDoubleClicked(a, 0);
+        tree->itemDoubleClicked(b, 0);
+        QVERIFY(QTest::qWaitFor([&] { return a->childCount() == 1 && b->childCount() == 1; }, 2000));
+        tree->setCurrentItem(a->child(0));
+        window->findChild<QPushButton*>(QStringLiteral("ptz_") + command)->click();
+        QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 1; }, 2000));
+        const auto reply = pending_ptz(*window);
+        const auto peer = api.queries[0].socket;
+        QVERIFY(reply && peer);
+        platform_fixture second(true);
+        const bool selection = action.startsWith(QStringLiteral("a-to-b"));
+        QString target;
+        if (selection)
+        {
+            tree->setCurrentItem(b->child(0));
+            target = QStringLiteral("34020000001320000002");
+            if (action == QStringLiteral("a-to-b-to-a"))
+            {
+                tree->setCurrentItem(a->child(0));
+                target = QStringLiteral("34020000001320000001");
+            }
+            left->click();
+            QVERIFY(QTest::qWaitFor([&] { return api.queries.size() == 2; }, 2000));
+            QCOMPARE(api.queries[1].path, QByteArray("/api/devices/") + target.toLatin1() + "/channels/34020000001310000001/ptz");
+        }
+        else if (action == QStringLiteral("destruct"))
+        {
+            window.reset();
+            QVERIFY(result.isNull() && reply.isNull());
+        }
+        else if (action == QStringLiteral("close"))
+        {
+            window->close();
+        }
+        else
+        {
+            if (action == QStringLiteral("platform"))
+            {
+                QVERIFY(second.start());
+                address->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+            }
+            refresh->click();
+        }
+        const auto after_reset = result ? result->text() : QString{};
+        if (peer && peer->state() == QAbstractSocket::ConnectedState)
+        {
+            respond(
+                peer, old_status, old_status == 200 ? QJsonDocument(ptz_response(command)).toJson() : QByteArray(R"({"error":"stale-reset-ptz"})"));
+        }
+        QVERIFY(QTest::qWaitFor([&] { return reply.isNull() && peer.isNull(); }, 1000));
+        QCOMPARE(api.queries.size(), selection ? 2 : 1);
+        QCOMPARE(second.queries.size(), 0);
+        if (!result)
+        {
+            return;
+        }
+        QCOMPARE(result->text(), after_reset);
+        QVERIFY(!result->text().contains(QStringLiteral("stale-reset-ptz")));
+        if (selection)
+        {
+            QVERIFY(!left->isEnabled() && stop->isEnabled());
+            respond(api.queries[1].socket, 200, QJsonDocument(ptz_response(QStringLiteral("left"), target)).toJson());
+            QVERIFY(QTest::qWaitFor([&] { return left->isEnabled(); }, 2000));
+            QVERIFY(result->text().contains(QStringLiteral("未确认")) && !result->text().contains(QStringLiteral("失败")));
+        }
+        else if (action != QStringLiteral("close"))
+        {
+            QVERIFY(!stop->isEnabled());
+        }
+        else
+        {
+            QVERIFY(!window->isVisible());
+        }
+        window.reset();
+        QVERIFY(result.isNull());
+    }
+
     void init()
     {
         settings_ = std::make_unique<QTemporaryDir>();
@@ -862,6 +1309,12 @@ class monitor_window_test final : public QObject
         QPointer<QTcpSocket> preset_peer;
         QPointer<QPushButton> preset_button;
         QPointer<QLabel> preset_result;
+        platform_fixture ptz_api(true);
+        std::unique_ptr<monitor_window> ptz_window;
+        QPointer<QNetworkReply> ptz_reply;
+        QPointer<QTcpSocket> ptz_peer;
+        QPointer<QPushButton> ptz_button;
+        QPointer<QLabel> ptz_result;
         if (http_status == 0)
         {
             const auto original_address = window.findChild<QLineEdit*>(QStringLiteral("platform_address"))->text();
@@ -885,6 +1338,25 @@ class monitor_window_test final : public QObject
             QCOMPARE(window.findChild<QLineEdit*>(QStringLiteral("platform_address"))->text(), original_address);
             QCOMPARE(reply->url().port(), int(api.server.serverPort()));
             QCOMPARE(preset_reply->url().port(), int(preset_api.server.serverPort()));
+            // 第三个隔离窗口复用同一真实超时窗口，不新增串行10秒等待。
+            QVERIFY(ptz_api.start());
+            ptz_window = std::make_unique<monitor_window>();
+            auto* ptz_tree = ptz_window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+            ptz_button = ptz_window->findChild<QPushButton*>(QStringLiteral("ptz_left"));
+            ptz_result = ptz_window->findChild<QLabel*>(QStringLiteral("ptz_result"));
+            QVERIFY(ptz_tree && ptz_button && ptz_result);
+            QVERIFY(QTest::qWaitFor([&] { return ptz_tree->topLevelItemCount() == 3 && ptz_tree->topLevelItem(0)->childCount() == 2; }, 2000));
+            auto* ptz_device = ptz_tree->topLevelItem(0)->child(0);
+            ptz_tree->itemDoubleClicked(ptz_device, 0);
+            QVERIFY(QTest::qWaitFor([&] { return ptz_device->childCount() == 1; }, 2000));
+            ptz_tree->setCurrentItem(ptz_device->child(0));
+            ptz_button->click();
+            QVERIFY(QTest::qWaitFor([&] { return ptz_api.queries.size() == 1; }, 2000));
+            ptz_reply = pending_ptz(*ptz_window);
+            ptz_peer = ptz_api.queries[0].socket;
+            QVERIFY(ptz_reply && ptz_peer);
+            QCOMPARE(ptz_reply->url().port(), int(ptz_api.server.serverPort()));
+            QCOMPARE(window.findChild<QLineEdit*>(QStringLiteral("platform_address"))->text(), original_address);
             QSettings().setValue(QStringLiteral("platform_url"), original_address);
         }
         QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 12'000);
@@ -908,6 +1380,17 @@ class monitor_window_test final : public QObject
             QTRY_VERIFY_WITH_TIMEOUT(preset_reply.isNull() && preset_peer.isNull(), 1000);
             preset_window.reset();
             QVERIFY(preset_button.isNull() && preset_result.isNull());
+        }
+        if (ptz_window)
+        {
+            QVERIFY(QTest::qWaitFor([&] { return ptz_button->isEnabled(); }, 2000));
+            QVERIFY(ptz_result->text().contains(QStringLiteral("timed out")) && ptz_result->text().contains(QStringLiteral("未确认")));
+            QVERIFY(ptz_window->findChild<QPushButton*>(QStringLiteral("ptz_stop"))->isEnabled());
+            QVERIFY(ptz_window->findChild<QPushButton*>(QStringLiteral("device_info_query"))->isEnabled());
+            QVERIFY(ptz_window->findChild<QPushButton*>(QStringLiteral("preset_query"))->isEnabled());
+            QVERIFY(QTest::qWaitFor([&] { return ptz_reply.isNull() && ptz_peer.isNull(); }, 1000));
+            ptz_window.reset();
+            QVERIFY(ptz_button.isNull() && ptz_result.isNull());
         }
         window.close();
     }

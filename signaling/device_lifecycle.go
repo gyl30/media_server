@@ -8,6 +8,11 @@ import (
 // Caller holds mu: the fence and session snapshot must precede new play or REGISTER.
 func (s *liveService) beginDeviceStopLocked(deviceID string) []*liveSession {
 	s.stoppingDevices[deviceID] = struct{}{}
+	for key, cancel := range s.ptzOwners {
+		if key.deviceID == deviceID {
+			cancel()
+		}
+	}
 	var sessions []*liveSession
 	for _, session := range s.sessions {
 		if session.key.deviceID == deviceID {

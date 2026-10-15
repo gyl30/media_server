@@ -9,6 +9,7 @@
 #include "desktop/platform_client.h"
 
 class QLabel;
+class QSpinBox;
 class QLineEdit;
 class QComboBox;
 class QGridLayout;
@@ -43,8 +44,10 @@ class monitor_window final : public QMainWindow
     void take_snapshot();
     void query_catalog();
     void reset_device_query();
+    void set_control_busy(bool busy);
     void query_device(const QString& command);
     void query_presets();
+    void control_ptz(const QString& command);
 
    private:
     platform_client client_;
@@ -65,6 +68,11 @@ class monitor_window final : public QMainWindow
     QPushButton* preset_query_;
     QTreeWidget* preset_list_;
     QLabel* preset_result_;
+    std::array<QPushButton*, 10> ptz_actions_{};
+    QPushButton* ptz_stop_;
+    QSpinBox* ptz_speed_;
+    QSpinBox* ptz_zoom_speed_;
+    QLabel* ptz_result_;
     QTreeWidget* devices_;
     QLineEdit* address_;
     QLabel* connection_;

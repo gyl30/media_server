@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QTimer>
 #include <QVariant>
+#include <QSpinBox>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLineEdit>
@@ -52,6 +53,10 @@ monitor_window::monitor_window(QWidget* parent)
       preset_query_(new QPushButton(QStringLiteral("查询预置位"), this)),
       preset_list_(new QTreeWidget(this)),
       preset_result_(new QLabel(this)),
+      ptz_stop_(new QPushButton(QStringLiteral("停止"), this)),
+      ptz_speed_(new QSpinBox(this)),
+      ptz_zoom_speed_(new QSpinBox(this)),
+      ptz_result_(new QLabel(this)),
       devices_(new QTreeWidget(this)),
       address_(new QLineEdit(this)),
       connection_(new QLabel(this))
@@ -154,13 +159,14 @@ monitor_window::monitor_window(QWidget* parent)
     devices_->setDragDropMode(QAbstractItemView::DragOnly);
     devices_->setSelectionMode(QAbstractItemView::SingleSelection);
     side->addWidget(devices_, 1);
+    device_target_->setObjectName(QStringLiteral("device_query_target"));
+    device_target_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    device_target_->setWordWrap(true);
+    side->addWidget(device_target_);
     auto* controls = new QTabWidget(sidebar);
     auto* basic = new QWidget(controls);
     auto* basic_layout = new QVBoxLayout(basic);
     basic_layout->setContentsMargins(4, 4, 4, 4);
-    device_target_->setObjectName(QStringLiteral("device_query_target"));
-    device_target_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    basic_layout->addWidget(device_target_);
     auto* query_buttons = new QHBoxLayout;
     device_info_->setObjectName(QStringLiteral("device_info_query"));
     device_status_->setObjectName(QStringLiteral("device_status_query"));
@@ -173,8 +179,64 @@ monitor_window::monitor_window(QWidget* parent)
     controls->addTab(basic, QStringLiteral("基本"));
     auto* ptz = new QWidget(controls);
     auto* ptz_layout = new QVBoxLayout(ptz);
-    ptz_layout->addWidget(new QLabel(QStringLiteral("云台功能将在后续阶段接入真实设备"), ptz));
-    ptz_layout->addStretch();
+    ptz_layout->setContentsMargins(4, 4, 4, 4);
+    auto* directions = new QGridLayout;
+    const QString commands[] = {QStringLiteral("up_left"),
+                                QStringLiteral("up"),
+                                QStringLiteral("up_right"),
+                                QStringLiteral("left"),
+                                QStringLiteral("right"),
+                                QStringLiteral("down_left"),
+                                QStringLiteral("down"),
+                                QStringLiteral("down_right"),
+                                QStringLiteral("zoom_in"),
+                                QStringLiteral("zoom_out")};
+    const QString labels[] = {QStringLiteral("↖"),
+                              QStringLiteral("↑"),
+                              QStringLiteral("↗"),
+                              QStringLiteral("←"),
+                              QStringLiteral("→"),
+                              QStringLiteral("↙"),
+                              QStringLiteral("↓"),
+                              QStringLiteral("↘"),
+                              QStringLiteral("变倍 +"),
+                              QStringLiteral("变倍 −")};
+    for (std::size_t index = 0; index < ptz_actions_.size(); ++index)
+    {
+        auto* button = new QPushButton(labels[index], ptz);
+        button->setObjectName(QStringLiteral("ptz_%1").arg(commands[index]));
+        button->setToolTip(QStringLiteral("平台最多等待 300 毫秒，随后独立尝试 STOP；网络中断时不保证物理停止"));
+        ptz_actions_[index] = button;
+        const auto position = static_cast<int>(index < 4 ? index : index + 1);
+        if (index < 8)
+        {
+            directions->addWidget(button, position / 3, position % 3);
+        }
+        connect(button, &QPushButton::clicked, this, [this, command = commands[index]]() { control_ptz(command); });
+    }
+    ptz_stop_->setObjectName(QStringLiteral("ptz_stop"));
+    directions->addWidget(ptz_stop_, 1, 1);
+    ptz_layout->addLayout(directions);
+    auto* zoom = new QHBoxLayout;
+    zoom->addWidget(ptz_actions_[8]);
+    zoom->addWidget(ptz_actions_[9]);
+    ptz_layout->addLayout(zoom);
+    auto* speeds = new QHBoxLayout;
+    ptz_speed_->setObjectName(QStringLiteral("ptz_speed"));
+    ptz_speed_->setRange(1, 255);
+    ptz_speed_->setValue(64);
+    ptz_zoom_speed_->setObjectName(QStringLiteral("ptz_zoom_speed"));
+    ptz_zoom_speed_->setRange(1, 15);
+    ptz_zoom_speed_->setValue(4);
+    speeds->addWidget(new QLabel(QStringLiteral("方向速度"), ptz));
+    speeds->addWidget(ptz_speed_);
+    speeds->addWidget(new QLabel(QStringLiteral("变倍速度"), ptz));
+    speeds->addWidget(ptz_zoom_speed_);
+    ptz_layout->addLayout(speeds);
+    ptz_result_->setObjectName(QStringLiteral("ptz_result"));
+    ptz_result_->setTextFormat(Qt::PlainText);
+    ptz_result_->setWordWrap(true);
+    ptz_layout->addWidget(ptz_result_);
     controls->addTab(ptz, QStringLiteral("云台"));
     auto* presets = new QWidget(controls);
     auto* preset_layout = new QVBoxLayout(presets);
@@ -248,6 +310,7 @@ monitor_window::monitor_window(QWidget* parent)
     connect(device_info_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceInfo")); });
     connect(device_status_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceStatus")); });
     connect(preset_query_, &QPushButton::clicked, this, &monitor_window::query_presets);
+    connect(ptz_stop_, &QPushButton::clicked, this, [this]() { control_ptz(QStringLiteral("stop")); });
     reset_device_query();
     connect(stop, &QPushButton::clicked, this, [this]() { selected_->stop(); });
     connect(stop_everything, &QPushButton::clicked, this, &monitor_window::stop_all);
@@ -449,14 +512,34 @@ void monitor_window::reset_device_query()
     const auto* item = devices_->currentItem();
     const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
     const auto kind = data.value(QStringLiteral("kind")).toString();
-    const bool available = listing_ && (kind == QStringLiteral("gb_device") || kind == QStringLiteral("gb_channel"));
-    device_info_->setEnabled(available);
-    device_status_->setEnabled(available);
-    preset_query_->setEnabled(listing_ && kind == QStringLiteral("gb_channel"));
-    device_target_->setText(available ? data.value(QStringLiteral("id")).toString() : QStringLiteral("请选择国标设备或通道"));
+    set_control_busy(false);
+    const auto id = data.value(QStringLiteral("id")).toString();
+    device_target_->setText(kind == QStringLiteral("gb_channel")  ? id + QLatin1Char('\n') + data.value(QStringLiteral("channel_id")).toString()
+                            : kind == QStringLiteral("gb_device") ? id
+                                                                  : QStringLiteral("请选择国标设备或通道"));
     device_result_->clear();
     preset_list_->clear();
     preset_result_->setText(kind == QStringLiteral("gb_channel") ? QStringLiteral("请查询当前通道的预置位") : QStringLiteral("请选择国标通道"));
+    ptz_result_->setText(kind == QStringLiteral("gb_channel") ? QStringLiteral("点动等待上限 300 毫秒；物理结果需现场确认")
+                                                              : QStringLiteral("请选择国标通道"));
+}
+
+void monitor_window::set_control_busy(bool busy)
+{
+    const auto* item = devices_->currentItem();
+    const auto kind = item ? item->data(0, Qt::UserRole).toMap().value(QStringLiteral("kind")).toString() : QString{};
+    const bool channel = listing_ && kind == QStringLiteral("gb_channel");
+    const bool device = listing_ && (channel || kind == QStringLiteral("gb_device"));
+    device_info_->setEnabled(device && !busy);
+    device_status_->setEnabled(device && !busy);
+    preset_query_->setEnabled(channel && !busy);
+    for (auto* button : ptz_actions_)
+    {
+        button->setEnabled(channel && !busy);
+    }
+    ptz_speed_->setEnabled(channel && !busy);
+    ptz_zoom_speed_->setEnabled(channel && !busy);
+    ptz_stop_->setEnabled(channel);
 }
 
 void monitor_window::query_device(const QString& command)
@@ -471,9 +554,7 @@ void monitor_window::query_device(const QString& command)
     const auto id = data.value(QStringLiteral("id")).toString();
     delete control_context_;
     control_context_ = new QObject(listing_);
-    device_info_->setEnabled(false);
-    device_status_->setEnabled(false);
-    preset_query_->setEnabled(false);
+    set_control_busy(true);
     device_result_->setPlainText(
         QStringLiteral("等待设备返回%1…").arg(command == QStringLiteral("DeviceInfo") ? QStringLiteral("信息") : QStringLiteral("状态")));
     const auto path = QStringLiteral("/api/devices/%1/query").arg(QString::fromLatin1(QUrl::toPercentEncoding(id)));
@@ -482,11 +563,9 @@ void monitor_window::query_device(const QString& command)
         path,
         {{QStringLiteral("command"), command}},
         control_context_,
-        [this, id, command, channel = kind == QStringLiteral("gb_channel")](platform_response response)
+        [this, id, command](platform_response response)
         {
-            device_info_->setEnabled(true);
-            device_status_->setEnabled(true);
-            preset_query_->setEnabled(channel);
+            set_control_busy(false);
             if (!response.ok())
             {
                 device_result_->setPlainText(QStringLiteral("查询失败：%1").arg(response.error));
@@ -552,9 +631,7 @@ void monitor_window::query_presets()
     const auto channel = data.value(QStringLiteral("channel_id")).toString();
     delete control_context_;
     control_context_ = new QObject(listing_);
-    device_info_->setEnabled(false);
-    device_status_->setEnabled(false);
-    preset_query_->setEnabled(false);
+    set_control_busy(true);
     preset_list_->clear();
     preset_result_->setText(QStringLiteral("等待通道 %1 返回预置位…").arg(channel));
     const auto path = QStringLiteral("/api/devices/%1/channels/%2/presets/query")
@@ -566,9 +643,7 @@ void monitor_window::query_presets()
         control_context_,
         [this, id, channel](platform_response response)
         {
-            device_info_->setEnabled(true);
-            device_status_->setEnabled(true);
-            preset_query_->setEnabled(true);
+            set_control_busy(false);
             if (!response.ok())
             {
                 preset_result_->setText(QStringLiteral("预置位查询失败：%1").arg(response.error));
@@ -601,6 +676,62 @@ void monitor_window::query_presets()
             preset_result_->setText(identifiers.isEmpty() ? QStringLiteral("通道 %1 没有预置位").arg(channel)
                                                           : QStringLiteral("通道 %1 返回 %2 个预置位").arg(channel).arg(identifiers.size()));
         });
+}
+
+void monitor_window::control_ptz(const QString& command)
+{
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    if (!listing_ || data.value(QStringLiteral("kind")).toString() != QStringLiteral("gb_channel"))
+    {
+        return;
+    }
+    const auto id = data.value(QStringLiteral("id")).toString();
+    const auto channel = data.value(QStringLiteral("channel_id")).toString();
+    delete control_context_;
+    control_context_ = new QObject(listing_);
+    set_control_busy(true);
+    device_result_->clear();
+    preset_result_->clear();
+    ptz_result_->setText(command == QStringLiteral("stop") ? QStringLiteral("正在请求停止，结果未确认…")
+                                                           : QStringLiteral("正在请求点动及 STOP，结果未确认…"));
+    QJsonObject body{{QStringLiteral("command"), command}};
+    if (command != QStringLiteral("stop"))
+    {
+        body.insert(QStringLiteral("speed"), command.startsWith(QStringLiteral("zoom_")) ? ptz_zoom_speed_->value() : ptz_speed_->value());
+    }
+    const auto path = QStringLiteral("/api/devices/%1/channels/%2/ptz")
+                          .arg(QString::fromLatin1(QUrl::toPercentEncoding(id)), QString::fromLatin1(QUrl::toPercentEncoding(channel)));
+    client_.request("POST",
+                    path,
+                    body,
+                    control_context_,
+                    [this, id, channel, command](platform_response response)
+                    {
+                        set_control_busy(false);
+                        if (!response.ok())
+                        {
+                            ptz_result_->setText(QStringLiteral("云台请求失败：%1；物理结果未确认").arg(response.error));
+                            return;
+                        }
+                        const auto result = response.document.object();
+                        const bool requested = response.status == 202 && command == QStringLiteral("stop") &&
+                                               result.value(QStringLiteral("stop")).toString() == QStringLiteral("requested");
+                        const bool accepted =
+                            response.status == 200 && result.value(QStringLiteral("stop")).toString() == QStringLiteral("accepted") &&
+                            (command == QStringLiteral("stop") || result.value(QStringLiteral("start")).toString() == QStringLiteral("accepted"));
+                        if (result.value(QStringLiteral("device_id")).toString() != id ||
+                            result.value(QStringLiteral("channel_id")).toString() != channel ||
+                            result.value(QStringLiteral("command")).toString() != command ||
+                            result.value(QStringLiteral("physical_result")).toString() != QStringLiteral("unconfirmed") || (!requested && !accepted))
+                        {
+                            ptz_result_->setText(QStringLiteral("云台请求失败：平台返回的控制结果无效；物理结果未确认"));
+                            return;
+                        }
+                        ptz_result_->setText(requested ? QStringLiteral("已请求停止，结果未确认；最终 STOP 结果请查看平台日志")
+                                             : command == QStringLiteral("stop") ? QStringLiteral("STOP 已受理，物理结果未确认")
+                                                                                 : QStringLiteral("点动与 STOP 均已受理，物理结果未确认"));
+                    });
 }
 
 void monitor_window::reload_devices()

@@ -65,6 +65,18 @@ type deviceQueryPeer struct {
 
 func newDeviceQueryPeer(t *testing.T, infrastructure *infrastructureServer, handler func(manscdpQuery, *sip.Request, sip.ServerTransaction, *deviceQueryPeer)) *deviceQueryPeer {
 	t.Helper()
+	return newDeviceMessagePeer(t, infrastructure, func(request *sip.Request, transaction sip.ServerTransaction, peer *deviceQueryPeer) {
+		var query manscdpQuery
+		if err := xml.Unmarshal(request.Body(), &query); err != nil {
+			t.Error(err)
+			return
+		}
+		handler(query, request, transaction, peer)
+	})
+}
+
+func newDeviceMessagePeer(t *testing.T, infrastructure *infrastructureServer, handler func(*sip.Request, sip.ServerTransaction, *deviceQueryPeer)) *deviceQueryPeer {
+	t.Helper()
 	platformListener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -100,12 +112,7 @@ func newDeviceQueryPeer(t *testing.T, infrastructure *infrastructureServer, hand
 	}
 	peer := &deviceQueryPeer{client: client, platform: platformListener.LocalAddr().String(), platformID: infrastructure.live.sip.cfg.sipID}
 	server.OnMessage(func(request *sip.Request, transaction sip.ServerTransaction) {
-		var query manscdpQuery
-		if err := xml.Unmarshal(request.Body(), &query); err != nil {
-			t.Error(err)
-			return
-		}
-		handler(query, request, transaction, peer)
+		handler(request, transaction, peer)
 	})
 	done := make(chan error, 1)
 	go func() { done <- server.ServeUDP(listener) }()

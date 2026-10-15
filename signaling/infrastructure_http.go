@@ -75,6 +75,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/devices/{device_id}/catalog", s.handleCatalogQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/query", s.handleDeviceQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/presets/query", s.handleDeviceQuery)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/ptz", s.handlePTZ)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/play", s.handleChannelPlay)
 	routes.HandleFunc("POST /api/play", s.handlePlay)
 	routes.HandleFunc("POST /internal/verify", s.handleVerify)
@@ -118,6 +119,11 @@ func (s *infrastructureServer) serve(ctx context.Context) error {
 				s.tokens.expire(now)
 			}
 		}
+		s.live.mu.Lock()
+		for _, cancel := range s.live.ptzOwners {
+			cancel()
+		}
+		s.live.mu.Unlock()
 		shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := server.Shutdown(shutdownContext); err != nil {
 			_ = server.Close()

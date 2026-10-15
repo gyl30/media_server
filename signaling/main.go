@@ -38,12 +38,15 @@ func run(ctx context.Context, args []string, logger *slog.Logger) error {
 	logger.Info("SIP UDP listening", "address", cfg.sipListen)
 	logger.Info("internal HTTP listening", "address", cfg.httpListen)
 	runContext, cancel := context.WithCancel(ctx)
+	sipContext, cancelSIP := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelSIP()
 	results := make(chan error, 2)
-	go func() { results <- server.serve(runContext) }()
+	go func() { results <- server.serve(sipContext) }()
 	go func() { results <- infrastructure.serve(runContext) }()
 	go infrastructure.resumeSources(runContext)
 	first := <-results
 	cancel()
+	cancelSIP()
 	second := <-results
 	infrastructure.shutdownRTSPPulls(context.Background())
 	live.shutdown(context.Background())

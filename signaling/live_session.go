@@ -69,6 +69,7 @@ type liveService struct {
 	sessions        map[liveKey]*liveSession
 	tokens          *streamTokens
 	stoppingDevices map[string]struct{}
+	ptzOwners       map[liveKey]context.CancelFunc
 	sip             *sipServer
 	media           *mediaServerHTTPClient
 	ssrcs           *ssrcAllocator
@@ -88,6 +89,7 @@ func newLiveService(
 	service := &liveService{
 		sessions:        make(map[liveKey]*liveSession),
 		stoppingDevices: make(map[string]struct{}),
+		ptzOwners:       make(map[liveKey]context.CancelFunc),
 		sip:             sipServer,
 		media:           media,
 		ssrcs:           ssrcs,
