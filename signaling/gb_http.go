@@ -154,7 +154,7 @@ func (s *infrastructureServer) handleCatalogQuery(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusConflict, "device_offline")
 		return
 	}
-	sn := int(s.live.sip.catalogSN.Add(1))
+	sn := int(s.live.sip.messageSN.Add(1))
 	s.live.sip.channels.beginQuery(deviceID, sn)
 	s.live.mu.Unlock()
 	ctx, cancel := context.WithTimeout(request.Context(), 5*time.Second)

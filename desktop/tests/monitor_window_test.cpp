@@ -3,6 +3,7 @@
 #include <QMap>
 #include <QTest>
 #include <QList>
+#include <QLabel>
 #include <QTimer>
 #include <QVariant>
 #include <QPointer>
@@ -26,6 +27,7 @@
 #include <QJsonDocument>
 #include <QNetworkReply>
 #include <QTemporaryDir>
+#include <QPlainTextEdit>
 #include <QAbstractSocket>
 #include <QDragEnterEvent>
 #include <QCoreApplication>
@@ -45,7 +47,7 @@ void respond(QTcpSocket* socket, int status, const QByteArray& body)
     socket->disconnectFromHost();
 }
 
-// 仅列出三个被动设备；播放回复由每个用例在真实 TCP 屏障处控制。
+// 原播放列表保持不变；查询用例另启用 GB 设备，回复由真实 TCP 屏障控制。
 class platform_fixture final : public QObject
 {
    public:
@@ -55,13 +57,21 @@ class platform_fixture final : public QObject
         QString id;
     };
 
-    platform_fixture()
+    struct pending_query
+    {
+        QPointer<QTcpSocket> socket;
+        QByteArray request_line;
+        QByteArray path;
+        QJsonObject body;
+    };
+
+    explicit platform_fixture(bool gb_devices = false)
     {
         connect(
             &server,
             &QTcpServer::newConnection,
             this,
-            [this]()
+            [this, gb_devices]()
             {
                 while (server.hasPendingConnections())
                 {
@@ -71,7 +81,7 @@ class platform_fixture final : public QObject
                         socket,
                         &QTcpSocket::readyRead,
                         this,
-                        [this, socket]()
+                        [this, socket, gb_devices]()
                         {
                             const auto bytes = socket->property("request").toByteArray() + socket->readAll();
                             socket->setProperty("request", bytes);
@@ -94,6 +104,12 @@ class platform_fixture final : public QObject
                             }
                             socket->setProperty("answered", true);
                             const auto path = bytes.split(' ').value(1);
+                            if (path.endsWith("/query"))
+                            {
+                                queries.append(
+                                    {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
+                                return;
+                            }
                             if (path == "/api/play")
                             {
                                 const auto source = QJsonDocument::fromJson(bytes.mid(end + 4, length)).object().value("source").toObject();
@@ -103,11 +119,18 @@ class platform_fixture final : public QObject
                             QByteArray body = "{}";
                             if (path == "/api/devices")
                             {
-                                body = R"({"devices":[]})";
+                                body =
+                                    gb_devices
+                                        ? R"({"devices":[{"device_id":"34020000001320000001","name":"GB-A","online":true},{"device_id":"34020000001320000002","name":"GB-B","online":true}]})"
+                                        : R"({"devices":[]})";
                             }
                             else if (path == "/api/sources")
                             {
-                                body = R"({"sources":[]})";
+                                body = gb_devices ? R"({"sources":[{"source_id":"source-a","stream_name":"active-a"}]})" : R"({"sources":[]})";
+                            }
+                            else if (path.endsWith("/channels"))
+                            {
+                                body = R"({"channels":[{"channel_id":"34020000001310000001","name":"channel-a"}]})";
                             }
                             else if (path == "/api/push-devices")
                             {
@@ -132,7 +155,29 @@ class platform_fixture final : public QObject
 
     QTcpServer server;
     QList<pending_play> plays;
+    QList<pending_query> queries;
 };
+
+QByteArray device_query_response(const QString& id, const QString& command, const QString& marker, const QString& result = QStringLiteral("OK"))
+{
+    QJsonObject response{{"device_id", id}, {"command", command}, {"sn", 17}, {"result", result}};
+    response.insert(command == QStringLiteral("DeviceInfo") ? QStringLiteral("info") : QStringLiteral("status"),
+                    command == QStringLiteral("DeviceInfo") ? QJsonObject{{"device_name", marker}, {"manufacturer", "fixture-manufacturer"}}
+                                                            : QJsonObject{{"online", "ONLINE"}, {"status", "OK"}, {"reason", marker}});
+    return QJsonDocument(response).toJson(QJsonDocument::Compact);
+}
+
+QPointer<QNetworkReply> pending_device_query(monitor_window& window)
+{
+    for (auto* reply : window.findChildren<QNetworkReply*>())
+    {
+        if (!reply->isFinished() && reply->url().path().endsWith(QStringLiteral("/query")))
+        {
+            return reply;
+        }
+    }
+    return {};
+}
 
 playback_view* slot_view(monitor_window& window, int slot)
 {
@@ -173,6 +218,299 @@ class monitor_window_test final : public QObject
         QCoreApplication::setApplicationName(QStringLiteral("monitor-window-stage2"));
         QSettings::setDefaultFormat(QSettings::IniFormat);
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings_->path());
+    }
+
+    void device_query_targets_and_serialization()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        window.show();
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        auto* result = window.findChild<QPlainTextEdit*>(QStringLiteral("device_query_result"));
+        auto* target = window.findChild<QLabel*>(QStringLiteral("device_query_target"));
+        QVERIFY(tree && info && status && result && target);
+        QVERIFY(result->isReadOnly());
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2 &&
+                                     tree->topLevelItem(1)->childCount() == 1 && tree->topLevelItem(2)->childCount() == 3,
+                                 2000);
+        QVERIFY(!info->isEnabled() && !status->isEnabled());
+        for (auto* item : {tree->topLevelItem(0), tree->topLevelItem(1)->child(0), tree->topLevelItem(2)->child(0)})
+        {
+            tree->setCurrentItem(item);
+            QVERIFY(!info->isEnabled() && !status->isEnabled());
+            info->click();
+            status->click();
+        }
+        QCOMPARE(api.queries.size(), 0);
+        auto* device = tree->topLevelItem(0)->child(0);
+        tree->setCurrentItem(device);
+        QVERIFY(info->isEnabled() && status->isEnabled());
+        QVERIFY(target->text().contains(QStringLiteral("34020000001320000001")));
+        info->click();
+        QVERIFY(!info->isEnabled() && !status->isEnabled());
+        status->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        QCOMPARE(api.queries[0].request_line, QByteArray("POST /api/devices/34020000001320000001/query HTTP/1.1"));
+        QCOMPARE(api.queries[0].body, QJsonObject({{"command", "DeviceInfo"}}));
+        const auto literal = QStringLiteral("<b>literal-device-name</b>");
+        respond(api.queries[0].socket, 200, device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), literal));
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 1000);
+        QVERIFY(result->toPlainText().contains(literal));
+        QCOMPARE(api.queries.size(), 1);
+
+        tree->itemDoubleClicked(device, 0);
+        QTRY_COMPARE_WITH_TIMEOUT(device->childCount(), 1, 2000);
+        tree->setCurrentItem(device->child(0));
+        QVERIFY(info->isEnabled() && status->isEnabled());
+        QVERIFY(result->toPlainText().isEmpty());
+        status->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        QCOMPARE(api.queries[1].path, QByteArray("/api/devices/34020000001320000001/query"));
+        QCOMPARE(api.queries[1].body, QJsonObject({{"command", "DeviceStatus"}}));
+        respond(api.queries[1].socket,
+                200,
+                device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceStatus"), QStringLiteral("fresh-status")));
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 1000);
+        QVERIFY(result->toPlainText().contains(QStringLiteral("fresh-status")));
+        QVERIFY(!result->toPlainText().contains(literal));
+        tree->setCurrentItem(tree->topLevelItem(2)->child(0));
+        QVERIFY(result->toPlainText().isEmpty());
+        QVERIFY(!info->isEnabled() && !status->isEnabled());
+        window.close();
+    }
+
+    void device_query_selection_isolates_late_reply_data()
+    {
+        QTest::addColumn<bool>("return_to_a");
+        QTest::addColumn<int>("old_http_status");
+        QTest::newRow("a-to-b-old-success") << false << 200;
+        QTest::newRow("a-to-b-old-error") << false << 502;
+        QTest::newRow("a-to-b-to-a-old-success") << true << 200;
+    }
+
+    void device_query_selection_isolates_late_reply()
+    {
+        QFETCH(bool, return_to_a);
+        QFETCH(int, old_http_status);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        auto* result = window.findChild<QPlainTextEdit*>(QStringLiteral("device_query_result"));
+        auto* target = window.findChild<QLabel*>(QStringLiteral("device_query_target"));
+        QVERIFY(tree && info && status && result && target);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        auto* a = tree->topLevelItem(0)->child(0);
+        auto* b = tree->topLevelItem(0)->child(1);
+        tree->setCurrentItem(a);
+        info->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto old_reply = pending_device_query(window);
+        QVERIFY(old_reply);
+        // 旧回复已到TCP但尚未分发，切换目标后才运行事件循环。
+        respond(api.queries[0].socket,
+                old_http_status,
+                old_http_status == 200
+                    ? device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), QStringLiteral("stale-old-device"))
+                    : QByteArray(R"({"error":"stale-old-device"})"));
+        tree->setCurrentItem(b);
+        if (return_to_a)
+        {
+            tree->setCurrentItem(a);
+        }
+        const auto expected = return_to_a ? QStringLiteral("34020000001320000001") : QStringLiteral("34020000001320000002");
+        QVERIFY(result->toPlainText().isEmpty());
+        QVERIFY(target->text().contains(expected));
+        status->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(old_reply.isNull(), 1000);
+        QVERIFY(!info->isEnabled() && !status->isEnabled());
+        QVERIFY(!result->toPlainText().contains(QStringLiteral("stale-old-device")));
+        QCOMPARE(api.queries[1].path, QByteArray("/api/devices/") + expected.toLatin1() + "/query");
+        QCOMPARE(api.queries[1].body, QJsonObject({{"command", "DeviceStatus"}}));
+        respond(api.queries[1].socket, 200, device_query_response(expected, QStringLiteral("DeviceStatus"), QStringLiteral("fresh-current-device")));
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 1000);
+        QVERIFY(result->toPlainText().contains(QStringLiteral("fresh-current-device")));
+        QVERIFY(!result->toPlainText().contains(QStringLiteral("stale-old-device")));
+        QVERIFY(target->text().contains(expected));
+        window.close();
+    }
+
+    void device_query_reset_cancels_callback_data()
+    {
+        QTest::addColumn<QString>("action");
+        QTest::newRow("refresh-tree") << QStringLiteral("refresh");
+        QTest::newRow("change-platform") << QStringLiteral("platform");
+        QTest::newRow("close-window") << QStringLiteral("close");
+    }
+
+    void device_query_reset_cancels_callback()
+    {
+        QFETCH(QString, action);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        window.show();
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        auto* result = window.findChild<QPlainTextEdit*>(QStringLiteral("device_query_result"));
+        auto* target = window.findChild<QLabel*>(QStringLiteral("device_query_target"));
+        auto* refresh = window.findChild<QPushButton*>(QStringLiteral("refresh_devices"));
+        auto* address = window.findChild<QLineEdit*>(QStringLiteral("platform_address"));
+        QVERIFY(tree && info && status && result && target && refresh && address);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        info->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto old_reply = pending_device_query(window);
+        QVERIFY(old_reply);
+        respond(api.queries[0].socket,
+                200,
+                device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), QStringLiteral("late-after-reset")));
+        platform_fixture second(true);
+        if (action == QStringLiteral("close"))
+        {
+            window.close();
+        }
+        else
+        {
+            if (action == QStringLiteral("platform"))
+            {
+                QVERIFY(second.start());
+                address->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+            }
+            refresh->click();
+        }
+        const auto after_reset = result->toPlainText();
+        const auto after_target = target->text();
+        QTRY_VERIFY_WITH_TIMEOUT(old_reply.isNull(), 1000);
+        QCOMPARE(result->toPlainText(), after_reset);
+        QCOMPARE(target->text(), after_target);
+        QVERIFY(!result->toPlainText().contains(QStringLiteral("late-after-reset")));
+        if (action != QStringLiteral("close"))
+        {
+            QVERIFY(result->toPlainText().isEmpty());
+            QVERIFY(!info->isEnabled() && !status->isEnabled());
+            QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+            tree->setCurrentItem(tree->topLevelItem(0)->child(1));
+            status->click();
+            auto& active = action == QStringLiteral("platform") ? second : api;
+            const int count = action == QStringLiteral("platform") ? 1 : 2;
+            QTRY_COMPARE_WITH_TIMEOUT(active.queries.size(), count, 2000);
+            respond(active.queries.back().socket,
+                    200,
+                    device_query_response(QStringLiteral("34020000001320000002"), QStringLiteral("DeviceStatus"), QStringLiteral("new-after-reset")));
+            QTRY_VERIFY_WITH_TIMEOUT(result->toPlainText().contains(QStringLiteral("new-after-reset")), 1000);
+            QVERIFY(info->isEnabled() && status->isEnabled());
+            window.close();
+        }
+        else
+        {
+            QVERIFY(!window.isVisible());
+        }
+    }
+
+    void device_query_direct_destruction()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        auto window = std::make_unique<monitor_window>();
+        window->show();
+        auto* tree = window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* info = window->findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        QVERIFY(tree && info);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        info->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto reply = pending_device_query(*window);
+        const auto peer = api.queries[0].socket;
+        QPointer<monitor_window> guarded = window.get();
+        QVERIFY(reply && peer);
+        QCOMPARE(peer->state(), QAbstractSocket::ConnectedState);
+        // 不经过closeEvent：选中树项和pending查询随窗口析构，迟到HTTP仍由真实TCP投递。
+        window.reset();
+        QVERIFY(guarded.isNull());
+        QVERIFY(reply.isNull());
+        if (peer && peer->state() == QAbstractSocket::ConnectedState)
+        {
+            respond(peer,
+                    200,
+                    device_query_response(
+                        QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), QStringLiteral("late-after-direct-destruction")));
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(peer.isNull(), 1000);
+        QVERIFY(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty());
+    }
+
+    void device_query_failures_restore_buttons_data()
+    {
+        QTest::addColumn<int>("http_status");
+        QTest::addColumn<QByteArray>("body");
+        QTest::addColumn<QString>("expected");
+        QTest::newRow("http-error") << 502 << QByteArray(R"({"error":"query_backend_failed"})") << QStringLiteral("502");
+        QTest::newRow("device-refused") << 200
+                                        << device_query_response(
+                                               QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), {}, QStringLiteral("ERROR"))
+                                        << QStringLiteral("设备拒绝");
+        QTest::newRow("invalid-json") << 200 << QByteArray("{broken") << QStringLiteral("JSON");
+        QTest::newRow("wrong-device") << 200 << device_query_response(QStringLiteral("34020000001320000002"), QStringLiteral("DeviceInfo"), {})
+                                      << QStringLiteral("无效");
+        QTest::newRow("wrong-command") << 200 << device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceStatus"), {})
+                                       << QStringLiteral("无效");
+        QTest::newRow("unknown-result") << 200
+                                        << device_query_response(
+                                               QStringLiteral("34020000001320000001"), QStringLiteral("DeviceInfo"), {}, QStringLiteral("unknown"))
+                                        << QStringLiteral("无效");
+        QTest::newRow("invalid-payload") << 200
+                                         << QByteArray(
+                                                R"({"device_id":"34020000001320000001","command":"DeviceInfo","sn":17,"result":"OK","info":[]})")
+                                         << QStringLiteral("无效");
+        QTest::newRow("network-timeout") << 0 << QByteArray{} << QStringLiteral("timed out");
+    }
+
+    void device_query_failures_restore_buttons()
+    {
+        QFETCH(int, http_status);
+        QFETCH(QByteArray, body);
+        QFETCH(QString, expected);
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* tree = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        auto* info = window.findChild<QPushButton*>(QStringLiteral("device_info_query"));
+        auto* status = window.findChild<QPushButton*>(QStringLiteral("device_status_query"));
+        auto* result = window.findChild<QPlainTextEdit*>(QStringLiteral("device_query_result"));
+        QVERIFY(tree && info && status && result);
+        QTRY_VERIFY_WITH_TIMEOUT(tree->topLevelItemCount() == 3 && tree->topLevelItem(0)->childCount() == 2, 2000);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0));
+        info->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 1, 2000);
+        const auto reply = pending_device_query(window);
+        QVERIFY(reply);
+        QVERIFY(!info->isEnabled() && !status->isEnabled());
+        if (http_status != 0)
+        {
+            respond(api.queries[0].socket, http_status, body);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(info->isEnabled() && status->isEnabled(), 12'000);
+        QVERIFY2(result->toPlainText().contains(expected, Qt::CaseInsensitive), qPrintable(result->toPlainText()));
+        QTRY_VERIFY_WITH_TIMEOUT(reply.isNull(), 1000);
+        status->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.queries.size(), 2, 2000);
+        QCOMPARE(api.queries[1].body, QJsonObject({{"command", "DeviceStatus"}}));
+        respond(api.queries[1].socket,
+                200,
+                device_query_response(QStringLiteral("34020000001320000001"), QStringLiteral("DeviceStatus"), QStringLiteral("manual-retry-ok")));
+        QTRY_VERIFY_WITH_TIMEOUT(result->toPlainText().contains(QStringLiteral("manual-retry-ok")), 1000);
+        QVERIFY(info->isEnabled() && status->isEnabled());
+        window.close();
     }
 
     void layout_selection_and_shrink()

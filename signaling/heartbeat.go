@@ -44,6 +44,10 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 		s.handleCatalog(req, tx)
 		return
 	}
+	if message.XMLName.Local == "Response" && (message.CmdType == "DeviceInfo" || message.CmdType == "DeviceStatus") {
+		s.handleDeviceQueryResponse(req, tx)
+		return
+	}
 	if message.CmdType != "Keepalive" || message.XMLName.Local != "Notify" || message.Status != "OK" {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return

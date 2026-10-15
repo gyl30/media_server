@@ -44,4 +44,8 @@
 
 阶段二完成：1/4/9/16布局、选择/拖放替换/停止、唯一音频设备借用、全屏/比例/抓图/偏好及主动Catalog。i7-13700KF上的同源16路独立RTSP/CPU解码，H.264 Main1080p25约4Mbps+AAC，30秒共同窗口每路749帧、双轨持续进展；不是16不同源或正式容量基线。实际双音源50次切声、GB四格共享唯一INVITE/停三留一、viewer退出不停止上游通过。最终桌面normal及ASan+UBSan各4/4 CTest（各61个QTest、无失败/跳过），Go全量test/race/vet通过；内部包整体搬移、包内实际GUI播放/声音/正常退出通过。详情及原始失败边界见 [阶段二验证](qt_monitor_client_stage2.md)。
 
-阶段二证据：DEV `/var/tmp/media-server-qt-stage2-main-7Do5ny4N/`、`/var/tmp/media-server-qt-stage2-GwavyowG/`、`/var/tmp/media-server-qt-stage2-audio50-VlVrz8/`。下一阶段仍需实现DeviceInfo/DeviceStatus/PTZ/预置位；当前只完成观看里程碑，不等同完整GB平台GO。
+阶段二证据：DEV `/var/tmp/media-server-qt-stage2-main-7Do5ny4N/`、`/var/tmp/media-server-qt-stage2-GwavyowG/`、`/var/tmp/media-server-qt-stage2-audio50-VlVrz8/`。当前观看里程碑不等同完整GB平台GO。
+
+阶段三的设备查询子集已实现：DeviceInfo/DeviceStatus 使用短寿命 SN 关联独立 SIP/XML 响应，Qt 基本页显式查询、展示设备自报结果，选择通道仍查父设备；不新增持久状态、轮询或媒体控制。最终 normal 和 ASan+UBSan 桌面各 4/4 CTest、77 项 QTest，无失败/跳过；Go 全量 test/race/vet 通过，保留首轮既有 SQLITE_BUSY 失败及原基线复现。实际 Qt→Go HTTP→UDP 受控 peer 查询与界面显示通过，不等于物理摄像机验收。详见 [阶段三查询子集](qt_monitor_client_stage3_queries.md)。
+
+阶段三证据：DEV `/var/tmp/media-server-qt-stage3-main-Y4xy1xyZ/`、`/var/tmp/media-server-qt-stage3-query-RjkDSe9c/`、`/var/tmp/media-server-qt-stage3-window-tests-I1Pb7bPn/`。PTZ/预置位仍未实现，真实可动云台、预置位及录像设备条件待确认；不能把这个子集标记为整个阶段三完成。

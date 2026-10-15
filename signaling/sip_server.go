@@ -12,23 +12,24 @@ import (
 )
 
 type sipServer struct {
-	ua            *sipgo.UserAgent
-	server        *sipgo.Server
-	client        *sipgo.Client
-	listen        string
-	cfg           config
-	logger        *slog.Logger
-	now           func() time.Time
-	auth          *digestAuthenticator
-	devices       *deviceRegistry
-	deviceStore   *deviceStore
-	channels      *channelRegistry
-	sweepInterval time.Duration
-	live          *liveService
-	advertiseHost string
-	advertisePort int
-	catalogQueue  chan registeredDevice
-	catalogSN     atomic.Uint32
+	ua             *sipgo.UserAgent
+	server         *sipgo.Server
+	client         *sipgo.Client
+	listen         string
+	cfg            config
+	logger         *slog.Logger
+	now            func() time.Time
+	auth           *digestAuthenticator
+	devices        *deviceRegistry
+	deviceStore    *deviceStore
+	channels       *channelRegistry
+	sweepInterval  time.Duration
+	live           *liveService
+	advertiseHost  string
+	advertisePort  int
+	catalogQueue   chan registeredDevice
+	messageSN      atomic.Uint32
+	pendingQueries map[int]pendingDeviceQuery
 }
 
 func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipServer, error) {
@@ -59,21 +60,22 @@ func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipSe
 		return nil, err
 	}
 	result := &sipServer{
-		ua:            ua,
-		server:        server,
-		client:        client,
-		listen:        cfg.sipListen,
-		cfg:           cfg,
-		logger:        logger,
-		now:           time.Now,
-		auth:          newDigestAuthenticator(cfg.sipDomain, cfg.sipPassword),
-		devices:       newDeviceRegistry(),
-		deviceStore:   devices,
-		channels:      newChannelRegistry(),
-		sweepInterval: time.Second,
-		advertiseHost: advertiseHost,
-		advertisePort: advertisePort,
-		catalogQueue:  make(chan registeredDevice, 256),
+		ua:             ua,
+		server:         server,
+		client:         client,
+		listen:         cfg.sipListen,
+		cfg:            cfg,
+		logger:         logger,
+		now:            time.Now,
+		auth:           newDigestAuthenticator(cfg.sipDomain, cfg.sipPassword),
+		devices:        newDeviceRegistry(),
+		deviceStore:    devices,
+		channels:       newChannelRegistry(),
+		sweepInterval:  time.Second,
+		advertiseHost:  advertiseHost,
+		advertisePort:  advertisePort,
+		catalogQueue:   make(chan registeredDevice, 256),
+		pendingQueries: make(map[int]pendingDeviceQuery),
 	}
 	server.OnRegister(result.handleRegister)
 	server.OnMessage(result.handleMessage)

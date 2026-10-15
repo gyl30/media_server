@@ -15,6 +15,7 @@ class QGridLayout;
 class QPushButton;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QPlainTextEdit;
 
 namespace media_server
 {
@@ -41,10 +42,13 @@ class monitor_window final : public QMainWindow
     void stop_all();
     void take_snapshot();
     void query_catalog();
+    void reset_device_query();
+    void query_device(const QString& command);
 
    private:
     platform_client client_;
     QObject* listing_{};
+    QObject* control_context_{};
     std::array<playback_view*, 16> views_{};
     playback_view* selected_{};
     quint32 audio_id_{};
@@ -53,6 +57,10 @@ class monitor_window final : public QMainWindow
     QComboBox* view_layout_;
     QPushButton* sound_;
     QPushButton* catalog_;
+    QPushButton* device_info_;
+    QPushButton* device_status_;
+    QLabel* device_target_;
+    QPlainTextEdit* device_result_;
     QTreeWidget* devices_;
     QLineEdit* address_;
     QLabel* connection_;

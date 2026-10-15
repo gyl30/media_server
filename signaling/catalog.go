@@ -4,13 +4,12 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
 )
 
-type catalogQuery struct {
+type manscdpQuery struct {
 	XMLName  xml.Name `xml:"Query"`
 	CmdType  string   `xml:"CmdType"`
 	SN       int      `xml:"SN"`
@@ -37,7 +36,7 @@ type catalogResponse struct {
 }
 
 func buildCatalogQuery(deviceID string, sn int) ([]byte, error) {
-	body, err := xml.Marshal(catalogQuery{CmdType: "Catalog", SN: sn, DeviceID: deviceID})
+	body, err := xml.Marshal(manscdpQuery{CmdType: "Catalog", SN: sn, DeviceID: deviceID})
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +84,7 @@ func (s *sipServer) runCatalogQueries(ctx context.Context) {
 				continue
 			}
 			device = current
-			sn := int(s.catalogSN.Add(1))
+			sn := int(s.messageSN.Add(1))
 			s.channels.beginQuery(device.id, sn)
 			s.live.mu.Unlock()
 			queryContext, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -104,10 +103,14 @@ func (s *sipServer) sendCatalogQuery(ctx context.Context, device registeredDevic
 	if err != nil {
 		return err
 	}
+	return s.sendMANSCDP(ctx, device, body)
+}
+
+func (s *sipServer) sendMANSCDP(ctx context.Context, device registeredDevice, body []byte) error {
 	recipient := *device.contact.Clone()
 	request := sip.NewRequest(sip.MESSAGE, recipient)
 	fromParams := sip.NewParams()
-	fromParams.Add("tag", strconv.FormatUint(uint64(sn), 10))
+	fromParams.Add("tag", sip.GenerateTagN(16))
 	request.AppendHeader(&sip.FromHeader{
 		Address: sip.Uri{Scheme: "sip", User: s.cfg.sipID, Host: s.cfg.sipDomain},
 		Params:  fromParams,
@@ -128,7 +131,7 @@ func (s *sipServer) sendCatalogQuery(ctx context.Context, device registeredDevic
 		return err
 	}
 	if !response.IsSuccess() {
-		return fmt.Errorf("Catalog rejected with SIP %d", response.StatusCode)
+		return fmt.Errorf("MANSCDP rejected with SIP %d", response.StatusCode)
 	}
 	return nil
 }

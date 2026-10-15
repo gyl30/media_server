@@ -52,7 +52,7 @@ func TestCatalogHTTPPreconditions(t *testing.T) {
 			if !strings.Contains(response.Body.String(), test.error) {
 				t.Fatalf("response: %s", response.Body.String())
 			}
-			if s.live.sip.catalogSN.Load() != 0 || len(s.live.sip.channels.pending) != 0 {
+			if s.live.sip.messageSN.Load() != 0 || len(s.live.sip.channels.pending) != 0 {
 				t.Fatal("precondition failure sent or prepared Catalog")
 			}
 		})
@@ -127,7 +127,7 @@ func TestCatalogHTTPSIPAcceptance(t *testing.T) {
 			if response.Code != test.httpStatus {
 				t.Fatalf("HTTP %d want %d: %s", response.Code, test.httpStatus, response.Body.String())
 			}
-			var query catalogQuery
+			var query manscdpQuery
 			select {
 			case body := <-queries:
 				if err := xml.Unmarshal(body, &query); err != nil {

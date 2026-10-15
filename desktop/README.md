@@ -24,6 +24,8 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 选中国标设备或通道后可“查询目录”；202及界面“已受理”仅表示SIP MESSAGE被接受，稍后手动双击设备查看实际返回的通道，不表示目录已收齐。
 
+右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路。它只是阶段三的查询子集，PTZ/预置位仍未实现；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
+
 ## 观看与生命周期
 
 - 视频：H.264；H.265 尚未实现。

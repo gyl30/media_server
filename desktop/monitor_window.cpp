@@ -1,3 +1,4 @@
+#include <utility>
 #include <algorithm>
 
 #include <SDL.h>
@@ -18,6 +19,7 @@
 #include <QDateTime>
 #include <QPushButton>
 #include <QCloseEvent>
+#include <QStringList>
 #include <QFileDialog>
 #include <QTreeWidget>
 #include <QGridLayout>
@@ -25,6 +27,7 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QApplication>
+#include <QPlainTextEdit>
 #include <QSignalBlocker>
 #include <QStandardPaths>
 
@@ -41,6 +44,10 @@ monitor_window::monitor_window(QWidget* parent)
       view_layout_(new QComboBox(this)),
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
       catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
+      device_info_(new QPushButton(QStringLiteral("设备信息"), this)),
+      device_status_(new QPushButton(QStringLiteral("设备状态"), this)),
+      device_target_(new QLabel(this)),
+      device_result_(new QPlainTextEdit(this)),
       devices_(new QTreeWidget(this)),
       address_(new QLineEdit(this)),
       connection_(new QLabel(this))
@@ -144,7 +151,23 @@ monitor_window::monitor_window(QWidget* parent)
     devices_->setSelectionMode(QAbstractItemView::SingleSelection);
     side->addWidget(devices_, 1);
     auto* controls = new QTabWidget(sidebar);
-    for (const auto& title : {QStringLiteral("基本"), QStringLiteral("云台"), QStringLiteral("预置位")})
+    auto* basic = new QWidget(controls);
+    auto* basic_layout = new QVBoxLayout(basic);
+    basic_layout->setContentsMargins(4, 4, 4, 4);
+    device_target_->setObjectName(QStringLiteral("device_query_target"));
+    device_target_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    basic_layout->addWidget(device_target_);
+    auto* query_buttons = new QHBoxLayout;
+    device_info_->setObjectName(QStringLiteral("device_info_query"));
+    device_status_->setObjectName(QStringLiteral("device_status_query"));
+    query_buttons->addWidget(device_info_);
+    query_buttons->addWidget(device_status_);
+    basic_layout->addLayout(query_buttons);
+    device_result_->setObjectName(QStringLiteral("device_query_result"));
+    device_result_->setReadOnly(true);
+    basic_layout->addWidget(device_result_);
+    controls->addTab(basic, QStringLiteral("基本"));
+    for (const auto& title : {QStringLiteral("云台"), QStringLiteral("预置位")})
     {
         auto* page = new QWidget(controls);
         auto* page_layout = new QVBoxLayout(page);
@@ -152,8 +175,7 @@ monitor_window::monitor_window(QWidget* parent)
         page_layout->addStretch();
         controls->addTab(page, title);
     }
-    controls->setCurrentIndex(2);
-    controls->setMaximumHeight(180);
+    controls->setMaximumHeight(240);
     side->addWidget(controls);
     split->addWidget(sidebar);
     split->setStretchFactor(0, 1);
@@ -206,6 +228,10 @@ monitor_window::monitor_window(QWidget* parent)
     connect(address_, &QLineEdit::returnPressed, this, &monitor_window::reload_devices);
     connect(devices_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item) { play_item(item); });
     connect(catalog_, &QPushButton::clicked, this, &monitor_window::query_catalog);
+    connect(devices_, &QTreeWidget::currentItemChanged, this, [this]() { reset_device_query(); });
+    connect(device_info_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceInfo")); });
+    connect(device_status_, &QPushButton::clicked, this, [this]() { query_device(QStringLiteral("DeviceStatus")); });
+    reset_device_query();
     connect(stop, &QPushButton::clicked, this, [this]() { selected_->stop(); });
     connect(stop_everything, &QPushButton::clicked, this, &monitor_window::stop_all);
     connect(screenshot, &QPushButton::clicked, this, &monitor_window::take_snapshot);
@@ -399,6 +425,99 @@ void monitor_window::query_catalog()
                     });
 }
 
+void monitor_window::reset_device_query()
+{
+    delete control_context_;
+    control_context_ = nullptr;
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    const auto kind = data.value(QStringLiteral("kind")).toString();
+    const bool available = listing_ && (kind == QStringLiteral("gb_device") || kind == QStringLiteral("gb_channel"));
+    device_info_->setEnabled(available);
+    device_status_->setEnabled(available);
+    device_target_->setText(available ? data.value(QStringLiteral("id")).toString() : QStringLiteral("请选择国标设备或通道"));
+    device_result_->clear();
+}
+
+void monitor_window::query_device(const QString& command)
+{
+    const auto* item = devices_->currentItem();
+    const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+    const auto kind = data.value(QStringLiteral("kind")).toString();
+    if (!listing_ || (kind != QStringLiteral("gb_device") && kind != QStringLiteral("gb_channel")))
+    {
+        return;
+    }
+    const auto id = data.value(QStringLiteral("id")).toString();
+    delete control_context_;
+    control_context_ = new QObject(listing_);
+    device_info_->setEnabled(false);
+    device_status_->setEnabled(false);
+    device_result_->setPlainText(
+        QStringLiteral("等待设备返回%1…").arg(command == QStringLiteral("DeviceInfo") ? QStringLiteral("信息") : QStringLiteral("状态")));
+    const auto path = QStringLiteral("/api/devices/%1/query").arg(QString::fromLatin1(QUrl::toPercentEncoding(id)));
+    client_.request(
+        "POST",
+        path,
+        {{QStringLiteral("command"), command}},
+        control_context_,
+        [this, id, command](platform_response response)
+        {
+            device_info_->setEnabled(true);
+            device_status_->setEnabled(true);
+            if (!response.ok())
+            {
+                device_result_->setPlainText(QStringLiteral("查询失败：%1").arg(response.error));
+                return;
+            }
+            const auto result = response.document.object();
+            const auto outcome = result.value(QStringLiteral("result")).toString();
+            if (result.value(QStringLiteral("device_id")).toString() != id || result.value(QStringLiteral("command")).toString() != command ||
+                (outcome != QStringLiteral("OK") && outcome != QStringLiteral("ERROR")))
+            {
+                device_result_->setPlainText(QStringLiteral("查询失败：平台返回的设备信息无效"));
+                return;
+            }
+            if (outcome != QStringLiteral("OK"))
+            {
+                device_result_->setPlainText(QStringLiteral("设备拒绝本次查询（ERROR），未取得有效结果"));
+                return;
+            }
+            QStringList lines;
+            lines << QStringLiteral("%1 · %2").arg(
+                command == QStringLiteral("DeviceInfo") ? QStringLiteral("设备信息") : QStringLiteral("设备自报状态"),
+                QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss")));
+            const auto payload = result.value(command == QStringLiteral("DeviceInfo") ? QStringLiteral("info") : QStringLiteral("status"));
+            if (!payload.isObject())
+            {
+                device_result_->setPlainText(QStringLiteral("查询失败：平台返回的查询结果无效"));
+                return;
+            }
+            const auto values = payload.toObject();
+            const std::pair<QString, QString> fields[] = {
+                {QStringLiteral("device_name"), QStringLiteral("名称")},
+                {QStringLiteral("manufacturer"), QStringLiteral("厂商")},
+                {QStringLiteral("model"), QStringLiteral("型号")},
+                {QStringLiteral("firmware"), QStringLiteral("固件")},
+                {QStringLiteral("channel"), QStringLiteral("输入通道数")},
+                {QStringLiteral("online"), QStringLiteral("设备自报在线")},
+                {QStringLiteral("status"), QStringLiteral("工作状态")},
+                {QStringLiteral("reason"), QStringLiteral("原因")},
+                {QStringLiteral("encode"), QStringLiteral("编码")},
+                {QStringLiteral("record"), QStringLiteral("录像")},
+                {QStringLiteral("device_time"), QStringLiteral("设备时间")},
+            };
+            for (const auto& field : fields)
+            {
+                if (values.contains(field.first))
+                {
+                    lines << field.second + QStringLiteral("：") + values.value(field.first).toVariant().toString();
+                }
+            }
+            device_result_->setPlainText(lines.join(QLatin1Char('\n')));
+        });
+}
+
 void monitor_window::reload_devices()
 {
     const QUrl base(address_->text().trimmed(), QUrl::StrictMode);
@@ -415,9 +534,11 @@ void monitor_window::reload_devices()
     }
     QSettings().setValue(QStringLiteral("platform_url"), base.toString());
     delete listing_;
+    control_context_ = nullptr;
     listing_ = new QObject(this);
     catalog_->setEnabled(true);
     devices_->clear();
+    reset_device_query();
     connection_->setText(QStringLiteral("正在查询设备…"));
     auto* gb = new QTreeWidgetItem(devices_, {QStringLiteral("GB28181 设备")});
     gb->setExpanded(true);
@@ -553,6 +674,7 @@ void monitor_window::closeEvent(QCloseEvent* event)
     stop_all();
     delete listing_;
     listing_ = nullptr;
+    control_context_ = nullptr;
     for (auto* worker : qApp->findChildren<decode_thread*>())
     {
         if (worker->isRunning())
