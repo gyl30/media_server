@@ -44,6 +44,18 @@ CleanupPending 不因到期而忘记：BYE 发出不等于设备确认停送，�
 - `prepareReceiver`、INVITE、BYE 和 dialog 查找在两个真实业务调用点复用，保留原错误与补偿路径，没有一调用包装或通用输入工厂。
 - 停机先排空 HTTP，再关闭会话 owner，最后停 SIP，使后台历史事务仍可执行 CANCEL/BYE。未消费的实例不等待完整票据 TTL。
 
+## INFO 暂停与恢复
+
+`POST /api/playbacks/{playback_id}/pause` 与 `/resume` 只作用于已 Streaming 的历史实例；普通实时 ID 返回 404。每次用户动作在原 dialog 内发送一个 INFO，`Content-Type: Application/MANSRTSP`，体按 GB/T 28181—2016 附录 B 固定为 `PAUSE RTSP/1.0`、`CSeq`、`PauseTime: now` 或 `PLAY RTSP/1.0`、`CSeq`、`Range: npt=now-`，内层与外层 CSeq 同值。不支持附录 J 的 `MANSRTSP/1.0` 起始行，也不在失败后换体重发。
+
+成功为 SIP 200，且内层为空（附录 J 示例）或首行 `RTSP/1.0 200` 且 CSeq 相同。HTTP 204 成功；不存在 404；未 Streaming 或期限已到 409 `playback_not_streaming`；同实例已有在途控制 409 `playback_control_busy`，不排队；设备拒绝或内层不符 502 `device_rejected`；5 秒内无响应 504、传输错误或停止取消 502，均为 `playback_control_failed`。结果未知时设备可能已经执行，服务端不自动发送相反指令、不停止实例，也不保存暂停状态或做重复动作去重。
+
+同一 dialog 的非 ACK 请求由 `liveSession.dialog` 串行并分配 `cseq`：INFO 用 TryLock 准入，取得门后在 `live.mu` 下复查实例、Streaming 与期限再发送；BYE 也取同一门并递增，因此普通实时没有 INFO 时 BYE 仍是 INVITE+1，INFO 之后的 BYE 排在其后。ACK 继续复制 INVITE CSeq。显式停止在设置 Stopping 时取消 owner context，立即结束在途 INFO 等待再发 BYE；121/远端 BYE 的收尾依赖该 context 判断媒体排空，不取消，其 BYE 最多等待在途 INFO 的 5 秒。
+
+暂停不改变 liveState，仍消耗创建时的绝对预算（录像时长 + 票据 TTL + 60 秒），不续租、不预留额外暂停时长；到期按原对账路径结束实例。暂停期间 C++ 正文写不再设期限，见[有限传输的暂停背压](qt_monitor_client_stage4_finite_transport.md)。
+
+验证：`gb_playback_control_test.go` 使用真实 UDP SIP 原始对端，覆盖附录 B 体、对话 tag/Call-ID、外内层 CSeq 递增、在途 busy、空体 200、内层 CSeq 不符、内层 455、非 `RTSP/1.0` 首行、外层 488、5 秒无响应 504、DELETE 打断在途 INFO 且 BYE 序号在 INFO 之后、未认领 409 与实时 ID 404。原 `live_dialog_test` 改为经会话分配 BYE 序号后继续与 sipgo 对照路径逐头比较；修改前它真实失败（CSeq 123 对 124），日志 `/var/tmp/qt-claude-owner-work/pause-design/dialog-test-red-01.log`。全量 Go：`/var/tmp/qt-claude-owner-work/pause-go/` 的 `full-go-02.log`（111.719 秒）、`full-race-01.log`（119.390 秒）、`vet-01.log` 均通过；首轮 `full-go-01.log` 的 `TestPresetControlFailuresStillStop/timeout` 失败保留，HEAD 源码同用例 60 次失败 2 次、当前 60 次失败 4 次且签名相同（STOP 之后到达未应答 MESSAGE 的重传），判定为既有测试不稳定，未在本增量修改。
+
 ## 证据与验证边界
 
 定向基础证据：DEV `/var/tmp/media-server-qt-history-foundation-1g5AaGey/`。结束交错测试使用真实 UDP SIP 与受控媒体 HTTP 边界，不是实际 PS 解码。

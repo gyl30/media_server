@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
 	"github.com/google/uuid"
 )
@@ -19,6 +21,13 @@ import (
 // 这是 1x 回放的应用资源上限，不是设备已交付全部录像的保证。
 const playbackCompletionGrace = time.Minute
 const playbackDrainTimeout = 20 * time.Second
+const playbackControlTimeout = 5 * time.Second
+
+var (
+	errPlaybackNotStreaming = errors.New("playback is not streaming")
+	errPlaybackControlBusy  = errors.New("playback control is in progress")
+	errPlaybackRejected     = errors.New("device rejected playback control")
+)
 
 type playbackTicket struct {
 	PlaybackID string    `json:"playback_id"`
@@ -215,6 +224,96 @@ func (s *infrastructureServer) handlePlaybackDelete(writer http.ResponseWriter, 
 		return
 	}
 	writer.WriteHeader(http.StatusNoContent)
+}
+
+func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter, request *http.Request) {
+	id, action := request.PathValue("playback_id"), request.PathValue("action")
+	if !validUUIDv4(id) || (action != "pause" && action != "resume") {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	err := s.live.controlPlayback(request.Context(), id, action == "pause")
+	switch {
+	case err == nil:
+		writer.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, errLiveNotFound):
+		writeHTTPError(writer, http.StatusNotFound, "playback_not_found")
+	case errors.Is(err, errPlaybackNotStreaming):
+		writeHTTPError(writer, http.StatusConflict, "playback_not_streaming")
+	case errors.Is(err, errPlaybackControlBusy):
+		writeHTTPError(writer, http.StatusConflict, "playback_control_busy")
+	case errors.Is(err, errPlaybackRejected):
+		s.logger.Warn("playback control rejected", "playback_id", id, "action", action, "error", err)
+		writeHTTPError(writer, http.StatusBadGateway, "device_rejected")
+	default:
+		// 超时或传输失败时设备可能已执行，不自动发送相反指令。
+		s.logger.Warn("playback control result unknown", "playback_id", id, "action", action, "error", err)
+		status := http.StatusBadGateway
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sip.ErrTransactionTimeout) {
+			status = http.StatusGatewayTimeout
+		}
+		writeHTTPError(writer, status, "playback_control_failed")
+	}
+}
+
+// controlPlayback 在原对话内发送一次 GB/T 28181-2016 附录 B 的 MANSRTSP INFO；暂停不改变 owner 期限。
+func (s *liveService) controlPlayback(ctx context.Context, id string, pause bool) error {
+	s.mu.Lock()
+	var session *liveSession
+	for _, candidate := range s.sessions {
+		if candidate.streamID == id && candidate.key.historyID != "" {
+			session = candidate
+		}
+	}
+	s.mu.Unlock()
+	if session == nil {
+		return errLiveNotFound
+	}
+	if !session.dialog.TryLock() {
+		return errPlaybackControlBusy
+	}
+	defer session.dialog.Unlock()
+	// 取得对话门后复查：停止可能已先发出 BYE。
+	s.mu.Lock()
+	streaming := s.sessions[session.key] == session && session.state == liveStreaming && session.ctx.Err() == nil
+	s.mu.Unlock()
+	if !streaming {
+		return errPlaybackNotStreaming
+	}
+	controlContext, cancel := context.WithTimeout(ctx, playbackControlTimeout)
+	defer cancel()
+	defer context.AfterFunc(session.ctx, cancel)()
+	request := session.nextDialogRequest(sip.INFO)
+	sequence := request.CSeq().SeqNo
+	body := fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\nRange: npt=now-\r\n\r\n", sequence)
+	if pause {
+		body = fmt.Sprintf("PAUSE RTSP/1.0\r\nCSeq: %d\r\nPauseTime: now\r\n\r\n", sequence)
+	}
+	request.AppendHeader(sip.NewHeader("Content-Type", "Application/MANSRTSP"))
+	request.SetBody([]byte(body))
+	response, err := s.sip.client.Do(controlContext, request)
+	if err != nil {
+		return err
+	}
+	if response.StatusCode != 200 {
+		return fmt.Errorf("%w: %w", errPlaybackRejected, sipgo.ErrDialogResponse{Res: response})
+	}
+	// 附录 J 示例的 200 可无内层响应；有内层响应时须为同一 CSeq 的 200。
+	if inner := strings.TrimSpace(string(response.Body())); inner != "" {
+		lines := strings.Split(strings.ReplaceAll(inner, "\r\n", "\n"), "\n")
+		status := strings.Fields(lines[0])
+		matched := false
+		for _, line := range lines[1:] {
+			name, value, found := strings.Cut(line, ":")
+			if found && strings.EqualFold(strings.TrimSpace(name), "CSeq") {
+				matched = strings.TrimSpace(value) == strconv.FormatUint(uint64(sequence), 10)
+			}
+		}
+		if len(status) < 2 || status[0] != "RTSP/1.0" || status[1] != "200" || !matched {
+			return fmt.Errorf("%w: MANSRTSP response %q", errPlaybackRejected, lines[0])
+		}
+	}
+	return nil
 }
 
 func (s *liveService) handlePlaybackEnd(request *sip.Request, transaction sip.ServerTransaction, channelID string) {

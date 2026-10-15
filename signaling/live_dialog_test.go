@@ -90,7 +90,14 @@ func TestLiveDialogRequestMatchesExistingRouting(t *testing.T) {
 						t.Fatal(err)
 					}
 					want := capture.request
-					got := newLiveDialogRequest(invite, answer, method)
+					// BYE 的序号由会话 owner 分配；普通实时没有 INFO 时首个 BYE 为 INVITE+1。
+					build := func() *sip.Request {
+						if method == sip.BYE {
+							return (&liveSession{invite: invite, answer: answer}).nextDialogRequest(sip.BYE)
+						}
+						return newLiveDialogRequest(invite, answer, method)
+					}
+					got := build()
 					if err := client.WriteRequest(got); err != nil {
 						t.Fatal(err)
 					}
@@ -115,14 +122,14 @@ func TestLiveDialogRequestMatchesExistingRouting(t *testing.T) {
 						t.Error("dialog request copied INVITE or answer payload")
 					}
 					// 每次独立输出，且不能把输入对象当作可修改的头字段缓存。
-					first := newLiveDialogRequest(invite, answer, method)
+					first := build()
 					first.From().Params.Add("local-mutation", "1")
 					first.To().Params.Add("remote-mutation", "1")
 					first.CSeq().SeqNo = 999
 					first.Contact().Address.User = "changed"
 					first.Recipient.User = "changed-target"
 					first.AppendHeader(sip.NewHeader("Route", "<sip:unrelated.example;lr>"))
-					second := newLiveDialogRequest(invite, answer, method)
+					second := build()
 					if len(second.GetHeaders("Route")) != len(scenario.recordRoute) || second.CSeq().SeqNo != want.CSeq().SeqNo || second.From().Value() != want.From().Value() || second.To().Value() != want.To().Value() || second.Contact().Value() != want.Contact().Value() || second.Recipient.String() != want.Recipient.String() {
 						t.Error("independent construction inherited another output's mutations")
 					}

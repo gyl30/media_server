@@ -59,6 +59,9 @@ type liveSession struct {
 	established chan struct{}
 	done        chan struct{}
 	cleanupErr  error
+	// dialog 串行同一对话内的 INFO 与 BYE，并保护 cseq。
+	dialog sync.Mutex
+	cseq   uint32
 }
 
 type liveView struct {
@@ -457,6 +460,8 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 		return s.waitForStop(ctx, session, done)
 	}
 	session.state = liveStopping
+	// 结束在途回放控制的等待，使 BYE 不排在完整 INFO 超时之后。
+	session.cancel()
 	s.mu.Unlock()
 	return s.cleanup(session, true)
 }
@@ -533,9 +538,11 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 }
 
 func (s *liveService) sendBye(session *liveSession) {
+	session.dialog.Lock()
+	defer session.dialog.Unlock()
 	byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
 	defer cancel()
-	response, err := s.sip.client.Do(byeContext, newLiveDialogRequest(session.invite, session.answer, sip.BYE))
+	response, err := s.sip.client.Do(byeContext, session.nextDialogRequest(sip.BYE))
 	if err == nil && response.StatusCode != 200 {
 		err = sipgo.ErrDialogResponse{Res: response}
 	}
