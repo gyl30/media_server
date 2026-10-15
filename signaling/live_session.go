@@ -49,7 +49,8 @@ type liveSession struct {
 	rtpPort     uint16
 	ssrc        uint32
 	state       liveState
-	dialog      *sipgo.DialogClientSession
+	invite      *sip.Request
+	answer      *sip.Response
 	callID      string
 	cancel      context.CancelFunc
 	established chan struct{}
@@ -230,31 +231,123 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	request.SetBody(sdpBody)
 	request.SetTransport("UDP")
 	request.SetDestination(device.remoteEndpoint)
-	dialogUA := sipgo.DialogUA{
-		Client: s.sip.client,
-		ContactHDR: sip.ContactHeader{Address: sip.Uri{
-			Scheme: "sip", User: s.sip.cfg.sipID, Host: s.sip.advertiseHost, Port: s.sip.advertisePort,
-		}},
-		RewriteContact: true,
+	inviteContext, inviteCancel := context.WithTimeout(operationContext, s.inviteTimeout)
+	defer inviteCancel()
+	client := s.sip.client
+	if err := sipgo.ClientRequestBuild(client, request); err != nil {
+		return s.finishFailedStart(session, err, false)
 	}
-	dialog, err := dialogUA.WriteInvite(operationContext, request)
+	transaction, err := s.sip.ua.TransactionLayer().NewClientTransaction(inviteContext, request)
 	if err != nil {
 		return s.finishFailedStart(session, err, false)
 	}
+	invite := request.Clone()
+	logger := s.logger
+	transaction.OnRetransmission(func(answer *sip.Response) {
+		if answer.StatusCode < 200 || answer.StatusCode >= 300 {
+			return
+		}
+		if _, err := sip.DialogIDFromResponse(answer); err != nil {
+			return
+		}
+		if err := client.WriteRequest(newLiveDialogRequest(invite, answer, sip.ACK)); err != nil {
+			logger.Warn("live ACK retransmission failed", "error", err)
+		}
+	})
+	var answer *sip.Response
+	var cancelTx sip.ClientTransaction
+	defer func() {
+		if answer == nil {
+			transaction.Terminate()
+		}
+		if cancelTx != nil {
+			cancelTx.Terminate()
+		}
+	}()
 	s.mu.Lock()
-	session.dialog = dialog
-	if callID := dialog.InviteRequest.CallID(); callID != nil {
+	session.invite = invite
+	if callID := invite.CallID(); callID != nil {
 		session.callID = callID.Value()
 	}
 	s.mu.Unlock()
-	inviteContext, inviteCancel := context.WithTimeout(operationContext, s.inviteTimeout)
-	err = dialog.WaitAnswer(inviteContext, sipgo.AnswerOptions{})
-	inviteCancel()
-	if err != nil {
-		_ = dialog.Close()
+	if err := transaction.Init(); err != nil {
 		return s.finishFailedStart(session, err, false)
 	}
-	contentType := dialog.InviteResponse.ContentType()
+	cancelSignal := inviteContext.Done()
+	var compensation <-chan time.Time
+	var cancelResponses <-chan *sip.Response
+	var cancelDone <-chan struct{}
+	var cancelRequest *sip.Request
+	provisional := false
+	for answer == nil {
+		if cancelSignal == nil && provisional && cancelRequest == nil {
+			cancelRequest = sip.NewRequest(sip.CANCEL, *invite.Recipient.Clone())
+			cancelRequest.AppendHeader(sip.HeaderClone(invite.Via()))
+			cancelRequest.AppendHeader(sip.HeaderClone(invite.From()))
+			cancelRequest.AppendHeader(sip.HeaderClone(invite.To()))
+			cancelRequest.AppendHeader(sip.HeaderClone(invite.CallID()))
+			cseq := *invite.CSeq()
+			cseq.MethodName = sip.CANCEL
+			cancelRequest.AppendHeader(&cseq)
+			sip.CopyHeaders("Route", invite, cancelRequest)
+			cancelRequest.SetDestination(invite.Destination())
+			cancelRequest.SetTransport(invite.Transport())
+			cancelRequest.SetSource(invite.Source())
+			cancelRequest.Laddr = invite.Laddr
+			cancelContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
+			cancelTx, err = client.TransactionRequest(cancelContext, cancelRequest)
+			cancel()
+			if err != nil {
+				s.logger.Warn("live CANCEL failed", "stream_id", session.streamID, "error", err)
+			} else {
+				cancelResponses, cancelDone = cancelTx.Responses(), cancelTx.Done()
+			}
+		}
+		select {
+		case response := <-transaction.Responses():
+			if response.IsProvisional() {
+				provisional = true
+				continue
+			}
+			answer = response
+		case <-transaction.Done():
+			cause := transaction.Err()
+			if cause == nil {
+				cause = fmt.Errorf("INVITE transaction ended without a final response")
+			}
+			return s.finishFailedStart(session, cause, false)
+		case <-cancelSignal:
+			cancelSignal = nil
+			timer := time.NewTimer(s.byeTimeout)
+			defer timer.Stop()
+			compensation = timer.C
+		case response := <-cancelResponses:
+			if !response.IsProvisional() {
+				cancelTx.Terminate()
+				cancelResponses, cancelDone = nil, nil
+			}
+		case <-cancelDone:
+			cancelResponses, cancelDone = nil, nil
+		case <-compensation:
+			return s.finishFailedStart(session, inviteContext.Err(), false)
+		}
+	}
+	if answer.StatusCode < 200 || answer.StatusCode >= 300 {
+		return s.finishFailedStart(session, sipgo.ErrDialogResponse{Res: answer}, false)
+	}
+	if _, err := sip.DialogIDFromResponse(answer); err != nil {
+		return s.finishFailedStart(session, err, false)
+	}
+	s.mu.Lock()
+	session.answer = answer.Clone()
+	s.mu.Unlock()
+	if err := client.WriteRequest(newLiveDialogRequest(invite, answer, sip.ACK)); err != nil {
+		return s.finishFailedStart(session, err, true)
+	}
+	if err := inviteContext.Err(); err != nil {
+		return s.finishFailedStart(session, err, true)
+	}
+	contentType := answer.ContentType()
 	mediaType := ""
 	if contentType != nil {
 		mediaType, _, _ = mime.ParseMediaType(contentType.Value())
@@ -262,7 +355,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	answerErr := fmt.Errorf("INVITE answer is not SDP")
 	deviceSSRC := ssrc
 	if strings.EqualFold(mediaType, "application/sdp") {
-		deviceSSRC, answerErr = validateLiveUDPAnswer(dialog.InviteResponse.Body(), livePayloadType, ssrc)
+		deviceSSRC, answerErr = validateLiveUDPAnswer(answer.Body(), livePayloadType, ssrc)
 	}
 	if answerErr == nil && deviceSSRC != ssrc {
 		// 设备在 y= 中改用了自己的 SSRC，接收端必须按设备实际发送的值过滤。
@@ -270,23 +363,15 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 		answerErr = s.media.updateReceiverSSRC(operationContext, session.streamID, deviceSSRC)
 	}
 	if answerErr != nil {
-		ackContext, ackCancel := context.WithTimeout(context.Background(), s.byeTimeout)
-		_ = dialog.Ack(ackContext)
-		_ = dialog.Bye(ackContext)
-		ackCancel()
-		return s.finishFailedStart(session, fmt.Errorf("invalid INVITE answer: %w", answerErr), false)
-	}
-	ackContext, ackCancel := context.WithTimeout(operationContext, s.byeTimeout)
-	err = dialog.Ack(ackContext)
-	ackCancel()
-	if err != nil {
-		_ = dialog.Close()
-		return s.finishFailedStart(session, err, false)
+		return s.finishFailedStart(session, fmt.Errorf("invalid INVITE answer: %w", answerErr), true)
 	}
 	s.mu.Lock()
-	if session.state != liveInviting {
+	if cause := operationContext.Err(); session.state != liveInviting || cause != nil {
 		s.mu.Unlock()
-		return s.finishFailedStart(session, context.Canceled, true)
+		if cause == nil {
+			cause = context.Canceled
+		}
+		return s.finishFailedStart(session, cause, true)
 	}
 	session.state = liveStreaming
 	view := makeLiveView(session)
@@ -404,14 +489,16 @@ func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSessio
 }
 
 func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
-	if sendBye && session.dialog != nil {
+	if sendBye && session.answer != nil {
 		byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
-		if err := session.dialog.Bye(byeContext); err != nil {
+		response, err := s.sip.client.Do(byeContext, newLiveDialogRequest(session.invite, session.answer, sip.BYE))
+		if err == nil && response.StatusCode != 200 {
+			err = sipgo.ErrDialogResponse{Res: response}
+		}
+		if err != nil {
 			s.logger.Warn("live BYE failed", "stream_id", session.streamID, "error", err)
 		}
 		cancel()
-	} else if session.dialog != nil {
-		_ = session.dialog.Close()
 	}
 	cleanupContext, cancel := s.media.timeoutContext()
 	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID)
@@ -459,7 +546,11 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 	s.mu.Lock()
 	var session *liveSession
 	for _, candidate := range s.sessions {
-		if candidate.callID == callID.Value() && candidate.state == liveStreaming && candidate.dialog != nil && candidate.dialog.ID == dialogID {
+		if candidate.callID == callID.Value() && candidate.state == liveStreaming && candidate.answer != nil {
+			candidateID, err := sip.DialogIDFromResponse(candidate.answer)
+			if err != nil || candidateID != dialogID {
+				continue
+			}
 			session = candidate
 			break
 		}
@@ -479,7 +570,7 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 	session.state = liveStopping
 	s.tokens.revokeStream(session.streamID)
 	s.mu.Unlock()
-	if err := session.dialog.ReadBye(request, transaction); err != nil {
+	if err := transaction.Respond(sip.NewResponseFromRequest(request, 200, "OK", nil)); err != nil {
 		s.logger.Warn("remote BYE failed", "device_id", session.key.deviceID, "channel_id", session.key.channelID, "error", err)
 	}
 	go func() {
