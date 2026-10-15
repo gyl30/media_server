@@ -164,7 +164,6 @@ void gb28181_playback_session::run(tcp::socket socket, unsigned http_version, bo
             if (error == boost::asio::error::eof && count == 0 && next_sequence && yield.cancelled() == boost::asio::cancellation_type::none)
             {
                 // 仅确认已收到的 TCP/RTP 字节结束，不代表设备录像库存完整。
-                consumer_->expires_after(write_timeout);
                 boost::asio::async_write(*consumer_, http::make_chunk_last(), yield[error]);
             }
             shutdown();
@@ -191,7 +190,7 @@ void gb28181_playback_session::run(tcp::socket socket, unsigned http_version, bo
             return;
         }
         next_sequence = static_cast<std::uint16_t>(packet.rtp.seq + 1U);
-        consumer_->expires_after(write_timeout);
+        // 客户端暂停呈现时可长期背压；停读消费者由 signaling owner 期限删除本接收器回收。
         boost::asio::async_write(
             *consumer_, http::make_chunk(boost::asio::buffer(packet.payload, static_cast<std::size_t>(packet.payloadlen))), yield[error]);
         if (error || yield.cancelled() != boost::asio::cancellation_type::none)
@@ -199,7 +198,6 @@ void gb28181_playback_session::run(tcp::socket socket, unsigned http_version, bo
             shutdown();
             return;
         }
-        consumer_->expires_never();
     }
 }
 

@@ -633,127 +633,134 @@ void test_empty_rtp_payload()
     f.finish();
 }
 
-void test_slow_consumer_write_deadline()
+void test_paused_consumer(bool resume)
 {
     fixture f;
-    // 在握手前设置 64 KiB 接收缓冲；停读制造背压，不骤缩已建立连接的窗口。
+    // 握手前设置 64 KiB 接收缓冲；停读制造真实背压，模拟客户端暂停呈现。
     auto consumer = f.consumer(64 * 1024);
     response result;
     result.parser.body_limit(64U * 1024U * 1024U);
     result.header(f, *consumer);
     auto device = f.device();
-    f.write(*device, packet(100, "healthy-before-backpressure"));
-    result.prefix(f, *consumer, "healthy-before-backpressure");
-    error_code error;
+    std::string expected = "healthy-before-pause";
+    f.write(*device, packet(100, expected));
+    result.prefix(f, *consumer, expected);
 
-    // 此后不读 consumer，也不发设备 FIN：只有服务端的真实写期限可以正常结束观察。
-    // 单一缓冲只在完整写完成后更新序号；没有队列、生产接口或缩短后的测试超时。
-    auto bytes = packet(101, std::string(48U * 1024U, 'p'));
-    std::uint16_t sequence = 101;
+    // 设备持续发送直到写入停滞 1 秒，确认服务端写已被消费者背压阻塞。
+    std::uint16_t sequence = 100;
     std::size_t completed_writes{};
-    std::array<char, 1> probe{};
-    bool failed_deadline{};
-    bool server_closed{};
-    error_code server_close_error;
-    const auto started = std::chrono::steady_clock::now();
-    auto elapsed = std::chrono::steady_clock::duration::zero();
+    bool stalled{};
+    bool pending_complete{};
+    error_code pending_error;
+    std::vector<std::uint8_t> bytes;
     f.peer_io.restart();
-    boost::asio::steady_timer total(f.peer_io, 30s);
-    total.async_wait(
-        [&](error_code timer_error)
-        {
-            if (!timer_error)
-            {
-                failed_deadline = true;
-                error_code ignored;
-                device->close(ignored);
-                consumer->close(ignored);
-            }
-        });
+    boost::asio::steady_timer stall(f.peer_io);
+    boost::asio::steady_timer total(f.peer_io, 20s);
     std::function<void()> pump;
+    std::function<void()> arm_stall;
+    arm_stall = [&]()
+    {
+        stall.expires_after(1s);
+        stall.async_wait(
+            [&](error_code error)
+            {
+                if (!error)
+                {
+                    stalled = true;
+                    total.cancel();
+                }
+            });
+    };
     pump = [&]()
     {
+        ++sequence;
+        const std::string payload(48U * 1024U, static_cast<char>('a' + sequence % 26));
+        expected += payload;
+        bytes = packet(sequence, payload);
+        arm_stall();
         boost::asio::async_write(*device,
                                  boost::asio::buffer(bytes),
-                                 [&](error_code write_error, std::size_t count)
+                                 [&](error_code write_error, std::size_t)
                                  {
-                                     if (write_error || server_closed || failed_deadline)
+                                     if (stalled)
                                      {
+                                         pending_complete = true;
+                                         pending_error = write_error;
                                          return;
                                      }
-                                     require(count == bytes.size(), "slow consumer complete device packet");
+                                     require(!write_error, "device write before backpressure");
                                      ++completed_writes;
-                                     ++sequence;
-                                     bytes[4] = static_cast<std::uint8_t>(sequence >> 8U);
-                                     bytes[5] = static_cast<std::uint8_t>(sequence);
+                                     stall.cancel();
                                      pump();
                                  });
     };
-    device->async_read_some(boost::asio::buffer(probe),
-                            [&](error_code read_error, std::size_t)
-                            {
-                                server_closed = true;
-                                server_close_error = read_error;
-                                elapsed = std::chrono::steady_clock::now() - started;
-                                total.cancel();
-                                error_code ignored;
-                                device->cancel(ignored);
-                            });
+    total.async_wait([&](error_code error) { require(error == boost::asio::error::operation_aborted, "backpressure reached before 20 seconds"); });
     pump();
-    f.peer_io.run();
+    while (!stalled)
+    {
+        f.peer_io.run_one();
+    }
+    require(completed_writes > 10, "multiple healthy packets precede backpressure");
+    if (!resume)
+    {
+        // 模拟 owner 期限或 DELETE：关闭必须取消阻塞的写，并释放对象与端口。
+        f.receiver->shutdown();
+        while (!pending_complete)
+        {
+            f.peer_io.run_one();
+        }
+        const auto body_error = result.body(f, *consumer);
+        require(
+            body_error == http::error::partial_message || body_error == boost::asio::error::eof || body_error == boost::asio::error::connection_reset,
+            "shutdown of paused consumer reports incomplete HTTP / network close");
+        require(!result.parser.is_done(), "shutdown of paused consumer does not send final chunk");
+        f.removed_without_shutdown();
+        f.finish();
+        return;
+    }
 
-    std::cerr << "[observe] slow_consumer natural_close elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
-              << " completed_device_packets=" << completed_writes << " server_closed=" << server_closed
-              << " close_error=" << server_close_error.message() << " failure_timer=" << failed_deadline
-              << " registry_present=" << static_cast<bool>(session_registry::instance().find_receiver_session(f.id))
-              << " body=" << result.parser.get().body().size() << " buffered=" << result.buffer.size() << '\n';
-    require(!failed_deadline && server_closed, "server closes naturally before failure-only deadline");
-    require(server_close_error == boost::asio::error::eof || server_close_error == boost::asio::error::connection_reset,
-            "device observes passive server close");
-    require(elapsed >= 19s && elapsed <= 28s, "real 20 second write deadline observation window");
-    require(completed_writes > 10, "multiple healthy packets precede write timeout");
-    // 先观察服务端自然清理，再恢复读取；未读 parser 的状态不能证明线上没有最终 chunk。
+    // 停读超过原 20 秒写期限；服务端不能因消费者暂停而结束传输。
+    boost::asio::steady_timer paused(f.peer_io, 22s);
+    bool paused_elapsed{};
+    paused.async_wait([&](error_code) { paused_elapsed = true; });
+    while (!paused_elapsed)
+    {
+        f.peer_io.run_one();
+    }
+    require(!pending_complete, "device write stays blocked while consumer is paused");
+    require(static_cast<bool>(session_registry::instance().find_receiver_session(f.id)), "paused consumer keeps receiver registered");
+
+    // 恢复读取：阻塞的设备写完成后发送 FIN，消费者应收到逐字节完整正文和终止块。
+    bool body_complete{};
+    error_code body_error;
+    http::async_read(*consumer,
+                     result.buffer,
+                     result.parser,
+                     [&](error_code error, std::size_t)
+                     {
+                         body_complete = true;
+                         body_error = error;
+                     });
+    boost::asio::steady_timer resume_limit(f.peer_io, 10s);
+    bool resume_timed_out{};
+    resume_limit.async_wait([&](error_code error) { resume_timed_out = !error; });
+    bool fin_sent{};
+    while (!body_complete && !resume_timed_out)
+    {
+        f.peer_io.run_one();
+        if (pending_complete && !fin_sent)
+        {
+            require(!pending_error, "blocked device write completes after resume");
+            f.fin(*device);
+            fin_sent = true;
+        }
+    }
+    resume_limit.cancel();
+    require(body_complete && !body_error && result.parser.is_done(), "resumed consumer receives final HTTP chunk");
+    require(result.parser.get().body() == expected, "resumed consumer receives every payload byte in order");
+    std::cout << "[observe] paused_consumer completed_device_packets=" << completed_writes + 1 << " body_bytes=" << expected.size() << '\n';
+    f.closed(*device);
     f.removed_without_shutdown();
-    consumer->set_option(boost::asio::socket_base::receive_buffer_size(256 * 1024), error);
-    require(!error, "restore consumer receive buffer for final drain");
-    boost::asio::socket_base::receive_buffer_size receive_buffer;
-    consumer->get_option(receive_buffer, error);
-    require(!error, "read consumer receive buffer for drain observation");
-    const auto available = consumer->available(error);
-    require(!error, "read consumer queued bytes for drain observation");
-    std::cerr << "[observe] slow_consumer drain_start recvbuf=" << receive_buffer.value() << " kernel_available=" << available
-              << " body=" << result.parser.get().body().size() << " buffered=" << result.buffer.size() << '\n';
-    const auto drain_started = std::chrono::steady_clock::now();
-    error_code drain_error;
-    try
-    {
-        drain_error = peer_operation(f.peer_io, *consumer, [&](auto done) { http::async_read(*consumer, result.buffer, result.parser, done); }, 10s);
-    }
-    catch (...)
-    {
-        std::cerr << "[observe] slow_consumer drain_exception elapsed_ms="
-                  << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - drain_started).count()
-                  << " body=" << result.parser.get().body().size() << " buffered=" << result.buffer.size()
-                  << " parser_done=" << result.parser.is_done() << " consumer_open=" << consumer->is_open()
-                  << " registry_present=" << static_cast<bool>(session_registry::instance().find_receiver_session(f.id)) << '\n';
-        throw;
-    }
-    std::cerr << "[observe] slow_consumer drain_end elapsed_ms="
-              << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - drain_started).count()
-              << " error=" << drain_error.message() << " body=" << result.parser.get().body().size() << " buffered=" << result.buffer.size()
-              << " parser_done=" << result.parser.is_done() << '\n';
-    require(
-        drain_error == http::error::partial_message || drain_error == boost::asio::error::connection_reset || drain_error == boost::asio::error::eof,
-        "write deadline produces actual incomplete HTTP / network error");
-    require(!result.parser.is_done(), "write deadline does not send final HTTP chunk");
-    require(result.parser.get().body().starts_with("healthy-before-backpressure"), "final drain retains healthy received prefix");
-    std::cout << "[observe] slow_consumer elapsed_ms=" << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()
-              << " completed_device_packets=" << completed_writes << " received_body_bytes=" << result.parser.get().body().size()
-              << " healthy_prefix=healthy-before-backpressure\n";
-    // 服务端自行关闭和 HTTP 不完整结束均已确认，才允许清理剩余客户端资源。
-    error_code ignored;
-    consumer->close(ignored);
-    device->close(ignored);
     f.finish();
 }
 
@@ -872,7 +879,7 @@ int main()
 {
     using namespace media_server;
     media_port_pool::init(20'000, 20'007);
-    const std::array<std::pair<const char*, void (*)()>, 19> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 20> cases{{
         {"migrate_wrap_device_first", test_migrate_wrap_device_first},
         {"get_first", test_get_first},
         {"half_length", []() { test_incomplete(malformed::half_length); }},
@@ -889,7 +896,8 @@ int main()
         {"owner_stop_during_transfer", []() { test_shutdown_during_transfer(true); }},
         {"consumer_halfclose_send", test_consumer_halfclose_send},
         {"empty_rtp_payload", test_empty_rtp_payload},
-        {"slow_consumer_write_deadline", test_slow_consumer_write_deadline},
+        {"paused_consumer_resumes", []() { test_paused_consumer(true); }},
+        {"paused_consumer_shutdown", []() { test_paused_consumer(false); }},
         {"pool_exhaustion", test_pool_exhaustion},
         {"bind_failure_and_reused_lease", test_bind_failure_and_reused_lease},
     }};

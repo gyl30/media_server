@@ -10,7 +10,7 @@
 - HTTP socket 原来的 executor 不会因 move 自动变化。交接在目标 worker 通过 native handle 的 release/assign 完成，scope exit 保护尚未接管的 fd。临时 work guard 保证已投递交接在 worker 排空前执行；依赖当前 worker pool 先 join 再销毁 contexts、正常停止不用 `io_context::stop()` 的模型。
 - 所有接收、写入、订阅清理和关闭在 receiver owner worker 上执行。一次只持有一个长度最多 65,535 字节的 RFC 4571 datagram；每个 PS chunk 完成写入后再读下一包，慢消费者通过 TCP 反压，不丢旧包、不增加无界应用队列。
 - 校验公开 RTP parser 的结果、PT、SSRC、非空载荷和连续序号（含 wrap）。当前专用通道不识别夹带的 RTCP；真实设备是否复用 RTP/RTCP 尚未验证，不能据此声称通用 TCP 录像兼容。
-- 每次 HTTP 写有 20 秒期限。独立的一次消费者读检测断开及不应出现的新输入；消费者 half-close 写方向也视作离开。Qt Network 当前用法不会采用该 half-close。
+- HTTP 响应头和拒绝响应写有 20 秒期限；正文与终止块写不设期限，见下文“暂停背压”。独立的一次消费者读检测断开及不应出现的新输入；消费者 half-close 写方向也视作离开。Qt Network 当前用法不会采用该 half-close。
 
 ## 结束事实与清理
 
@@ -38,7 +38,7 @@ DEV 独立证据目录：`/var/tmp/media-server-qt-finite-ps-kLBXkM/`。GCC 实�
 
 Qt、FFmpeg、ireader 等外部依赖未全部插桩，不能将第一方 ASan 结果扩大为所有第三方库的完整内存安全证明。当前媒体组合使用明确标注的 fake `/internal/verify`；真实 Go 历史票据尚未实现。
 
-慢客户端用例在 TCP 握手前设置 64 KiB 接收缓冲，先确认健康正文，再停止读取。服务端 normal 在 20,001 ms、ASan 在 20,002 ms 自行关闭；设备分别完成 140、105 个报文，注册表已自然移除。恢复读取后分别用 5、17 ms 排空已收到的 2,668,939 字节，解析为 `partial_message`，没有 HTTP 正常终止块。失败兜底期限仍为 30 秒，排空期限仍为 10 秒，没有修改生产 20 秒期限。设备成功写入 TCP 的报文数不是服务端已经接收/交付的报文数。
+以下慢客户端结果属于初始提交；正文写期限已在后续暂停增量中删除，该用例已被替换，见“暂停背压”。慢客户端用例在 TCP 握手前设置 64 KiB 接收缓冲，先确认健康正文，再停止读取。服务端 normal 在 20,001 ms、ASan 在 20,002 ms 自行关闭；设备分别完成 140、105 个报文，注册表已自然移除。恢复读取后分别用 5、17 ms 排空已收到的 2,668,939 字节，解析为 `partial_message`，没有 HTTP 正常终止块。失败兜底期限仍为 30 秒，排空期限仍为 10 秒，没有修改生产 20 秒期限。设备成功写入 TCP 的报文数不是服务端已经接收/交付的报文数。
 
 ASan 运行保留 `makecontext/swapcontext` 支持不完整的 runtime warning；没有抑制报告或关闭泄漏检测，不能把通过解释为 sanitizer 对所有协程栈操作的完全证明。
 
@@ -84,6 +84,14 @@ Claude Code 第 44/45 轮完成设计与代码只读复审，无阻断；不把�
 端口池耗尽、真实 bind 失败及旧对象重复关闭有直接测试；没有单独强制注入 socket open、listen 或订阅失败，这些出口的归还行为由共用失败返回和 owner 清理路径审查确认，不冒称已注入所有内部失败。
 
 完整 ASan 补跑于 2026-10-16 完成；执行前后 ELF SHA 与上述 `pool-transport-elf/media_server-asan` 一致，使用 `/usr/bin/g++-16`、独立 Boost 1.92 ASan 前缀及 `/home/gyl/bin/ffmpeg`，未重配或绕过兼容守卫。有效 sanitizer 编译优化仍为 `-O1`，不因 RelWithDebInfo 名称声称是纯 `-O2` 插桩运行。终端汇总日志 SHA `a55cf2d97de141e9fe07aad0513ab3df9aac23ea38fb06c5d973e82daba9dedb`，完整子测试输出另存 `logs/pool-asan-full-ctest-01.LastTest.log`，SHA `d8ff4d7223a4f6e28a32a977048f2c0cd799180edead8a1b110868723488a77a`；未检出 AddressSanitizer/LeakSanitizer 错误、DEADLYSIGNAL 或 UBSan runtime error。协程 runtime 支持警告仍不等于全第三方插桩证明。本轮测试进程已全部退出；原有失败与旧日志没有删除。
+
+## 暂停背压
+
+INFO 暂停后客户端停止呈现，解码队列满后不再读取 HTTP；即使设备遵守暂停，此前已提交的正文写也会一直等待。原 20 秒正文写期限会在 20 秒后断开合规设备的长暂停，因此删除正文与终止块写期限，不新增 paused 状态或跨语言控制接口。停读但不断开的消费者改由 signaling owner 的绝对预算到期删除接收器回收，`safe_shutdown()` 关闭 socket 并取消在途写；消费者断开仍由独立读检测发现。signaling 不可达或删除失败时，接收器可以长期保留，这一点与设备静默时原本就依赖 owner 的边界相同。
+
+原 `slow_consumer_write_deadline` 用例替换为两项：`paused_consumer_resumes` 在 64 KiB 接收缓冲下停读直至设备写停滞 1 秒，再停读 22 秒，要求设备写仍阻塞、接收器仍注册，恢复读取后逐字节收到完整正文与终止块；`paused_consumer_shutdown` 在写阻塞时调用 `shutdown()`，要求不完整 HTTP 结束、注册表移除、对象释放与端口归还。
+
+证据：DEV `/var/tmp/qt-claude-owner-work/pause-cpp/`。`red-01.log` 为旧实现真实 RED（停读 22 秒后设备写已失败）；`green-01/02.log` 两轮 20/20；`normal-full-ctest-01.log` 完整 69/69（460.82 秒），`asan-full-ctest-01.log` ASan+UBSan 完整 69/69（463.02 秒，未检出 sanitizer 报告），两次运行前后 C++ 源码 SHA 一致（`full.source-SHA256SUMS`）。冻结 ELF：`/var/tmp/qt-claude-owner-work/pause-integration/elf/`。
 
 ## 后续仍须完成
 
