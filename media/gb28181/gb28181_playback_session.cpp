@@ -12,6 +12,7 @@
 #include <boost/scope/scope_exit.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
+#include "media/net/media_port_pool.h"
 #include "media/gb28181/gb28181_playback_session.h"
 
 extern "C"
@@ -33,13 +34,18 @@ gb28181_playback_session::gb28181_playback_session(worker_context& worker, std::
 {
 }
 
-bool gb28181_playback_session::startup(boost::asio::ip::address bind_address, std::uint16_t listen_port)
+std::optional<std::uint16_t> gb28181_playback_session::startup(boost::asio::ip::address bind_address)
 {
     if (worker_.stop_requested())
     {
-        return false;
+        return std::nullopt;
     }
-    const tcp::endpoint endpoint{std::move(bind_address), listen_port};
+    local_port_ = media_port_pool::instance().acquire();
+    if (!local_port_)
+    {
+        return std::nullopt;
+    }
+    const tcp::endpoint endpoint{std::move(bind_address), *local_port_};
     boost::system::error_code error;
     listener_.open(endpoint.protocol(), error);
     if (!error)
@@ -56,11 +62,11 @@ bool gb28181_playback_session::startup(boost::asio::ip::address bind_address, st
     }
     if (error)
     {
-        return false;
+        return std::nullopt;
     }
     const auto self = shared_from_this();
     shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->shutdown(); });
-    return static_cast<bool>(shutdown_subscription_);
+    return shutdown_subscription_ ? local_port_ : std::nullopt;
 }
 
 void gb28181_playback_session::attach(tcp::socket socket, unsigned http_version)
@@ -222,6 +228,11 @@ void gb28181_playback_session::safe_shutdown()
     {
         consumer_->socket().shutdown(tcp::socket::shutdown_both, error);
         consumer_->socket().close(error);
+    }
+    if (local_port_)
+    {
+        media_port_pool::instance().release(*local_port_);
+        local_port_.reset();
     }
 }
 

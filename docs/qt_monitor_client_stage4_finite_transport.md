@@ -4,7 +4,7 @@
 
 ## 职责与边界
 
-- 控制面 `POST /gb28181/receiver/playback/create` 复用已有强类型 receiver 配置，只接受 `tcp_passive`。沿用控制接口授权，不新增数据库、端口池或 source registry。
+- 控制面 `POST /gb28181/receiver/playback/create` 复用已有强类型 receiver 配置，只接受 `tcp_passive`。当前请求仅有 `stream_id/transport/payload_type/ssrc` 四字段，服务端复用媒体端口池分配 TCP 端口，201 返回 `{"rtp_port": P}`。沿用控制接口授权，不新增数据库、端口池或 source registry；详见后面的动态端口增量。
 - `GET /play/gb28181/<stream_id>/<token>.ps` 只接受 HTTP/1.1 GET；拒绝 query、body、无效标识及解析时已经缓冲的多余字节。先固定本地 receiver，再调用既有 `verify_stream()`。成功认领永久消费，后续失败不恢复。
 - 该 receiver 只允许一个消费者，不注册 `media_stream`，不增加 GOP/history、转码、PS muxer 或跨 worker 媒体队列。未 attach 时只监听，不读取设备数据；它的绝对回收期限由后续 signaling 历史会话 owner 管理，不借用或修改实时 receiver 的 20 秒 idle。
 - HTTP socket 原来的 executor 不会因 move 自动变化。交接在目标 worker 通过 native handle 的 release/assign 完成，scope exit 保护尚未接管的 fd。临时 work guard 保证已投递交接在 worker 排空前执行；依赖当前 worker pool 先 join 再销毁 contexts、正常停止不用 `io_context::stop()` 的模型。
@@ -55,6 +55,33 @@ ASan 运行保留 `makecontext/swapcontext` 支持不完整的 runtime warning�
 - ASan 完整首轮 `logs/server-final-asan-ctest-01.log` 为 68/69，唯一失败是既有 `accept_errors` 工具在子服务启动前把 fault-injection 库置于 ASan runtime 之前。独立原始启动复现 `logs/accept-fault-asan-startup-red-01.stderr`、`.exit` 保存运行库顺序诊断及退出码 1，不是有限传输组件的内存错误。只修测试：通过实际 ELF 的 `ldd` 确定动态 ASan 库，仅在子服务环境将其置于故障库之前；不改父 Python 环境、不禁用 sanitizer 检查或泄漏检测。保存子服务输出并要求正常退出，避免退出期 LSan 失败被工具忽略。`logs/accept-normal-green-01.log`、`logs/accept-asan-green-01.log` 分别通过，3.53/3.56 秒，均在真实注入错误后 3 秒恢复且服务退出 0；完整 ASan 重跑 69/69 的证据单列于上表，不以定向结果冒充全量。
 - 私有真实媒体 runner 首次启动前因局部变量遮蔽 `http` 模块失败，保留 `server-media-normal-01` 及日志，最小重命名后另开 `normal-02`，不覆盖失败。
 - Qt v1 清单原来指向临时借用的文件名；原文件名已恢复对照实现。原始清单保留，新增 `qt-v1-manifest-path-correction.md` 和 `SHA256SUMS.qt-v1-frozen-paths`，只映射已冻结的相同内容 SHA，不改写旧结果。
+
+## 动态 TCP 端口增量
+
+初始提交 `f528737` 的显式 `listen_port` 仅用于先验证原始有限通道；本增量移除该历史入口，不保留兼容模式。普通 GB TCP create 仍要求调用方给出非零 `listen_port` 并返回空 201，普通 UDP 仍返回 `rtp_port`，不改变其他收发接口。
+
+`gb28181_receiver_kind` 是解析/创建调用中的模式参数，不持久保存。同一解析器只解析一次共同四字段；历史模式拒绝 `listen_port`、主动 TCP、UDP 及其他多余字段。
+
+唯一新增运行资源成员是 `optional<uint16_t> local_port_`：`startup(address)` 内 acquire，失败返回空，由外层原有 `shutdown()` 回收，不试池中的下一项。accept 后监听 socket 已关闭而设备连接仍使用 P，因此租约不能从 listener 是否打开推导。`safe_shutdown()` 先关闭实际 socket，再归还并清空租约；否则旧对象重复关闭会误归还新对象已经复用的 P。没有新增关闭标记、锁、timer 或端口管理层。池按原有 P/P+1 分配单元保留，TCP 只绑定 P，不改池算法。
+
+当前增量证据仍在同一独立目录，未覆盖初始提交的 runner、结果或冻结 ELF：
+
+| 证据 | 实际范围与结果 |
+| --- | --- |
+| `logs/pool-normal-directed-01.log` | 2/2 CTest，20.05 秒；19 个传输生命周期场景和 5 组 HTTP、41 次请求 |
+| `logs/pool-asan-directed-01.log` | 相同场景 ASan+UBSan、LSan 启用，2/2 CTest，20.16 秒 |
+| `logs/pool-normal-full-build-01.log`、`logs/pool-asan-full-build-01.log` | 本增量正常和 ASan+UBSan 的全部目标构建成功，不复用前一提交的构建结论 |
+| `logs/pool-normal-full-ctest-01.log` | 本增量正常构建完整串行 CTest 69/69 通过，456.20 秒 |
+| 本增量完整 ASan CTest | NOT_RUN；仅新定向 2/2 和新冻结 ELF 的实际媒体 12 项通过。前一提交完整 ASan 69/69 的历史结果仍保留，但不冒充本增量已重跑全量 |
+| 端口生命周期 | 原 17 场景保持；每次最终清理后池 4 项全部可取回、旧端口可 bind。新增池耗尽、真实 TCP bind 冲突不重试、失败后回收、新 owner 复用后旧 owner 多次关闭不归还新租约 |
+| HTTP 契约 | 保留原 26 请求，新增 15 请求；实际控制授权、四字段及显式端口拒绝、TCP 连接、普通 TCP 空 201、普通 UDP 响应与实际 RTP/RTCP bind 占用对照。两个测试进程使用各自小池，不共享固定监听端口 |
+| `server-media-pool-normal-01/result.json`、`server-media-pool-asan-01/result.json` | 正常/ASan 各 12 项组件断言通过，8 份双轨 PS 与 4 种异常条件，逐帧/PCM/PS 验收不变；各自 receiver 自然注销 12/12，服务退出 0，无 sanitizer 错误 |
+
+新媒体 runner 为 `run_finite_playback_server_probe_v2.py`，SHA `e5ec5b9f67c0361075c8bb881fec89b12e0ae9a351c7204eafdb56c795099c07`，仅改为读取严格 201 `rtp_port`，本轮服务绑定 `127.0.0.2` 隔离，不修改系统网络。新冻结 ELF 在 `pool-transport-elf/`，normal SHA `1d1fca587eb1cb12c96eae1c668ecd3e80aa824ecc6a1873d3b426ea819cd16a`，ASan SHA `3512c4489f16e3fe4c182821a53252ad01b2301c5125f64bfc665c74a36138eb`。两个结果 SHA 分别为 `f0a828d9b1d390e5791331be2eba7a69a9cd9cc9548676de70de0ed02cad56e4`、`82c49fd73d1ea8f1488c8dc07f350d7c3d1ce080bb2b56c1a8ed5d6cb39802df`。
+
+Claude Code 第 44/45 轮完成设计与代码只读复审，无阻断；不把讨论替代实际测试。新端口路径的全量 CTest 结果单独记录，不将前一提交的全量 69/69 自动继承为该增量的全量 PASS。
+
+端口池耗尽、真实 bind 失败及旧对象重复关闭有直接测试；没有单独强制注入 socket open、listen 或订阅失败，这些出口的归还行为由共用失败返回和 owner 清理路径审查确认，不冒称已注入所有内部失败。
 
 ## 后续仍须完成
 

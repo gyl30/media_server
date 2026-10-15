@@ -171,7 +171,7 @@ std::optional<boost::asio::ip::address> required_address(const json_object& obje
 
 }    // namespace
 
-std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body)
+std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body, gb28181_receiver_kind kind)
 {
     const auto object = parse_object(body);
     if (!object)
@@ -194,6 +194,14 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
         .payload_type = *payload_type,
         .ssrc = *ssrc,
     };
+    if (kind == gb28181_receiver_kind::playback)
+    {
+        if (*transport != gb28181_transport::tcp_passive || !has_only_fields(*object, {"stream_id", "transport", "payload_type", "ssrc"}))
+        {
+            return std::nullopt;
+        }
+        return config;
+    }
     switch (*transport)
     {
         case gb28181_transport::udp:

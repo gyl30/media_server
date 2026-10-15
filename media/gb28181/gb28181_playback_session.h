@@ -22,7 +22,7 @@ class gb28181_playback_session final : public session, public std::enable_shared
     gb28181_playback_session(worker_context& worker, std::string stream_id, std::uint8_t payload_type, std::uint32_t ssrc);
 
    public:
-    [[nodiscard]] bool startup(boost::asio::ip::address bind_address, std::uint16_t listen_port);
+    [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);
     void attach(boost::asio::ip::tcp::socket socket, unsigned http_version);
     void update_ssrc(std::uint32_t ssrc);
     void shutdown() override;
@@ -37,6 +37,7 @@ class gb28181_playback_session final : public session, public std::enable_shared
     const std::string stream_id_;
     const std::uint8_t payload_type_;
     std::uint32_t ssrc_;
+    std::optional<std::uint16_t> local_port_;
     boost::asio::ip::tcp::acceptor listener_;
     boost::asio::ip::tcp::socket input_;
     std::unique_ptr<boost::beast::tcp_stream> consumer_;

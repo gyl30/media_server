@@ -19,6 +19,12 @@ enum class gb28181_transport
     tcp_passive,
 };
 
+enum class gb28181_receiver_kind
+{
+    live,
+    playback,
+};
+
 struct gb28181_receiver_config
 {
     std::string stream_id;
@@ -50,7 +56,7 @@ struct gb28181_sender_identity
     std::string sender_id;
 };
 
-[[nodiscard]] std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body);
+[[nodiscard]] std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body, gb28181_receiver_kind kind);
 [[nodiscard]] std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body);
 [[nodiscard]] std::optional<std::pair<std::string, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body);
 [[nodiscard]] std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body);

@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdint>
 #include <utility>
 #include <iostream>
 #include <exception>
@@ -20,6 +21,7 @@
 #include "config.h"
 #include "media/http/http_session.h"
 #include "media/net/worker_context.h"
+#include "media/net/media_port_pool.h"
 #include "media/core/session_registry.h"
 #include "media/gb28181/gb28181_playback_session.h"
 
@@ -34,6 +36,9 @@ constexpr auto limit = 2s;
 const std::string stream_id(64, 'a');
 const std::string token(64, 'b');
 const std::string path = "/play/gb28181/" + stream_id + "/" + token + ".ps";
+constexpr std::string_view control_token = "gb-playback-http-synthetic-control";
+constexpr std::string_view playback_create = "/gb28181/receiver/playback/create";
+constexpr std::string_view receiver_create = "/gb28181/receiver/create";
 
 void require(bool condition, std::string_view message)
 {
@@ -101,14 +106,29 @@ error_code peer_operation(boost::asio::io_context& io, tcp::socket& socket, Begi
     return result;
 }
 
-std::string request(std::string_view target, std::string_view method = "GET", std::string_view version = "HTTP/1.1", std::string_view body = {})
+std::string request(std::string_view target,
+                    std::string_view method = "GET",
+                    std::string_view version = "HTTP/1.1",
+                    std::string_view body = {},
+                    std::string_view headers = {})
 {
     std::string result = std::string(method) + " " + std::string(target) + " " + std::string(version) + "\r\nHost: localhost\r\n";
+    result += headers;
     if (!body.empty())
     {
         result += "Content-Length: " + std::to_string(body.size()) + "\r\n";
     }
     return result + "\r\n" + std::string(body);
+}
+
+std::string control_request(std::string_view target, const boost::json::object& body, std::string_view authorization)
+{
+    std::string headers = "Content-Type: application/json\r\n";
+    if (!authorization.empty())
+    {
+        headers += "Authorization: " + std::string(authorization) + "\r\n";
+    }
+    return request(target, "POST", "HTTP/1.1", boost::json::serialize(body), headers);
 }
 
 class other_receiver final : public session
@@ -122,6 +142,7 @@ class fixture
    public:
     fixture() : verify_listener(worker.io(), {boost::asio::ip::address_v4::loopback(), 0})
     {
+        application_config.control_token = control_token;
         application_config.signaling_url =
             *ada::parse<ada::url_aggregator>("http://127.0.0.1:" + std::to_string(verify_listener.local_endpoint().port()));
         worker.spawn(
@@ -173,17 +194,29 @@ class fixture
 
     void add_playback()
     {
-        // startup 没有端点 getter；预留、释放、绑定之间若被外部抢占，应明确失败而非静默重试。
-        tcp::acceptor reservation(peer_io, {boost::asio::ip::address_v4::loopback(), 0});
-        device_endpoint = reservation.local_endpoint();
-        reservation.close();
         receiver = std::make_shared<gb28181_playback_session>(worker, stream_id, 96, 0x12345678U);
         lifetime = receiver;
         on(worker,
            [this]()
            {
                require(session_registry::instance().add_receiver_session(stream_id, receiver), "register playback receiver");
-               require(receiver->startup(device_endpoint.address(), device_endpoint.port()), "playback listen");
+               const auto address = boost::asio::ip::address_v4::loopback();
+               const auto port = receiver->startup(address);
+               require(port.has_value(), "playback listen");
+               device_endpoint = {address, *port};
+           });
+    }
+
+    void observe_created_receiver(bool playback)
+    {
+        on(worker,
+           [this, playback]()
+           {
+               const auto created = session_registry::instance().find_receiver_session(stream_id);
+               require(created != nullptr, "control create registered receiver");
+               receiver = std::dynamic_pointer_cast<gb28181_playback_session>(created);
+               require(static_cast<bool>(receiver) == playback, "control create receiver kind");
+               lifetime = created;
            });
     }
 
@@ -302,9 +335,9 @@ class fixture
                    {
                        error_code ignored;
                        verify_listener.close(ignored);
-                       if (receiver)
+                       if (const auto current = session_registry::instance().find_receiver_session(stream_id))
                        {
-                           receiver->shutdown();
+                           current->shutdown();
                        }
                    });
             }
@@ -327,7 +360,7 @@ class fixture
     bool pending{true};
     unsigned verify_count{};
     std::exception_ptr verification_failure;
-    std::weak_ptr<gb28181_playback_session> lifetime;
+    std::weak_ptr<session> lifetime;
     std::vector<std::weak_ptr<http_session>> http_lifetimes;
 };
 
@@ -470,20 +503,158 @@ void denied_then_success_and_replay()
             "denial did not attach; subsequent success owns exact payload");
     f.finish();
 }
+
+std::uint16_t allocated_port(const response& result)
+{
+    require(result.parser.get()[http::field::content_type] == "application/json", "allocated port JSON content type");
+    const auto value = boost::json::parse(result.parser.get().body());
+    require(value.is_object() && value.as_object().size() == 1, "created JSON contains exactly rtp_port");
+    const auto* port = value.as_object().if_contains("rtp_port");
+    require(port != nullptr && port->is_int64() && port->as_int64() >= 20'020 && port->as_int64() <= 20'026 && port->as_int64() % 2 == 0,
+            "created port belongs to independent test pool");
+    return static_cast<std::uint16_t>(port->as_int64());
+}
+
+void playback_control_contract()
+{
+    fixture f;
+    const boost::json::object body{{"stream_id", stream_id}, {"transport", "tcp_passive"}, {"payload_type", 96}, {"ssrc", 0x12345678U}};
+    const std::string authorization = "Bearer " + std::string(control_token);
+    for (const auto rejected_authorization : {std::string_view{}, std::string_view{"Bearer wrong-synthetic-control"}})
+    {
+        auto socket = f.start(control_request(playback_create, body, rejected_authorization));
+        response rejected;
+        rejected.read(f, *socket, http::status::forbidden);
+        require(boost::json::parse(rejected.parser.get().body()) == boost::json::object{{"error", "forbidden"}}, "control authorization rejection");
+        require(!session_registry::instance().find_receiver_session(stream_id), "unauthorized create has no receiver");
+        f.inspect(0, true);
+    }
+    std::vector<boost::json::object> invalid;
+    for (const auto port : {0, 20'020})
+    {
+        auto explicit_port = body;
+        explicit_port["listen_port"] = port;
+        invalid.push_back(std::move(explicit_port));
+    }
+    auto udp = body;
+    udp["transport"] = "udp";
+    invalid.push_back(std::move(udp));
+    auto active = body;
+    active["transport"] = "tcp_active";
+    active["remote_address"] = "127.0.0.1";
+    active["remote_port"] = 20'020;
+    invalid.push_back(std::move(active));
+    for (const auto field : {"stream_id", "transport", "payload_type", "ssrc"})
+    {
+        auto missing = body;
+        missing.erase(field);
+        invalid.push_back(std::move(missing));
+    }
+    for (const auto& rejected_body : invalid)
+    {
+        auto socket = f.start(control_request(playback_create, rejected_body, authorization));
+        response rejected;
+        rejected.read(f, *socket, http::status::bad_request);
+        require(boost::json::parse(rejected.parser.get().body()) == boost::json::object{{"error", "invalid_request"}},
+                "playback create strict body rejection");
+        require(!session_registry::instance().find_receiver_session(stream_id), "invalid playback create has no receiver");
+        f.inspect(0, true);
+    }
+    auto socket = f.start(control_request(playback_create, body, authorization));
+    response created;
+    created.read(f, *socket, http::status::created);
+    const auto port = allocated_port(created);
+    f.observe_created_receiver(true);
+    auto device = f.connect({boost::asio::ip::address_v4::loopback(), port});
+    f.inspect(0, true);
+    f.finish();
+}
+
+void ordinary_receiver_contract()
+{
+    const std::string authorization = "Bearer " + std::string(control_token);
+    boost::json::object body{{"stream_id", stream_id}, {"transport", "tcp_passive"}, {"payload_type", 96}, {"ssrc", 0x12345678U}};
+    {
+        // 普通 TCP 仍由调用方指定端口；借用池中的一项仅用于隔离测试端口，不改变生产契约。
+        const auto port = media_port_pool::instance().acquire();
+        require(port.has_value(), "ordinary TCP test port lease");
+        boost::scope::scope_exit release_port([port]() { media_port_pool::instance().release(*port); });
+        fixture f;
+        for (const bool with_zero_port : {false, true})
+        {
+            auto invalid = body;
+            if (with_zero_port)
+            {
+                invalid["listen_port"] = 0;
+            }
+            auto socket = f.start(control_request(receiver_create, invalid, authorization));
+            response rejected;
+            rejected.read(f, *socket, http::status::bad_request);
+            require(!session_registry::instance().find_receiver_session(stream_id), "ordinary TCP requires explicit nonzero listen_port");
+        }
+        body["listen_port"] = *port;
+        auto socket = f.start(control_request(receiver_create, body, authorization));
+        response created;
+        created.read(f, *socket, http::status::created);
+        require(created.parser.get().body().empty() && created.parser.get()[http::field::content_type].empty(), "ordinary TCP keeps empty 201");
+        f.observe_created_receiver(false);
+        auto device = f.connect({boost::asio::ip::address_v4::loopback(), *port});
+        f.inspect(0, true);
+        f.finish();
+    }
+    {
+        fixture f;
+        body.erase("listen_port");
+        body["transport"] = "udp";
+        auto socket = f.start(control_request(receiver_create, body, authorization));
+        response created;
+        created.read(f, *socket, http::status::created);
+        const auto port = allocated_port(created);
+        f.observe_created_receiver(false);
+        // UDP connect 不证明对端 bind；同端口 bind 必须失败，才证明返回的 RTP/RTCP 对已占用。
+        for (const auto bound_port : {port, static_cast<std::uint16_t>(port + 1U)})
+        {
+            boost::asio::ip::udp::socket probe(f.peer_io, boost::asio::ip::udp::v4());
+            error_code error;
+            probe.bind({boost::asio::ip::address_v4::loopback(), bound_port}, error);
+            require(error == boost::asio::error::address_in_use, "ordinary UDP returned bound RTP/RTCP pair");
+        }
+        f.inspect(0, true);
+        f.finish();
+    }
+}
+
+void pool_returned()
+{
+    std::vector<std::uint16_t> available;
+    while (const auto port = media_port_pool::instance().acquire())
+    {
+        available.push_back(*port);
+    }
+    for (const auto port : available)
+    {
+        media_port_pool::instance().release(port);
+    }
+    require(available.size() == 4, "HTTP cases returned all media port allocations");
+}
 }    // namespace
 
 int main()
 {
-    const std::array<std::pair<const char*, void (*)()>, 3> cases{{
+    media_port_pool::init(20'020, 20'027);
+    const std::array<std::pair<const char*, void (*)()>, 5> cases{{
         {"local_prechecks", prechecks},
         {"missing_or_wrong_receiver", missing_or_wrong_receiver},
         {"denied_then_success_and_replay", denied_then_success_and_replay},
+        {"playback_control_contract", playback_control_contract},
+        {"ordinary_receiver_contract", ordinary_receiver_contract},
     }};
     for (const auto& [name, function] : cases)
     {
         try
         {
             function();
+            pool_returned();
             std::cout << "[pass] " << name << '\n';
         }
         catch (const std::exception& error)

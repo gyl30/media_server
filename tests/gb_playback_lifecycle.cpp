@@ -9,6 +9,7 @@
 #include <utility>
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
 #include <functional>
 #include <string_view>
 
@@ -16,6 +17,7 @@
 #include <boost/beast/http.hpp>
 #include <boost/scope/scope_exit.hpp>
 
+#include "media/net/media_port_pool.h"
 #include "media/core/session_registry.h"
 #include "media/gb28181/gb28181_playback_session.h"
 
@@ -110,18 +112,15 @@ class fixture
           source_thread([this]() { source.run(); }),
           owner_thread([this]() { owner.run(); })
     {
-        // startup 没有端点 getter；先预留再释放回环临时端口。
-        // 这段短窗口内的外部抢占会明确导致 startup 失败，不静默更换端口。
-        tcp::acceptor reservation(peer_io, {boost::asio::ip::address_v4::loopback(), 0});
-        endpoint = reservation.local_endpoint();
-        reservation.close();
         try
         {
             on(owner,
                [this]()
                {
                    require(session_registry::instance().add_receiver_session(id, receiver), "register receiver");
-                   require(receiver->startup(endpoint.address(), endpoint.port()), "listen on reserved port");
+                   const auto port = receiver->startup(boost::asio::ip::address_v4::loopback());
+                   require(port.has_value(), "listen on allocated port");
+                   endpoint = {boost::asio::ip::address_v4::loopback(), *port};
                });
         }
         catch (...)
@@ -247,6 +246,22 @@ class fixture
         cleanup();
         require(!session_registry::instance().find_receiver_session(id), "receiver registry released");
         require(weak.expired(), "receiver and pending coroutines released");
+        std::vector<std::uint16_t> ports;
+        while (const auto port = media_port_pool::instance().acquire())
+        {
+            ports.push_back(*port);
+        }
+        std::ranges::sort(ports);
+        require(ports == std::vector<std::uint16_t>{20'000, 20'002, 20'004, 20'006}, "all playback leases returned exactly once");
+        for (const auto port : ports)
+        {
+            media_port_pool::instance().release(port);
+        }
+        tcp::acceptor listener(peer_io);
+        listener.open(endpoint.protocol());
+        listener.set_option(tcp::acceptor::reuse_address(true));
+        listener.bind(endpoint);
+        listener.listen();
     }
 
     worker_context source;
@@ -742,13 +757,122 @@ void test_slow_consumer_write_deadline()
     f.finish();
 }
 
+void test_pool_exhaustion()
+{
+    worker_context owner;
+    std::jthread runner([&]() { owner.run(); });
+    boost::scope::scope_exit stop(
+        [&]()
+        {
+            owner.request_stop();
+            runner.join();
+        });
+    std::vector<std::shared_ptr<gb28181_playback_session>> sessions;
+    std::vector<std::uint16_t> ports;
+    on(owner,
+       [&]()
+       {
+           for (int index = 0; index < 4; ++index)
+           {
+               auto receiver = std::make_shared<gb28181_playback_session>(owner, "pool-" + std::to_string(index), 96, test_ssrc);
+               const auto port = receiver->startup(boost::asio::ip::address_v4::loopback());
+               require(port.has_value(), "allocate each available playback port");
+               ports.push_back(*port);
+               sessions.push_back(std::move(receiver));
+           }
+           auto extra = std::make_shared<gb28181_playback_session>(owner, "pool-exhausted", 96, test_ssrc);
+           require(!extra->startup(boost::asio::ip::address_v4::loopback()), "exhausted pool rejects playback startup");
+           extra->shutdown();
+       });
+    boost::asio::io_context peer;
+    for (const auto port : ports)
+    {
+        tcp::socket socket(peer);
+        socket.connect({boost::asio::ip::address_v4::loopback(), port});
+    }
+    for (const auto& receiver : sessions)
+    {
+        receiver->shutdown();
+        receiver->shutdown();
+    }
+    on(owner, []() {});
+    for (int index = 0; index < 4; ++index)
+    {
+        require(media_port_pool::instance().acquire().has_value(), "exhaustion cleanup restores every lease");
+    }
+    require(!media_port_pool::instance().acquire(), "exhaustion cleanup did not duplicate lease");
+    for (const auto port : ports)
+    {
+        media_port_pool::instance().release(port);
+    }
+}
+
+void test_bind_failure_and_reused_lease()
+{
+    auto& pool = media_port_pool::instance();
+    const auto port = pool.acquire();
+    require(port.has_value(), "reserve conflict target");
+    pool.release(*port);
+    worker_context owner;
+    std::jthread runner([&]() { owner.run(); });
+    boost::scope::scope_exit stop(
+        [&]()
+        {
+            owner.request_stop();
+            runner.join();
+        });
+    boost::asio::io_context peer;
+    tcp::acceptor blocker(peer, {boost::asio::ip::address_v4::loopback(), *port});
+    auto previous = std::make_shared<gb28181_playback_session>(owner, "bind-failure", 96, test_ssrc);
+    on(owner, [&]() { require(!previous->startup(boost::asio::ip::address_v4::loopback()), "bind failure must not retry another pool entry"); });
+    std::vector<std::uint16_t> available;
+    while (const auto value = pool.acquire())
+    {
+        require(value != port, "failed startup retains its lease until shutdown");
+        available.push_back(*value);
+    }
+    require(available.size() == 3, "bind failure acquired exactly one lease");
+    for (const auto value : available)
+    {
+        pool.release(value);
+    }
+    previous->shutdown();
+    on(owner, []() {});
+    blocker.close();
+    auto current = std::make_shared<gb28181_playback_session>(owner, "reused-port", 96, test_ssrc);
+    on(owner, [&]() { require(current->startup(boost::asio::ip::address_v4::loopback()) == port, "new owner reuses released port"); });
+    previous->shutdown();
+    previous->shutdown();
+    on(owner, []() {});
+    available.clear();
+    while (const auto value = pool.acquire())
+    {
+        require(value != port, "old shutdown must not return new owner's lease");
+        available.push_back(*value);
+    }
+    require(available.size() == 3, "new owner still owns exactly one lease");
+    tcp::socket connection(peer);
+    connection.connect({boost::asio::ip::address_v4::loopback(), *port});
+    connection.close();
+    current->shutdown();
+    on(owner, []() {});
+    const auto returned = pool.acquire();
+    require(returned == port && !pool.acquire(), "current shutdown returns its lease exactly once");
+    pool.release(*returned);
+    for (const auto value : available)
+    {
+        pool.release(value);
+    }
+}
+
 }    // namespace
 }    // namespace media_server
 
 int main()
 {
     using namespace media_server;
-    const std::array<std::pair<const char*, void (*)()>, 17> cases{{
+    media_port_pool::init(20'000, 20'007);
+    const std::array<std::pair<const char*, void (*)()>, 19> cases{{
         {"migrate_wrap_device_first", test_migrate_wrap_device_first},
         {"get_first", test_get_first},
         {"half_length", []() { test_incomplete(malformed::half_length); }},
@@ -766,6 +890,8 @@ int main()
         {"consumer_halfclose_send", test_consumer_halfclose_send},
         {"empty_rtp_payload", test_empty_rtp_payload},
         {"slow_consumer_write_deadline", test_slow_consumer_write_deadline},
+        {"pool_exhaustion", test_pool_exhaustion},
+        {"bind_failure_and_reused_lease", test_bind_failure_and_reused_lease},
     }};
     for (const auto& [name, function] : cases)
     {
