@@ -146,3 +146,39 @@ ASan/UBSan 插桩的是探针和桌面代码，`detect_leaks=1:halt_on_error=1` 
 | `pcma_rtp_sdk_probe_v2.cpp` | `b278153f061acd7f8438feb9bb7e4b05c18da1f96638450117d9985bf9e32b6f` |
 
 结论仅为音频 SDK 的前置能力与旧桌面路径回归通过。Qt 音源 owner、Go 广播 owner/API、控制失联清理、跨主机设备音频路径及真实听音仍须继续完成，不改变前述候选方案和平台未 GO 的结论。
+
+## 10. 跨 IP 广播与相机回传音轨取证
+
+在 `5efffbf` 上执行一次私有实验，run_id=`qt-crossip-5efffbf-01`。SIP 留在 TEST `172.20.63.32:15060`，PCMA/RTP 真实发送进程位于 DEV `172.20.45.187:38442/38443`，反向 INVITE 的 answer 公告 DEV 媒体地址，Contact 仍为 TEST。实时视频使用生产 `live.startLive()` 的 UDP 点播，TEST `38440/38441` 私有 collector 保存 PT96 PS，不伪造历史会话以绕过 TCP 校验，也不把 collector 当生产 C++ receiver 验收。
+
+证据目录：DEV `/var/tmp/qt-dahua-crossip-5efffbf-tVvuJa0W/`，TEST `/var/tmp/qt-dahua-crossip-5efffbf-HwhjcfYU/`。运行前的 `predeclared-method.md` 固定低电平五段非谐波音序列、6秒前后采集、分析阈值及停止条件；没有因观察结果更改素材、电平或判据。CLI、原包、PS、PCM、PTS、两机单调 trace、原始失败与 SHA 清单保留，未经脱敏不公开原始运行资料。
+
+| 项目 | 实际结果与边界 |
+| --- | --- |
+| SIP 广播 | Notify 最终2xx、独立 Result=OK、反向 INVITE/200/真实 ACK、正常 BYE；ACK 为顶层路由 |
+| 跨IP本地发送 | 400 RTP ×160 PCMA样本，共64,000样本；墙钟8.000209秒；实际SSRC 262506130，seq与timestamp步进错误均0 |
+| 定时 | 本地计划 lateness 中位0.164ms、最大0.386ms；不是网络jitter或相机播放延迟 |
+| RTCP | FFmpeg生成3份compound RTCP并本地写出；DEV RTCP端口收到0包，不等于设备丢包为0 |
+| 实时回传 | 10,261 RTP、11,921,331 PS字节；实际SSRC 200000001，保存序列1–10261连续，无观测序号缺口 |
+| 视频解码 | H.264 1920×1080；FFmpeg退出0，577帧，视频stderr空 |
+| 音频解码 | PCMA/8000/mono；384帧、184,320样本、23.04秒；FFmpeg退出0，但有两次重复DTS警告，不能称干净无警告 |
+| 源回解码 | 64,000样本，最大绝对PCM量化误差11；原PCM峰512，不是无损 |
+| 清理 | probe 27.71秒通过、外层28.912秒；live/SSRC/collector登记均0，DEV和TEST自有端口可重绑定，两个PID已消失 |
+| Sanitizer | DEV真实发送进程启用ASan+UBSan、LSan，stderr空；SDK本体及外部解码CLI未插桩，Go探针不是race运行 |
+| 相机配置 | 前后查询记录一致，Speaker及音量未改；其他未知配置名返回400不推断设备不支持 |
+
+**音频路径验收结果为 INCONCLUSIVE。** 原音频每帧480样本应占60ms，但PS音频PTS差值主要为40/80ms及其10ms偏移，另有2次重复PTS，最大相对样本时长误差70ms。帧样本总数与解码PCM一致，不能把PTS不均匀直接写成丢音。预先规定的3ms连续性前提不满足，原分析退出2并保留，未改阈值宣称通过。
+
+另外保存的 `sample-domain-diagnostic.json` 明确为非验收诊断：忽略PTS前提后，全部五段统一偏移的包络相关仅0.637880（要求0.80），部分对应频带增强，但697/1229Hz包络及941Hz多项失败。此探索结果同样 INCONCLUSIVE，不能覆盖原结果，不能由部分频带增强宣称完整跨IP音频路径或物理扬声器验收通过。
+
+另记录两次私有工具准备失败：首次未生成overlay文件，Go编译入口报缺文件（原输出仅在本轮执行记录，无独立原始日志）；一次非交互SSH的PATH找不到Claude，stderr文件保留，改用已存在的绝对路径后完成只读审查。这些不是媒体运行失败。Claude Code及独立Codex运行前复审无P0/P1；修正本轮supervisor异常清理、避免覆盖已发布的本地发送结果、授权剩余预算检查后执行，没有修改生产状态或相机设置。
+
+| 文件 | SHA256 |
+| --- | --- |
+| Go probe ELF（DEV/TEST一致） | `3d19afe0d9bca8e881fada5537a754bc101dcc50cedb6e0a540a71b7a6c6f463` |
+| ASan sender ELF | `373f607a3092ab01f7d2d7dd971d3f8b38c7930640a957102efb4f3939147cb8` |
+| `analysis.json` | `d0e4dde708bc3267dda0598c2fcbb80aaff0b33d72e4c3ede08c0c10bc885fee` |
+| 原判据 `audio-association.json` | `0ef99b148fc0ee36c0a866ad340a7e2d7c9d752ba8cde506674758dc9c5c850b` |
+| 非验收 `sample-domain-diagnostic.json` | `61131916e14815552d4fc2fcefadf22a3ded594f9a91c206545afd2a35ed4c13` |
+
+本轮没有实施 Qt 麦克风音源、Go 正式广播 owner/API，也没有人工听音或完整对讲；未运行全量服务端/桌面 CTest、Go test/vet/race。第9节的桌面回归不替代本次设备路径验收。候选A仍未达到既定采纳门槛，不新增中继或改写既有协议来追求全PASS。
