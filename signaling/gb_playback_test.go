@@ -320,7 +320,7 @@ func TestGBPlaybackIndependentFromLive(t *testing.T) {
 	results := make(chan result, 2)
 	for range 2 {
 		go func() {
-			ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1760000000, 1760000010)
+			ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1760000000, 1760000010, sessionPlayback, 1)
 			results <- result{ticket, err}
 		}()
 	}

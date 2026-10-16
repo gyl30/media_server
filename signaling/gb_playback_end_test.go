@@ -106,7 +106,7 @@ func TestPlaybackEndDuringAnswerUpdate(t *testing.T) {
 				defer cancel()
 				s.live.shutdown(ctx)
 			}()
-			ticket, err := s.startPlayback(t.Context(), deviceID, channelID, 1700000000, 1700000002)
+			ticket, err := s.startPlayback(t.Context(), deviceID, channelID, 1700000000, 1700000002, sessionPlayback, 1)
 			if err != nil {
 				t.Fatal(err)
 			}

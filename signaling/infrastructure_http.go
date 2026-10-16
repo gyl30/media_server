@@ -78,7 +78,12 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/records/query", s.handleRecordQuery)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/ptz", s.handlePTZ)
 	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/play", s.handleChannelPlay)
-	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/playback", s.handlePlaybackCreate)
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/playback", func(w http.ResponseWriter, r *http.Request) {
+		s.handleHistoryCreate(w, r, sessionPlayback)
+	})
+	routes.HandleFunc("POST /api/devices/{device_id}/channels/{channel_id}/download", func(w http.ResponseWriter, r *http.Request) {
+		s.handleHistoryCreate(w, r, sessionDownload)
+	})
 	routes.HandleFunc("DELETE /api/playbacks/{playback_id}", s.handlePlaybackDelete)
 	routes.HandleFunc("POST /api/playbacks/{playback_id}/{action}", s.handlePlaybackControl)
 	routes.HandleFunc("POST /api/play", s.handlePlay)

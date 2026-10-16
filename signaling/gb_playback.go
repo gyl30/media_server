@@ -36,18 +36,40 @@ type playbackTicket struct {
 	Deadline   time.Time `json:"deadline"`
 }
 
-func (s *infrastructureServer) handlePlaybackCreate(writer http.ResponseWriter, request *http.Request) {
+// historyMediaSeconds 是按倍速传完录像所需的整秒数，向上取整且不做加法溢出。
+func historyMediaSeconds(startTime, endTime int64, speed int) int64 {
+	duration := endTime - startTime
+	seconds := duration / int64(speed)
+	if duration%int64(speed) != 0 {
+		seconds++
+	}
+	return seconds
+}
+
+// handleHistoryCreate 创建历史回放或下载实例；下载要求 speed 为 1/2/4，回放不接受 speed。
+func (s *infrastructureServer) handleHistoryCreate(writer http.ResponseWriter, request *http.Request, session gbSession) {
 	var command struct {
 		StartTime int64 `json:"start_time"`
 		EndTime   int64 `json:"end_time"`
+		// 区分字段缺失与 0/null：回放只要出现 speed 就拒绝。
+		Speed json.RawMessage `json:"speed"`
 	}
 	deviceID, channelID := request.PathValue("device_id"), request.PathValue("channel_id")
+	var speed int
 	if !validDigits(deviceID, 20) || !validDigits(channelID, 20) || !decodeJSON(writer, request, &command) || command.StartTime <= 0 || command.EndTime <= command.StartTime ||
-		command.EndTime-command.StartTime > int64((time.Duration(math.MaxInt64)-s.tokenTTL-playbackCompletionGrace)/time.Second) {
+		(session == sessionPlayback && command.Speed != nil) ||
+		(session == sessionDownload && (json.Unmarshal(command.Speed, &speed) != nil || !validDownloadSpeed(speed))) {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	result, err := s.startPlayback(request.Context(), deviceID, channelID, command.StartTime, command.EndTime)
+	if session == sessionPlayback {
+		speed = 1
+	}
+	if historyMediaSeconds(command.StartTime, command.EndTime, speed) > int64((time.Duration(math.MaxInt64)-s.tokenTTL-playbackCompletionGrace)/time.Second) {
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	result, err := s.startPlayback(request.Context(), deviceID, channelID, command.StartTime, command.EndTime, session, speed)
 	if err != nil {
 		switch {
 		case errors.Is(err, errDeviceNotFound):
@@ -80,7 +102,7 @@ func (s *infrastructureServer) handlePlaybackCreate(writer http.ResponseWriter, 
 	}
 }
 
-func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, channelID string, startTime, endTime int64) (playbackTicket, error) {
+func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, channelID string, startTime, endTime int64, purpose gbSession, speed int) (playbackTicket, error) {
 	live := s.live
 	live.mu.Lock()
 	if _, err := live.sip.deviceStore.get(ctx, deviceID); err != nil {
@@ -104,7 +126,7 @@ func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, chan
 		live.mu.Unlock()
 		return playbackTicket{}, err
 	}
-	operationContext, cancel := context.WithTimeout(context.Background(), time.Duration(endTime-startTime)*time.Second+s.tokenTTL+playbackCompletionGrace)
+	operationContext, cancel := context.WithTimeout(context.Background(), time.Duration(historyMediaSeconds(startTime, endTime, speed))*time.Second+s.tokenTTL+playbackCompletionGrace)
 	id := uuid.NewString()
 	session := &liveSession{
 		key: liveKey{deviceID: deviceID, channelID: channelID, historyID: id}, streamID: id, ssrc: ssrc,
@@ -173,7 +195,7 @@ func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, chan
 		live.mu.Unlock()
 		body, err := buildGBSDP(liveSDPParameters{
 			channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: port, payloadType: livePayloadType, ssrc: ssrc,
-		}, startTime, endTime, playbackReceiver)
+		}, startTime, endTime, purpose, speed)
 		if err != nil {
 			_, err = live.finishFailedStart(session, err, false)
 		} else {

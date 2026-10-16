@@ -194,7 +194,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 
 	sdpBody, err := buildGBSDP(liveSDPParameters{
 		channelID: channelID, mediaIP: s.media.server.mediaIP, rtpPort: session.rtpPort, payloadType: livePayloadType, ssrc: ssrc,
-	}, 0, 0, liveReceiver)
+	}, 0, 0, sessionPlay, 0)
 	if err != nil {
 		return s.finishFailedStart(session, err, false)
 	}

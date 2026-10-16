@@ -18,9 +18,24 @@ type liveSDPParameters struct {
 	ssrc        uint32
 }
 
-func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, kind receiverKind) ([]byte, error) {
-	if kind == playbackReceiver && (startTime < 0 || endTime <= startTime) {
+// gbSession 是 INVITE 的 SIP 会话用途；接收器路径与传输方式仍由 receiverKind 表达。
+type gbSession int
+
+const (
+	sessionPlay gbSession = iota
+	sessionPlayback
+	sessionDownload
+)
+
+// validDownloadSpeed 是本平台支持的下载倍速子集；设备是否支持以实际应答为准。
+func validDownloadSpeed(speed int) bool { return speed == 1 || speed == 2 || speed == 4 }
+
+func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, session gbSession, speed int) ([]byte, error) {
+	if session != sessionPlay && (startTime < 0 || endTime <= startTime) {
 		return nil, fmt.Errorf("invalid playback SDP time range")
+	}
+	if session == sessionDownload && !validDownloadSpeed(speed) {
+		return nil, fmt.Errorf("invalid download speed")
 	}
 	ip := net.ParseIP(parameters.mediaIP)
 	if ip == nil || ip.IsUnspecified() || parameters.rtpPort == 0 || parameters.payloadType > 127 || parameters.ssrc == 0 || !validDigits(parameters.channelID, 20) {
@@ -50,13 +65,19 @@ func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, kind rec
 			},
 		}},
 	}
-	if kind == playbackReceiver {
+	if session != sessionPlay {
 		description.SessionName = "Playback"
+		if session == sessionDownload {
+			description.SessionName = "Download"
+		}
 		description.URI = &url.URL{Opaque: parameters.channelID + ":0"}
 		description.TimeDescriptions[0].Timing = sdp.Timing{StartTime: uint64(startTime), StopTime: uint64(endTime)}
 		media := description.MediaDescriptions[0]
 		media.MediaName.Protos = []string{"TCP", "RTP", "AVP"}
 		media.Attributes = append(media.Attributes, sdp.NewAttribute("setup", "passive"), sdp.NewAttribute("connection", "new"))
+		if session == sessionDownload {
+			media.Attributes = append(media.Attributes, sdp.NewAttribute("downloadspeed", strconv.Itoa(speed)))
+		}
 	}
 	body, err := description.Marshal()
 	if err != nil {

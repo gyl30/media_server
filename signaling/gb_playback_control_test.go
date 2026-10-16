@@ -94,7 +94,7 @@ func newPlaybackControlPeer(t *testing.T) *playbackControlPeer {
 			t.Error("SIP server did not exit")
 		}
 	})
-	ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1700000000, 1700000010)
+	ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1700000000, 1700000010, sessionPlayback, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

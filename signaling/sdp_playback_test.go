@@ -8,7 +8,7 @@ import (
 func TestGBSDPBuildLiveContractUnchanged(t *testing.T) {
 	body, err := buildGBSDP(liveSDPParameters{
 		channelID: "34020000001320000002", mediaIP: "192.168.1.64", rtpPort: 30000, payloadType: 96, ssrc: 200000001,
-	}, 0, 0, liveReceiver)
+	}, 0, 0, sessionPlay, 0)
 	want := "v=0\r\no=34020000001320000002 0 0 IN IP4 192.168.1.64\r\ns=Play\r\nc=IN IP4 192.168.1.64\r\nt=0 0\r\nm=video 30000 RTP/AVP 96\r\na=recvonly\r\na=rtpmap:96 PS/90000\r\ny=0200000001\r\nf=v/2/5/25/1/4000a/1/8/1\r\n"
 	if err != nil || string(body) != want {
 		t.Fatalf("live SDP changed: %q err=%v", body, err)
@@ -19,7 +19,7 @@ func TestGBPlaybackSDPBuild(t *testing.T) {
 	parameters := liveSDPParameters{
 		channelID: "34020000001320000002", mediaIP: "192.168.1.64", rtpPort: 30001, payloadType: 96, ssrc: 1200000001,
 	}
-	body, err := buildGBSDP(parameters, 1760000000, 1760000010, playbackReceiver)
+	body, err := buildGBSDP(parameters, 1760000000, 1760000010, sessionPlayback, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,12 +33,12 @@ func TestGBPlaybackSDPBuild(t *testing.T) {
 		t.Fatalf("GB numeric shorthand u rejected: ssrc=%d err=%v", ssrc, err)
 	}
 	for _, times := range [][2]int64{{-1, 10}, {10, 10}, {11, 10}} {
-		if _, err := buildGBSDP(parameters, times[0], times[1], playbackReceiver); err == nil {
+		if _, err := buildGBSDP(parameters, times[0], times[1], sessionPlayback, 1); err == nil {
 			t.Errorf("accepted invalid time range %v", times)
 		}
 	}
 	parameters.mediaIP = "2001:db8::10"
-	if body, err := buildGBSDP(parameters, 0, 10, playbackReceiver); err != nil || !strings.Contains(string(body), "IN IP6 2001:db8::10") {
+	if body, err := buildGBSDP(parameters, 0, 10, sessionPlayback, 1); err != nil || !strings.Contains(string(body), "IN IP6 2001:db8::10") {
 		t.Fatalf("IPv6 build: %s %v", body, err)
 	}
 }
