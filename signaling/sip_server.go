@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"log/slog"
 	"net"
 	"strconv"
@@ -30,6 +31,7 @@ type sipServer struct {
 	catalogQueue   chan registeredDevice
 	messageSN      atomic.Uint32
 	pendingQueries map[int]pendingDeviceQuery
+	alarms         *alarmLog
 }
 
 func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipServer, error) {
@@ -76,6 +78,7 @@ func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipSe
 		advertisePort:  advertisePort,
 		catalogQueue:   make(chan registeredDevice, 256),
 		pendingQueries: make(map[int]pendingDeviceQuery),
+		alarms:         &alarmLog{generation: rand.Text()},
 	}
 	server.OnRegister(result.handleRegister)
 	server.OnMessage(result.handleMessage)

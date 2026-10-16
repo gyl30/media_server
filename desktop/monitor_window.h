@@ -10,6 +10,7 @@
 #include "desktop/platform_client.h"
 
 class QLabel;
+class QTimer;
 class QSpinBox;
 class QLineEdit;
 class QComboBox;
@@ -43,6 +44,7 @@ class monitor_window final : public QMainWindow
     void set_layout(int count);
     void select_view(playback_view* view);
     void update_view_controls();
+    void poll_alarms();
     void stop_all();
     void take_snapshot();
     void query_catalog();
@@ -69,6 +71,11 @@ class monitor_window final : public QMainWindow
     QPushButton* sound_;
     QPushButton* record_pause_;
     QPushButton* record_live_;
+    QTreeWidget* alarm_list_;
+    QLabel* alarm_status_;
+    QTimer* alarm_timer_;
+    QPointer<QNetworkReply> alarm_reply_;
+    QString alarm_cursor_{QStringLiteral("0")};
     QPushButton* catalog_;
     QPushButton* record_query_;
     QPushButton* device_info_;

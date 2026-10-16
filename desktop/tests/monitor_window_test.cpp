@@ -1,5 +1,6 @@
 #include <memory>
 #include <utility>
+#include <algorithm>
 
 #include <QMap>
 #include <QTest>
@@ -28,6 +29,7 @@
 #include <QJsonObject>
 #include <QPushButton>
 #include <QTreeWidget>
+#include <QTabWidget>
 #include <QMetaObject>
 #include <QMessageBox>
 #include <QHostAddress>
@@ -119,6 +121,11 @@ class platform_fixture final : public QObject
                                     {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
                                 return;
                             }
+                            if (path.startsWith("/api/alarms/since/"))
+                            {
+                                alarm_polls.append({socket, bytes.left(bytes.indexOf("\r\n")), path, {}});
+                                return;
+                            }
                             if (path == "/api/play")
                             {
                                 const auto source = QJsonDocument::fromJson(bytes.mid(end + 4, length)).object().value("source").toObject();
@@ -174,6 +181,7 @@ class platform_fixture final : public QObject
     QList<pending_query> queries;
     QList<pending_query> record_plays;
     QList<pending_query> gb_plays;
+    QList<pending_query> alarm_polls;
 };
 
 QByteArray device_query_response(const QString& id, const QString& command, const QString& marker, const QString& result = QStringLiteral("OK"))
@@ -484,6 +492,177 @@ class monitor_window_test final : public QObject
         QCOMPARE(other->status(), other_status);
         QVERIFY(live_peer && live_peer->state() == QAbstractSocket::ConnectedState);
         QCOMPARE(live->status(), live_status);
+        window.close();
+    }
+
+    // 报警页可见时按游标增量轮询：只推进到实际返回的最后一条；平台重置游标时清空重建；离开报警页停止轮询。
+    void alarm_tab_polls_incrementally()
+    {
+        platform_fixture api;
+        QVERIFY(api.start());
+        monitor_window window;
+        window.show();
+        QTabWidget* controls = nullptr;
+        int alarm_index = -1;
+        for (auto* tabs : window.findChildren<QTabWidget*>())
+        {
+            for (int index = 0; index < tabs->count(); ++index)
+            {
+                if (tabs->tabText(index) == QStringLiteral("报警"))
+                {
+                    controls = tabs;
+                    alarm_index = index;
+                }
+            }
+        }
+        auto* list = window.findChild<QTreeWidget*>(QStringLiteral("alarm_list"));
+        auto* status = window.findChild<QLabel*>(QStringLiteral("alarm_status"));
+        QVERIFY(controls && list && status);
+        QTest::qWait(2500);
+        QCOMPARE(api.alarm_polls.size(), 0);
+        controls->setCurrentIndex(alarm_index);
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 1, 1000);
+        QCOMPARE(api.alarm_polls[0].path, QByteArray("/api/alarms/since/0"));
+        const auto alarm = [](int seq, const QString& description)
+        {
+            return QJsonObject{{"seq", seq},
+                               {"device_id", "34020000001320000001"},
+                               {"source_id", "34020000001310000001"},
+                               {"priority", "1"},
+                               {"method", "5"},
+                               {"alarm_time", QStringLiteral("2026-10-16T12:00:0%1").arg(seq)},
+                               {"description", description}};
+        };
+        respond(api.alarm_polls[0].socket,
+                200,
+                QJsonDocument(QJsonObject{{"alarms", QJsonArray{alarm(1, "第一条"), alarm(2, "第二条")}},
+                                          {"next_cursor", "first.2"},
+                                          {"latest", 5},
+                                          {"reset", false},
+                                          {"gap", false}})
+                    .toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 2, 1000);
+        QCOMPARE(list->topLevelItem(0)->text(5), QStringLiteral("第二条"));
+        // 平台最大序号是 5，但只推进到实际返回的 2。
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 2, 3000);
+        QCOMPARE(api.alarm_polls[1].path, QByteArray("/api/alarms/since/first.2"));
+        respond(
+            api.alarm_polls[1].socket,
+            200,
+            QJsonDocument(
+                QJsonObject{{"alarms", QJsonArray{alarm(1, "重启后")}}, {"next_cursor", "second.1"}, {"latest", 5}, {"reset", true}, {"gap", false}})
+                .toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), 1, 1000);
+        QCOMPARE(list->topLevelItem(0)->text(5), QStringLiteral("重启后"));
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 3, 3000);
+        QCOMPARE(api.alarm_polls[2].path, QByteArray("/api/alarms/since/second.1"));
+        respond(api.alarm_polls[2].socket, 503, R"({"error":"fixture_unavailable"})");
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("报警查询失败")), 1000);
+        QCOMPARE(list->topLevelItemCount(), 1);
+        controls->setCurrentIndex(0);
+        const auto polls = api.alarm_polls.size();
+        QTest::qWait(2500);
+        QCOMPARE(api.alarm_polls.size(), polls);
+        window.close();
+    }
+
+    void alarm_reload_cancels_old_request()
+    {
+        platform_fixture api;
+        QVERIFY(api.start());
+        monitor_window window;
+        window.show();
+        auto* devices = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        QTRY_COMPARE_WITH_TIMEOUT(devices->topLevelItemCount(), 3, 1000);
+        QTabWidget* controls = nullptr;
+        for (auto* tabs : window.findChildren<QTabWidget*>())
+        {
+            const auto index = tabs->count() - 1;
+            if (index >= 0 && tabs->tabText(index) == QStringLiteral("报警"))
+            {
+                controls = tabs;
+                tabs->setCurrentIndex(index);
+            }
+        }
+        QVERIFY(controls);
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 1, 1000);
+        QPointer<QNetworkReply> old_reply;
+        for (auto* reply : window.findChildren<QNetworkReply*>())
+        {
+            if (reply->url().path().startsWith(QStringLiteral("/api/alarms/")))
+            {
+                old_reply = reply;
+            }
+        }
+        QVERIFY(old_reply && !old_reply->isFinished());
+        platform_fixture second;
+        QVERIFY(second.start());
+        window.findChild<QLineEdit*>(QStringLiteral("platform_address"))
+            ->setText(QStringLiteral("http://127.0.0.1:%1").arg(second.server.serverPort()));
+        window.findChild<QPushButton*>(QStringLiteral("refresh_devices"))->click();
+        QTRY_VERIFY_WITH_TIMEOUT(!old_reply || old_reply->isFinished(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(second.alarm_polls.size(), 1, 3000);
+        QCOMPARE(second.alarm_polls[0].path, QByteArray("/api/alarms/since/0"));
+        respond(second.alarm_polls[0].socket, 200, R"({"alarms":[],"next_cursor":"new.0","latest":0,"reset":false,"gap":false})");
+        auto* status = window.findChild<QLabel*>(QStringLiteral("alarm_status"));
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("报警 0 条")), 1000);
+        window.close();
+    }
+
+    void alarm_bound_and_invalid_response()
+    {
+        platform_fixture api;
+        QVERIFY(api.start());
+        monitor_window window;
+        auto* devices = window.findChild<QTreeWidget*>(QStringLiteral("device_tree"));
+        QTRY_COMPARE_WITH_TIMEOUT(devices->topLevelItemCount(), 3, 1000);
+        bool opened = false;
+        for (auto* tabs : window.findChildren<QTabWidget*>())
+        {
+            for (int index = 0; index < tabs->count(); ++index)
+            {
+                if (tabs->tabText(index) == QStringLiteral("报警"))
+                {
+                    tabs->setCurrentIndex(index);
+                    opened = true;
+                }
+            }
+        }
+        QVERIFY(opened);
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 1, 1000);
+        // 一个请求尚未返回时，定时器不能再启动第二个请求。
+        QTest::qWait(2100);
+        QCOMPARE(api.alarm_polls.size(), 1);
+        auto* list = window.findChild<QTreeWidget*>(QStringLiteral("alarm_list"));
+        auto* status = window.findChild<QLabel*>(QStringLiteral("alarm_status"));
+        for (int page = 0; page < 3; ++page)
+        {
+            QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), page + 1, 3000);
+            QJsonArray records;
+            for (int seq = page * 200 + 1; seq <= (page + 1) * 200; ++seq)
+            {
+                records.append(QJsonObject{{"seq", seq}, {"description", QString::number(seq)}});
+            }
+            respond(api.alarm_polls[page].socket,
+                    200,
+                    QJsonDocument(QJsonObject{{"alarms", records},
+                                              {"next_cursor", QStringLiteral("log.%1").arg((page + 1) * 200)},
+                                              {"latest", 600},
+                                              {"reset", false},
+                                              {"gap", page == 2}})
+                        .toJson());
+            QTRY_COMPARE_WITH_TIMEOUT(list->topLevelItemCount(), std::min((page + 1) * 200, 500), 1000);
+        }
+        QCOMPARE(list->topLevelItem(0)->text(5), QStringLiteral("600"));
+        QCOMPARE(list->topLevelItem(499)->text(5), QStringLiteral("101"));
+        QVERIFY(status->text().contains(QStringLiteral("容量淘汰")));
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 4, 3000);
+        QCOMPARE(api.alarm_polls[3].path, QByteArray("/api/alarms/since/log.600"));
+        respond(api.alarm_polls[3].socket, 200, R"({"alarms":[],"latest":600})");
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("响应无效")), 1000);
+        QCOMPARE(list->topLevelItemCount(), 500);
+        QTRY_COMPARE_WITH_TIMEOUT(api.alarm_polls.size(), 5, 3000);
+        QCOMPARE(api.alarm_polls[4].path, QByteArray("/api/alarms/since/log.600"));
         window.close();
     }
 

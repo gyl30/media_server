@@ -49,6 +49,10 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 		s.handleDeviceQueryResponse(req, tx)
 		return
 	}
+	if message.XMLName.Local == "Notify" && message.CmdType == "Alarm" {
+		s.handleAlarm(req, tx)
+		return
+	}
 	if message.XMLName.Local == "Notify" && message.CmdType == "MediaStatus" && message.NotifyType == "121" {
 		s.live.handlePlaybackEnd(req, tx, message.DeviceID)
 		return

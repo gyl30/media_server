@@ -52,6 +52,9 @@ monitor_window::monitor_window(QWidget* parent)
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
       record_pause_(new QPushButton(QStringLiteral("暂停回放"), this)),
       record_live_(new QPushButton(QStringLiteral("开始录制"), this)),
+      alarm_list_(new QTreeWidget(this)),
+      alarm_status_(new QLabel(this)),
+      alarm_timer_(new QTimer(this)),
       catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
       record_query_(new QPushButton(QStringLiteral("录像查询"), this)),
       device_info_(new QPushButton(QStringLiteral("设备信息"), this)),
@@ -315,6 +318,40 @@ monitor_window::monitor_window(QWidget* parent)
     preset_result_->setWordWrap(true);
     preset_layout->addWidget(preset_result_);
     controls->addTab(presets, QStringLiteral("预置位"));
+    auto* alarms = new QWidget(controls);
+    auto* alarm_layout = new QVBoxLayout(alarms);
+    alarm_layout->setContentsMargins(4, 4, 4, 4);
+    alarm_list_->setObjectName(QStringLiteral("alarm_list"));
+    alarm_list_->setHeaderLabels({QStringLiteral("报警时间"),
+                                  QStringLiteral("设备"),
+                                  QStringLiteral("报警源"),
+                                  QStringLiteral("级别"),
+                                  QStringLiteral("方式"),
+                                  QStringLiteral("描述")});
+    alarm_list_->setRootIsDecorated(false);
+    alarm_layout->addWidget(alarm_list_, 1);
+    alarm_status_->setObjectName(QStringLiteral("alarm_status"));
+    alarm_status_->setTextFormat(Qt::PlainText);
+    alarm_status_->setWordWrap(true);
+    alarm_status_->setText(QStringLiteral("显示设备上报的近期报警；平台只在内存保留最近 1000 条，重启后清空"));
+    alarm_layout->addWidget(alarm_status_);
+    const auto alarm_index = controls->addTab(alarms, QStringLiteral("报警"));
+    // 只在报警页可见时轮询；切回时按游标补读平台保留的近期报警。
+    alarm_timer_->setInterval(2000);
+    connect(alarm_timer_, &QTimer::timeout, this, &monitor_window::poll_alarms);
+    connect(controls,
+            &QTabWidget::currentChanged,
+            this,
+            [this, alarm_index](int index)
+            {
+                if (index != alarm_index)
+                {
+                    alarm_timer_->stop();
+                    return;
+                }
+                alarm_timer_->start();
+                poll_alarms();
+            });
     controls->setMaximumHeight(240);
     side->addWidget(controls);
     split->addWidget(sidebar);
@@ -525,6 +562,57 @@ void monitor_window::update_view_controls()
     record_live_->setText(selected_->recording() ? QStringLiteral("停止录制") : QStringLiteral("开始录制"));
     record_pause_->setEnabled(selected_->record_control_ready());
     record_pause_->setText(selected_->record_paused() ? QStringLiteral("继续回放") : QStringLiteral("暂停回放"));
+}
+
+void monitor_window::poll_alarms()
+{
+    if (!listing_ || alarm_reply_)
+    {
+        return;
+    }
+    alarm_reply_ = client_.request(
+        "GET",
+        QStringLiteral("/api/alarms/since/%1").arg(QString::fromLatin1(QUrl::toPercentEncoding(alarm_cursor_))),
+        {},
+        listing_,
+        [this](platform_response response)
+        {
+            alarm_reply_.clear();
+            const auto result = response.document.object();
+            const auto alarms = result.value(QStringLiteral("alarms"));
+            const auto next = result.value(QStringLiteral("next_cursor")).toString();
+            if (!response.ok() || !alarms.isArray() || next.isEmpty())
+            {
+                alarm_status_->setText(
+                    QStringLiteral("报警查询失败：%1；稍后自动再查").arg(response.ok() ? QStringLiteral("响应无效") : response.error));
+                return;
+            }
+            // 游标包含平台实例身份，重启后即使序号已追平，也按新实例的记录重建。
+            if (result.value(QStringLiteral("reset")).toBool())
+            {
+                alarm_list_->clear();
+            }
+            for (const auto& value : alarms.toArray())
+            {
+                const auto alarm = value.toObject();
+                auto* item = new QTreeWidgetItem({alarm.value(QStringLiteral("alarm_time")).toString(),
+                                                  alarm.value(QStringLiteral("device_id")).toString(),
+                                                  alarm.value(QStringLiteral("source_id")).toString(),
+                                                  alarm.value(QStringLiteral("priority")).toString(),
+                                                  alarm.value(QStringLiteral("method")).toString(),
+                                                  alarm.value(QStringLiteral("description")).toString()});
+                alarm_list_->insertTopLevelItem(0, item);
+            }
+            alarm_cursor_ = next;
+            while (alarm_list_->topLevelItemCount() > 500)
+            {
+                delete alarm_list_->takeTopLevelItem(alarm_list_->topLevelItemCount() - 1);
+            }
+            alarm_status_->setText(result.value(QStringLiteral("gap")).toBool()
+                                       ? QStringLiteral("部分未读报警已被平台容量淘汰；当前显示 %1 条").arg(alarm_list_->topLevelItemCount())
+                                       : QStringLiteral("报警 %1 条（最多显示 500 条）").arg(alarm_list_->topLevelItemCount()));
+        },
+        5'000);
 }
 
 void monitor_window::set_layout(int count)
@@ -1022,6 +1110,13 @@ void monitor_window::reload_devices()
     delete listing_;
     control_context_ = nullptr;
     listing_ = new QObject(this);
+    if (alarm_reply_)
+    {
+        alarm_reply_->abort();
+        alarm_reply_.clear();
+    }
+    alarm_cursor_ = QStringLiteral("0");
+    alarm_list_->clear();
     catalog_->setEnabled(true);
     devices_->clear();
     reset_device_query();

@@ -71,7 +71,9 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、回放 seek/倍速、报警和对讲尚未实现，不以禁用按钮冒充功能。
+报警页显示已注册设备及所属通道上报的近期报警，激活时每 2 秒读取一次，最多显示 500 条。平台只在内存保留最近 1000 条；重启会重置列表，容量淘汰会提示缺口，不是持久化或无损报警档案。查询失败保留已有列表，切换平台会取消旧请求。当前没有报警订阅、复位或广播/对讲。接口、游标和验收边界见 [阶段六报警](../docs/qt_monitor_client_stage6_alarms.md)。
+
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、回放 seek/倍速和广播/对讲尚未实现，不以禁用按钮冒充功能。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 

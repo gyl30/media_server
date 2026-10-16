@@ -69,3 +69,7 @@
 阶段四同会话暂停/恢复已实现：Go 在原 dialog 内发送 GB/T 28181—2016 附录 B 的 MANSRTSP INFO，INFO/BYE 同门串行并递增 CSeq，忙即拒绝、结果未知不自动补发相反指令，暂停仍消耗原绝对预算；C++ 有限通道删除正文写期限以免合规设备的长暂停被 20 秒断开，停读消费者改由 owner 期限回收；Qt 平台受理后冻结时钟与 SDL，解码进展期限不计暂停区间。C++ normal/ASan 各 69/69，Go 全量 test/race/vet，桌面 normal/ASan 各 6/6、372 项 QTest；真实 Qt→Go→SIP→C++ normal/ASan × 静音/SDL dummy 四组暂停 22 秒后 200/200 帧逐帧一致。保留 UBSan 析构回调真实失败、私有夹具失败与既有预置位测试不稳定。seek、倍速、物理 NVR 与阶段五至七仍未完成。详见[有限传输暂停背压](qt_monitor_client_stage4_finite_transport.md)、[历史 owner 的 INFO](qt_monitor_client_stage4_playback_owner.md)与[Qt 暂停与继续](qt_monitor_client_stage4_finite_view.md)。
 
 阶段五本地录制与设备下载子集已实现：新流复制录像组件把实时 RTSP 或有限 PS 复制为 Matroska，`.part` 收尾成功才改名；桌面 SDK 只追加 Matroska muxer 与 extract_extradata。Go 新增 `s=Download`/`a=downloadspeed` 下载入口，复用历史 owner；录像窗口下载、实时画面本地录制、退出等待录制线程。桌面 normal/ASan 各 7/7、393 项 QTest，Go 全量 test/race/vet；真实下载六组与本地录制八组（normal/ASan）通过。Codex 发现的映射越界/静默丢音频、收尾取消、损坏包与退出线程风险均已修正并保留 RED。物理 NVR 下载、设备倍速兼容、磁盘满实测未做。详见[阶段五录制与下载](qt_monitor_client_stage5_record_download.md)。
+
+阶段六报警子集由 Codex 接手 Claude 未提交实现后完成：已注册设备/所属通道通知、独立 Response MESSAGE、有界近期缓存及 Qt 增量列表；修正重启序号追平旧游标时漏报和切平台旧请求未取消的真实边界。桌面 normal/ASan+UBSan 各 7/7、396 项 QTest，Go 全量 test/race/vet 通过；实际 Qt→生产 HTTP→UDP SIP normal/ASan 各一组通过，不代表物理摄像机。新增运行实例身份仅服务单一游标，不增加持久化报警或关闭状态。用户已要求停止 Claude 及其自动续接，本子集由 Codex 实施与独立只读复审。详见[阶段六报警](qt_monitor_client_stage6_alarms.md)。
+
+后续真实缺口：同会话 seek/回放倍速、广播/对讲仍未实现，整个阶段六未完成。seek 需要使用有效 RTP-Info 确认边界并明确传给 Qt 刷新解复用/解码/PCM，不能靠猜 PTS 或重开会话替代；广播/对讲需要采集、纯音频媒体方向及真实支持设备，现有视频 PS sender 不等同音频链路。阶段七仍需最新版本观看/运行包与第二机验证，并明确物理设备、许可及图形/声音边界，不能继承历史 PASS 宣布整个平台 GO。

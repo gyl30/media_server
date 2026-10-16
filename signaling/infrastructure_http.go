@@ -86,6 +86,7 @@ func (s *infrastructureServer) handler() http.Handler {
 	})
 	routes.HandleFunc("DELETE /api/playbacks/{playback_id}", s.handlePlaybackDelete)
 	routes.HandleFunc("POST /api/playbacks/{playback_id}/{action}", s.handlePlaybackControl)
+	routes.HandleFunc("GET /api/alarms/since/{cursor}", s.handleAlarmList)
 	routes.HandleFunc("POST /api/play", s.handlePlay)
 	routes.HandleFunc("POST /internal/verify", s.handleVerify)
 	routes.HandleFunc("GET /api/push-devices", s.handlePushDeviceList)
