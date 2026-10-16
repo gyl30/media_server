@@ -182,3 +182,23 @@ ASan/UBSan 插桩的是探针和桌面代码，`detect_leaks=1:halt_on_error=1` 
 | 非验收 `sample-domain-diagnostic.json` | `61131916e14815552d4fc2fcefadf22a3ded594f9a91c206545afd2a35ed4c13` |
 
 本轮没有实施 Qt 麦克风音源、Go 正式广播 owner/API，也没有人工听音或完整对讲；未运行全量服务端/桌面 CTest、Go test/vet/race。第9节的桌面回归不替代本次设备路径验收。候选A仍未达到既定采纳门槛，不新增中继或改写既有协议来追求全PASS。
+
+## 11. 临时音量对照与失败恢复
+
+用户授权按验证需要调整相机配置后，在 `ad3bc07` 上前瞻固定一次 A97→B0→A97 对照，沿用第10节精确 ELF、五频源、峰512和所有原分析门槛。只改 `AudioOutputVolume[0]`，不改平台地址、编码、录像或网络。每次 SET 均 GET 核实；没有提高信号电平。DEV `/var/tmp/qt-dahua-volume-ad3bc07-oNLeI97Y/`、TEST `/var/tmp/qt-dahua-volume-ad3bc07-yY56kBxj/` 保留方法、配置读写日志、原包、精确二进制、比较脚本及所有失败。
+
+| 轮次 | 实际执行结果 |
+| --- | --- |
+| A-before，音量97 | Go 30.58秒通过、DEV外层31.851秒；400 RTP /64,000样本，真实ACK/BYE。采集10,551 RTP、12,228,485 PS字节，原包与trace及PS一致；H.264解码599帧、PCMA解码191,520样本/23.94秒，退出均0。视频stderr空、音频仍有重复DTS警告，原严格分析INCONCLUSIVE；非验收联合相关0.582122，不是全部五频通过 |
+| B-muted，音量0 | SET返回OK并GET确认0；私有Go在120.00秒报 `registration/catalog deadline`，外层121.622秒失败。没有广播授权、没有发送RTP，实时PS与RTP记录均0；不能把这轮当成有效静音负对照 |
+| A-after，音量97 | 按预定停止条件未执行，NOT_RUN，不补造恢复后的媒体结果 |
+| 配置恢复 | 先确认本轮sender退出和端口释放，再SET97；连续GET均确认97，`experiment-status.json` 的 `restored=true`。这是配置恢复，不是A-after媒体复验 |
+| 清理 | A/B两轮live、SSRC、collector登记均0；DEV/TEST自有端口均可重绑定，两个sender与两个Go探针PID已消失 |
+
+整个实验为 **INCOMPLETE**，离线对照为 **INCONCLUSIVE**，比较器退出2并准确列出B和第三轮缺少的输入。B只证明120秒内没有同时满足“在线注册＋ON通道目录”条件；该探针未保存REGISTER/Catalog细分事件，不能断言完全未收到REGISTER，更不能据此判定摄像机广播或音频失败。逐轮销毁并重新启动空注册状态的SIP平台不适合直接充当连续音量实验；后续应使用稳定的单一控制会话，不改生产鉴权、不伪造在线设备，也不靠不断加长媒体期限或删除失败来获得结果。
+
+私有恢复脚本修正两个真实风险：日志写失败可能阻断配置恢复、重入信号可能打断自有sender回收。AST提取实际函数和恢复分支的离线ENOSPC注入观察到RED/GREEN：旧版留下0；新版恢复97但将证据故障记为INCOMPLETE。另验证正常恢复、sender未确认退出时不恢复，共4项通过；这是假相机纯离线测试，不冒充真实故障注入。比较器9项合成自检通过，缺941、来源不一致、B部分通过或恢复记录不全均拒绝。Claude运行前复审及补充安全复审无P0/P1。实机状态文件未绑定控制脚本SHA，不将当前脚本校验或离线测试扩大为实机故障注入证据。
+
+最终 Claude 复审实际返回 `usage_limit_reached`（429，session limit），不是批准。接手后独立只读规范与事实复核均确认上述失败、恢复及未执行边界；远端 TEST 证据目录已通过既有可信 SSH 核实存在。旧 `preparation.sha256` 保留为历史快照，当前脚本应核对 `preparation-final.sha256`，其7项全部匹配。只清理本轮可再生 pycache，补存 `takeover-checkpoint.json` 与两机根 `SHA256SUMS`，未覆盖原始失败。
+
+本次没有修改生产代码、SDK或其他相机配置。A轮ASan+UBSan sender stderr空；B的Go注册/目录期限超时及sender等待授权失败均保留原错误，不称Sanitizer PASS。未重新运行全量桌面/服务端CTest或Go test/vet/race。旧第10节和本节音频门槛均未改为PASS，Qt采集、正式广播控制owner、实际听音及完整对讲仍待完成。
