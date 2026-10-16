@@ -80,6 +80,8 @@
 
 大华广播入口已完成私有取证：主设备目标返回独立 Broadcast Result=OK 并反向 INVITE，提供 recvonly PCMA/8000 PT8。修正私有 UAS handler 提前返回、并补全原事务 ACK 路由后（本轮两条真实 ACK 都走顶层路由），真实 200/ACK、500 包/10秒近零静音 UDP 写出、正常 BYE 和端口释放通过；原失败保留。未收到相机 RTCP，不等于设备收包、解码或听音通过；Qt采集、跨主机直送与正式广播/对讲仍未实现。首发候选方案为 Qt 作为真实输入、Go SIP控制的直连LAN直送，以跨主机设备实际收音为采纳门槛，不提前排除必要的中继。详见[大华广播入口取证](qt_monitor_client_dahua_broadcast.md)。
 
+广播 SDK 前置能力已独立验证：FFmpeg 9.0.1 新前缀只追加 PCMA encoder/RTP mux，编码、分包、回解码、compound RTCP 及模拟 EIO 两模式通过；旧桌面 normal/ASan+UBSan 各8/8、422项QTest零失败/跳过。首轮缺素材49项跳过的记录保留为INCOMPLETE，不覆盖原SDK；仅清理本轮可再生FFmpeg中间对象。此结果不代表已实现Qt广播，也不是UDP/麦克风/相机声音验收。配置、SHA、边界见上述取证文档第9节。
+
 真实大华接入后新增呈现缺陷复验：原四路一画面解码增长但呈现停滞，诊断16路亦复现墙钟落后于不断淘汰的实时视频队列。局部淘汰标记配合既有墙钟重锚修复，不新增成员或更改音频主时钟/有限回放；公共play→真实RTSP/H.264的静音及选中无音轨RED/GREEN已建立。真实相机同源四路和16路分别完成30秒共同观察、逐路音视频/呈现增长及停其余留一路，ASan四路带SDL dummy输出亦通过；不是16不同源、物理屏幕/声音或完整GB平台验收。注册、目录、心跳、信息/状态/预置位查询已实测，录像查询指定窗口为空，不代表录像能力失败。详见[大华实机与呈现饥饿修复](qt_monitor_client_dahua_rendering.md)，保留原始失败及测试环境边界。
 
 大华云台实机补充：HTTP→真实SIP→设备独立状态证明左右点动后停止，临时预置位3保存、调用归位与删除均有效，最终三坐标残差0且原预置位列表恢复；这些实机证据更新前述相应BLOCKED状态。已抓包的右点动和两次变倍START的200迟于300毫秒，现有接口按安全合同返回502；左点动同样返回502，但不在抓包覆盖内。未延长动作或保留STOP后的START重传。变倍未观察到实际坐标变化，STOP中断goto及Qt按钮人工实机验收未做，不能写为完整PTZ PASS。详见[实机云台与预置位](qt_monitor_client_dahua_controls.md)。证据DEV `/var/tmp/qt-dahua-controls-md9w0l/`、TEST `/var/tmp/qt-dahua-a2fcc80-V2mC1Ksf/run-06-controls/`；本子集不修改生产实现。

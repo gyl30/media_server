@@ -115,3 +115,34 @@ Claude Code 只读设计复审未发现本次取证阻断；后续正式设计�
 | analysis.json | `1a65d22a478e2a7e72ce8afaf012c3cee7894c64b0900113913ef773e8cae534` |
 
 三份 overlay 编译通过；运行结果依次 0 / 1 / 0。只编译/执行指定私有测试，未执行当前 HEAD 全量 Go test、vet、race、C++/桌面 CTest、ASan/UBSan，不继承此前 PASS。Qt 广播、麦克风输入、相机解码/听音、跨主机直送、完整对讲均为 NOT_IMPLEMENTED 或 NOT_RUN。清理仅限本轮可再生草稿；原始失败、源码、ELF、日志、配置快照与审查材料保留。
+
+## 9. 独立音频 SDK 前置验证
+
+后续在 `755cf52` 源码上准备独立 FFmpeg **9.0.1** shared SDK：`/var/tmp/qt-broadcast-sdk-755cf52-z2y4wEha/install`。使用现有 stage1 源码、GCC **16.0.1 experimental**，沿用原配置，仅追加 `--enable-encoder=pcm_alaw`、将 muxer 改为 `matroska,rtp`；未覆盖原 `/var/tmp/qt-claude-owner-work/ffmpeg-mkv/install`，其旧 SHA 清单全部复核一致。未修改项目 CMake、业务代码或默认 SDK 选择。
+
+新旧 `config_components.h` 只差 PCM_ALAW_ENCODER 与 RTP_MUXER；启用首个 encoder 自动打开的 CONFIG_ENCODERS/FRAME_THREAD_ENCODER 不代表增加外部编码依赖。保留 `--disable-gpl --disable-version3 --disable-nonfree`；LGPL 2.1+ 许可与 LICENSE 文本放入新 SDK，不据此声称整个 Qt 发布包的许可已经闭合。测试素材生成 CLI 仍是独立的 `/home/gyl/bin/ffmpeg`（n7.1.1-57-g1b48158a23-20250824），不链接或捆绑到 SDK，其版本、配置和 SHA 另存 `analysis.json`。
+
+私有探针 `pcma_rtp_sdk_probe_v2.cpp` 使用真实 FFmpeg PCMA encoder、RTP mux 和 PCMA decoder：custom AVIO buffer=4096、max packet=1200、`direct=0`，每次 callback 同步复制完整 datagram。没有自写正式编码器/packetizer，也没有新增 Qt 生产类或后台任务。
+
+| 验证 | Normal | ASan+UBSan | 实际边界 |
+| --- | --- | --- | --- |
+| 50×160 样本编码、RTP、回解码 | PASS | PASS | 50 包、8000 样本；1 秒媒体数据，非实时 1 秒发包 |
+| 单帧 2560 样本分片 | PASS | PASS | 3 包，负载按 mux 分片为 1188/1188/184 字节；PT8、SSRC、seq、8kHz 时戳步进检查 |
+| SR/SDES/BYE | PASS | PASS | 两份 compound RTCP，最终计数正确；短时内存输出，不验证长期周期、NTP 映射或 RR |
+| 第 5 个 callback 注入 EIO | PASS | PASS | 明确检测 `pb->error=-5`，收尾返回 -5；不把模拟 I/O 失败当作成功 |
+| PCM 量化误差 | 64 | 64 | 实测最大绝对误差，断言阈值 256，不是无损音频 |
+| 当前桌面完整 CTest | 8/8 | 8/8 | 170.73 / 173.09 秒；各 422 项 QTest，0 failed、0 skipped |
+
+第一次桌面执行遗漏 `FINITE_PS_TEST_FIXTURE_DIR`，虽然 CTest 返回 0，但每模式只有 373 项通过、49 项跳过，明确记为 **INCOMPLETE**，原日志保留；指定既有 `fixtures-v2` 并记录素材 SHA 后重跑才得到表中完整结果。回归包括实际 fixture 解码、有限 PS 呈现、暂停、录制/下载、错误与退出，但不是再次运行物理摄像机。链接检查确认桌面和探针实际加载新前缀的库。
+
+ASan/UBSan 插桩的是探针和桌面代码，`detect_leaks=1:halt_on_error=1` 保留，无诊断；本次 FFmpeg SDK 本身未插桩，不能扩大为其内部全量内存安全验收。同步内存 datagram 收集不验证 UDP 队列、慢网络、采集设备、实际 pacing 或相机声音。本增量没有运行全量服务端 CTest、Go test/vet/race、Qt 内部包或跨机广播。
+
+证据根目录 `/var/tmp/qt-broadcast-sdk-755cf52-z2y4wEha/` 保留构建/运行脚本、两版探针、精确 ELF、首轮跳过日志、最终完整 QTest 日志、配置及依赖校验。Claude Code 与独立 Codex 只读复审未发现本增量 P0/P1。仅清理该目录自己生成的 FFmpeg build 中间对象：目录从 63,290,401 降至 1,018,833 字节，安装产物重新校验全部一致；正常/ASan 桌面构建留作后续局部增量复用，不删除原始证据。
+
+| 证据 | SHA256 |
+| --- | --- |
+| `analysis.json` | `be23a0a5e60023082028b7726ced8fd0125e6698ae0bdc6c7699b750295208f9` |
+| `install-with-licenses.sha256` | `7782a739277a60268d5d43590f9122e1bf9e7014009e3be2aa4cc2d638faa9d3` |
+| `pcma_rtp_sdk_probe_v2.cpp` | `b278153f061acd7f8438feb9bb7e4b05c18da1f96638450117d9985bf9e32b6f` |
+
+结论仅为音频 SDK 的前置能力与旧桌面路径回归通过。Qt 音源 owner、Go 广播 owner/API、控制失联清理、跨主机设备音频路径及真实听音仍须继续完成，不改变前述候选方案和平台未 GO 的结论。
