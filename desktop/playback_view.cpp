@@ -477,18 +477,21 @@ void playback_view::update_media()
     // 先观察线程结束，再取队列；反过来可能漏掉两步之间入队的最后一批。
     const bool finished_before_take = decoder_->isFinished();
     const bool finite_tail_taken = finished_before_take && video_.empty() && pcm_.empty();
+    bool video_evicted = false;
     auto frames = !finite || video_.size() + decoded_video_capacity <= 16U ? decoder_->take_video_frames() : std::vector<decoded_video_frame>{};
     for (auto& frame : frames)
     {
         if (!finite && video_.size() >= (audible() ? 16U : 4U))
         {
             video_.pop_front();
+            video_evicted = true;
         }
         video_.push_back(std::move(frame));
         while (!finite && audible() && video_.size() > 1 && video_.front().pts_us != no_media_timestamp &&
                video_.back().pts_us != no_media_timestamp && video_.back().pts_us - video_.front().pts_us > 500'000)
         {
             video_.pop_front();
+            video_evicted = true;
         }
     }
     auto audio = !finite || pcm_.empty() ? decoder_->take_audio_blocks() : std::vector<decoded_audio_block>{};
@@ -576,6 +579,14 @@ void playback_view::update_media()
     {
         wall_pts_ = video_.front().pts_us;
         wall_clock_.start();
+        clock = wall_pts_;
+    }
+    // 实时队列已淘汰待呈现帧时，墙钟不能仍等在被淘汰区间，否则后续队首会持续超前而饥饿。
+    if (video_evicted && (!audible() || audio_end_pts_ == no_media_timestamp) && !video_.empty() && video_.front().pts_us != no_media_timestamp &&
+        clock != no_media_timestamp && video_.front().pts_us > clock + 15'000)
+    {
+        wall_pts_ = video_.front().pts_us;
+        wall_clock_.restart();
         clock = wall_pts_;
     }
     while (!video_.empty())
