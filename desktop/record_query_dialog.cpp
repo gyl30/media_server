@@ -3,10 +3,14 @@
 #include <QUrl>
 #include <QDate>
 #include <QTime>
+#include <QDir>
 #include <QLabel>
+#include <QTimer>
 #include <QVariant>
 #include <QSpinBox>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QSettings>
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -18,12 +22,21 @@
 #include <QStringList>
 #include <QDateTimeEdit>
 #include <QNetworkReply>
+#include <QStandardPaths>
+#include <QCoreApplication>
 
+#include "desktop/record_thread.h"
+#include "desktop/history_request.h"
 #include "desktop/platform_client.h"
 #include "desktop/record_query_dialog.h"
 
 namespace media_server
 {
+
+QString record_directory()
+{
+    return QSettings().value(QString::fromLatin1(record_directory_key), QStandardPaths::writableLocation(QStandardPaths::MoviesLocation)).toString();
+}
 
 record_query_dialog::record_query_dialog(platform_client& client, QString device_id, QString channel_id, QWidget* parent)
     : QDialog(parent),
@@ -38,7 +51,13 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
       utc_offset_(new QSpinBox(this)),
       play_(new QPushButton(QStringLiteral("在选中画面回放"), this)),
       records_(new QTreeWidget(this)),
-      result_(new QLabel(this))
+      result_(new QLabel(this)),
+      directory_(new QLineEdit(this)),
+      download_speed_(new QComboBox(this)),
+      download_(new QPushButton(QStringLiteral("下载选中录像"), this)),
+      download_cancel_(new QPushButton(QStringLiteral("取消下载"), this)),
+      download_result_(new QLabel(this)),
+      download_progress_(new QTimer(this))
 {
     setObjectName(QStringLiteral("record_query_dialog"));
     setWindowTitle(QStringLiteral("录像查询 · %1").arg(channel_id_));
@@ -104,42 +123,68 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
     playback->addStretch();
     playback->addWidget(play_);
     layout->addLayout(playback);
+    auto* download = new QHBoxLayout;
+    directory_->setObjectName(QStringLiteral("record_directory"));
+    directory_->setText(record_directory());
+    download_speed_->setObjectName(QStringLiteral("record_download_speed"));
+    for (const int speed : {1, 2, 4})
+    {
+        download_speed_->addItem(QStringLiteral("%1 倍速").arg(speed), speed);
+    }
+    download_->setObjectName(QStringLiteral("record_download"));
+    download_cancel_->setObjectName(QStringLiteral("record_download_cancel"));
+    download->addWidget(new QLabel(QStringLiteral("保存目录"), this));
+    download->addWidget(directory_, 1);
+    download->addWidget(download_speed_);
+    download->addWidget(download_);
+    download->addWidget(download_cancel_);
+    layout->addLayout(download);
+    download_result_->setObjectName(QStringLiteral("record_download_result"));
+    download_result_->setTextFormat(Qt::PlainText);
+    download_result_->setWordWrap(true);
+    layout->addWidget(download_result_);
+    download_progress_->setInterval(500);
+    connect(download_progress_,
+            &QTimer::timeout,
+            this,
+            [this]()
+            {
+                if (downloader_)
+                {
+                    const auto stats = downloader_->snapshot();
+                    download_result_->setText(
+                        QStringLiteral("正在下载：已写入 %1 KiB，媒体 %2 秒").arg(stats.bytes / 1024).arg(stats.media_us / 1000000));
+                }
+            });
+    connect(download_, &QPushButton::clicked, this, &record_query_dialog::start_download);
+    connect(download_cancel_,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                cancel_download();
+                download_result_->setText(QStringLiteral("已取消下载；临时文件由下载线程删除"));
+            });
     result_->setObjectName(QStringLiteral("record_result"));
     result_->setTextFormat(Qt::PlainText);
     result_->setWordWrap(true);
     result_->setText(QStringLiteral("请填写时间范围后查询；每次最多接收 1000 条，请按需缩小范围"));
     layout->addWidget(result_);
     connect(query_, &QPushButton::clicked, this, &record_query_dialog::query);
-    connect(records_,
-            &QTreeWidget::itemSelectionChanged,
-            this,
-            [this]() { play_->setEnabled(query_->isEnabled() && records_->currentItem() && records_->currentItem()->isSelected()); });
+    connect(records_, &QTreeWidget::itemSelectionChanged, this, [this]() { set_busy(!query_->isEnabled()); });
     connect(play_,
             &QPushButton::clicked,
             this,
             [this]()
             {
-                const auto* item = records_->currentItem();
-                if (!item || !item->isSelected())
+                qint64 start_time = 0;
+                qint64 end_time = 0;
+                QString stem;
+                if (!selected_range(start_time, end_time, stem))
                 {
                     return;
                 }
-                const QDateTime first(QDate::fromString(item->text(2).left(10), QStringLiteral("yyyy-MM-dd")),
-                                      QTime::fromString(item->text(2).mid(11), QStringLiteral("HH:mm:ss")),
-                                      Qt::OffsetFromUTC,
-                                      utc_offset_->value() * 60);
-                const QDateTime last(QDate::fromString(item->text(3).left(10), QStringLiteral("yyyy-MM-dd")),
-                                     QTime::fromString(item->text(3).mid(11), QStringLiteral("HH:mm:ss")),
-                                     Qt::OffsetFromUTC,
-                                     utc_offset_->value() * 60);
-                if (!first.isValid() || !last.isValid() || first.toSecsSinceEpoch() <= 0 || first >= last ||
-                    first.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(2) ||
-                    last.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(3))
-                {
-                    result_->setText(QStringLiteral("该目录项缺少合法时间范围，不能回放；未申请媒体或使用文件路径"));
-                    return;
-                }
-                emit playback_requested(first.toSecsSinceEpoch(), last.toSecsSinceEpoch());
+                emit playback_requested(start_time, end_time);
                 result_->setText(QStringLiteral("已向选中画面申请独占录像回放，UTC 偏移 %1 分钟；未停止其他实时上游").arg(utc_offset_->value()));
             });
     connect(cancel_,
@@ -154,12 +199,127 @@ record_query_dialog::record_query_dialog(platform_client& client, QString device
     set_busy(false);
 }
 
-record_query_dialog::~record_query_dialog() { cancel_query(); }
+record_query_dialog::~record_query_dialog()
+{
+    cancel_query();
+    cancel_download();
+}
 
 void record_query_dialog::done(int result)
 {
     cancel_query();
+    cancel_download();
     QDialog::done(result);
+}
+
+bool record_query_dialog::selected_range(qint64& start_time, qint64& end_time, QString& stem)
+{
+    const auto* item = records_->currentItem();
+    if (!item || !item->isSelected())
+    {
+        return false;
+    }
+    const QDateTime first(QDate::fromString(item->text(2).left(10), QStringLiteral("yyyy-MM-dd")),
+                          QTime::fromString(item->text(2).mid(11), QStringLiteral("HH:mm:ss")),
+                          Qt::OffsetFromUTC,
+                          utc_offset_->value() * 60);
+    const QDateTime last(QDate::fromString(item->text(3).left(10), QStringLiteral("yyyy-MM-dd")),
+                         QTime::fromString(item->text(3).mid(11), QStringLiteral("HH:mm:ss")),
+                         Qt::OffsetFromUTC,
+                         utc_offset_->value() * 60);
+    if (!first.isValid() || !last.isValid() || first.toSecsSinceEpoch() <= 0 || first >= last ||
+        first.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(2) ||
+        last.toString(QStringLiteral("yyyy-MM-dd'T'HH:mm:ss")) != item->text(3))
+    {
+        result_->setText(QStringLiteral("该目录项缺少合法时间范围，不能回放或下载；未申请媒体或使用文件路径"));
+        return false;
+    }
+    start_time = first.toSecsSinceEpoch();
+    end_time = last.toSecsSinceEpoch();
+    // 文件名使用设备当地墙上时间，只含数字与下划线。
+    stem = QStringLiteral("%1_%2_%3")
+               .arg(channel_id_, first.toString(QStringLiteral("yyyyMMddHHmmss")), last.toString(QStringLiteral("yyyyMMddHHmmss")));
+    return true;
+}
+
+void record_query_dialog::start_download()
+{
+    qint64 start_time = 0;
+    qint64 end_time = 0;
+    QString stem;
+    if (download_session_ || !selected_range(start_time, end_time, stem))
+    {
+        return;
+    }
+    const auto directory = directory_->text().trimmed();
+    if (directory.isEmpty() || !QDir().mkpath(directory))
+    {
+        download_result_->setText(QStringLiteral("保存目录无效或无法创建"));
+        return;
+    }
+    QSettings().setValue(QString::fromLatin1(record_directory_key), directory);
+    const auto target = QDir(directory).filePath(stem + QStringLiteral(".mkv"));
+    download_session_ = new QObject(this);
+    set_busy(!query_->isEnabled());
+    download_result_->setText(QStringLiteral("正在申请设备下载…"));
+    const auto path = QStringLiteral("/api/devices/%1/channels/%2/download")
+                          .arg(QString::fromLatin1(QUrl::toPercentEncoding(device_id_)), QString::fromLatin1(QUrl::toPercentEncoding(channel_id_)));
+    request_history(
+        client_,
+        path,
+        {{QStringLiteral("start_time"), start_time},
+         {QStringLiteral("end_time"), end_time},
+         {QStringLiteral("speed"), download_speed_->currentData().toInt()}},
+        download_session_,
+        [this, target](const QUrl& url, platform_client*, const QString&)
+        {
+            // 下载线程独立保活至结束；取消只请求中断，由线程删除本次临时文件。
+            auto* downloader = new record_thread(url, target, playback_mode::finite, QCoreApplication::instance());
+            downloader_ = downloader;
+            connect(downloader,
+                    &QThread::finished,
+                    this,
+                    [this, downloader, target]()
+                    {
+                        const auto stats = downloader->snapshot();
+                        if (downloader_ != downloader)
+                        {
+                            return;
+                        }
+                        downloader_.clear();
+                        download_progress_->stop();
+                        // 下载结束（含失败）都只回收本次实例。
+                        delete download_session_;
+                        download_session_ = nullptr;
+                        set_busy(!query_->isEnabled());
+                        download_result_->setText(stats.saved ? QStringLiteral("下载完成：%1；传输完整结束，不代表请求范围库存完整").arg(target)
+                                                              : QStringLiteral("下载失败：%1；未保存文件").arg(stats.error));
+                    });
+            connect(downloader, &QThread::finished, downloader, &QObject::deleteLater);
+            downloader->start();
+            download_progress_->start();
+        },
+        [this](const platform_response& response)
+        {
+            delete download_session_;
+            download_session_ = nullptr;
+            set_busy(!query_->isEnabled());
+            download_result_->setText(response.ok() ? QStringLiteral("平台返回的下载实例或媒体地址无效")
+                                                    : QStringLiteral("下载申请失败：%1").arg(response.error));
+        });
+}
+
+void record_query_dialog::cancel_download()
+{
+    if (downloader_)
+    {
+        downloader_->requestInterruption();
+        downloader_.clear();
+    }
+    download_progress_->stop();
+    delete download_session_;
+    download_session_ = nullptr;
+    set_busy(!query_->isEnabled());
 }
 
 void record_query_dialog::cancel_query()
@@ -180,7 +340,10 @@ void record_query_dialog::set_busy(bool busy)
     type_->setEnabled(!busy);
     query_->setEnabled(!busy);
     cancel_->setEnabled(busy);
-    play_->setEnabled(!busy && records_->currentItem() && records_->currentItem()->isSelected());
+    const bool selected = records_->currentItem() && records_->currentItem()->isSelected();
+    play_->setEnabled(!busy && selected);
+    download_->setEnabled(!busy && selected && !download_session_);
+    download_cancel_->setEnabled(download_session_ != nullptr);
 }
 
 void record_query_dialog::query()

@@ -12,7 +12,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFMPEG REQUIRED libavformat>=60 libavcodec>=60 libavutil>=58 libswscale>=7 libswresample>=4)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2>=2.0.20)
 
-add_library(desktop_media STATIC decode_thread.cpp finite_http_input.cpp playback_view.cpp platform_client.cpp record_query_dialog.cpp record_thread.cpp)
+add_library(desktop_media STATIC decode_thread.cpp finite_http_input.cpp playback_view.cpp platform_client.cpp record_query_dialog.cpp record_thread.cpp history_request.cpp)
 target_include_directories(desktop_media PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/.." ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(desktop_media PUBLIC ${FFMPEG_LIBRARY_DIRS})
 target_link_libraries(desktop_media PUBLIC Qt6::Widgets Qt6::Network PkgConfig::SDL2 ${FFMPEG_LIBRARIES})

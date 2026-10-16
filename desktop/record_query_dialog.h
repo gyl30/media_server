@@ -6,7 +6,9 @@
 #include <QPointer>
 
 class QLabel;
+class QTimer;
 class QObject;
+class QLineEdit;
 class QSpinBox;
 class QComboBox;
 class QPushButton;
@@ -17,7 +19,13 @@ class QNetworkReply;
 namespace media_server
 {
 
+class record_thread;
 class platform_client;
+
+inline constexpr char record_directory_key[] = "record_directory";
+
+// 本地录制与设备下载共用的保存目录偏好，默认系统影片目录。
+QString record_directory();
 
 class record_query_dialog final : public QDialog
 {
@@ -37,6 +45,9 @@ class record_query_dialog final : public QDialog
     void query();
     void cancel_query();
     void set_busy(bool busy);
+    bool selected_range(qint64& start_time, qint64& end_time, QString& stem);
+    void start_download();
+    void cancel_download();
 
    private:
     platform_client& client_;
@@ -53,6 +64,14 @@ class record_query_dialog final : public QDialog
     QPushButton* play_;
     QTreeWidget* records_;
     QLabel* result_;
+    QLineEdit* directory_;
+    QComboBox* download_speed_;
+    QPushButton* download_;
+    QPushButton* download_cancel_;
+    QLabel* download_result_;
+    QTimer* download_progress_;
+    QObject* download_session_{};
+    QPointer<record_thread> downloader_;
 };
 
 }    // namespace media_server

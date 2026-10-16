@@ -9,6 +9,8 @@
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QDir>
+#include <QTemporaryDir>
 #include <QJsonArray>
 #include <QScopeGuard>
 #include <QJsonObject>
@@ -20,6 +22,7 @@
 #include <QCoreApplication>
 
 #include "desktop/decode_thread.h"
+#include "desktop/record_thread.h"
 #include "desktop/playback_view.h"
 #include "desktop/platform_client.h"
 
@@ -734,6 +737,81 @@ class playback_view_test final : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(view->status().contains(QStringLiteral("new-error")), 1000);
         QCOMPARE(status.size(), 3);
         QVERIFY(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty());
+    }
+
+    void live_recording_data()
+    {
+        QTest::addColumn<bool>("stop_before_ticket");
+        QTest::newRow("recorder-started") << false;
+        QTest::newRow("stop-before-ticket") << true;
+    }
+
+    // 本地录制另签独立票据；未收到视频的停止不留文件；画面停止后迟到票据不能启动录制。
+    void live_recording()
+    {
+        QFETCH(bool, stop_before_ticket);
+        QTcpServer api;
+        QTcpServer rtsp;
+        QVERIFY(api.listen(QHostAddress::LocalHost, 0));
+        QVERIFY(rtsp.listen(QHostAddress::LocalHost, 0));
+        platform_client client;
+        QVERIFY(client.set_base_url(QUrl(QString("http://127.0.0.1:%1").arg(api.serverPort()))));
+        QTemporaryDir directory;
+        playback_view view;
+        QSignalSpy finished(&view, &playback_view::recording_finished);
+        const auto cleanup = qScopeGuard(
+            [&]()
+            {
+                view.stop();
+                for (auto* thread : QCoreApplication::instance()->findChildren<QThread*>())
+                {
+                    thread->requestInterruption();
+                    thread->wait(5000);
+                }
+            });
+        QVERIFY(!view.recording_ready());
+        view.play(client, target(QStringLiteral("../录制/源")));
+        QTRY_VERIFY_WITH_TIMEOUT(api.hasPendingConnections(), 2000);
+        auto* play_peer = api.nextPendingConnection();
+        QTRY_VERIFY_WITH_TIMEOUT(complete_request(play_peer), 1000);
+        const auto play_request = play_peer->readAll();
+        QVERIFY(respond(play_peer, 200, {{"rtsp_url", QString("rtsp://127.0.0.1:%1/hang").arg(rtsp.serverPort())}}) > 0);
+        QTRY_VERIFY_WITH_TIMEOUT(rtsp.hasPendingConnections(), 2000);
+        QVERIFY(rtsp.nextPendingConnection());
+        QTRY_VERIFY_WITH_TIMEOUT(view.recording_ready(), 1000);
+        view.start_recording(client, directory.path());
+        QVERIFY(view.recording() && !view.recording_ready());
+        QTRY_VERIFY_WITH_TIMEOUT(api.hasPendingConnections(), 2000);
+        auto* record_peer = api.nextPendingConnection();
+        QTRY_VERIFY_WITH_TIMEOUT(complete_request(record_peer), 1000);
+        // 与观看相同的签票接口与请求体，但是另一张独立票据。
+        QCOMPARE(record_peer->readAll().split('\n').first(), play_request.split('\n').first());
+        if (stop_before_ticket)
+        {
+            view.stop();
+            QVERIFY(!view.recording());
+        }
+        QVERIFY(respond(record_peer, 200, {{"rtsp_url", QString("rtsp://127.0.0.1:%1/record").arg(rtsp.serverPort())}}) > 0);
+        if (stop_before_ticket)
+        {
+            QTest::qWait(300);
+            QVERIFY(!rtsp.hasPendingConnections());
+            QVERIFY(QCoreApplication::instance()->findChildren<record_thread*>().isEmpty());
+            QCOMPARE(finished.size(), 0);
+        }
+        else
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(rtsp.hasPendingConnections(), 2000);
+            auto* record_rtsp = rtsp.nextPendingConnection();
+            QTRY_VERIFY_WITH_TIMEOUT(record_rtsp->peek(65536).startsWith("OPTIONS rtsp://127.0.0.1"), 1000);
+            QCOMPARE(QCoreApplication::instance()->findChildren<record_thread*>().size(), 1);
+            view.stop_recording();
+            QVERIFY(!view.recording());
+            QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 3000);
+            QVERIFY2(finished[0][0].toString().contains(QStringLiteral("录制在收到视频前停止")), qPrintable(finished[0][0].toString()));
+            QTRY_VERIFY_WITH_TIMEOUT(QCoreApplication::instance()->findChildren<record_thread*>().isEmpty(), 3000);
+        }
+        QVERIFY(QDir(directory.path()).entryList(QDir::Files | QDir::Hidden).isEmpty());
     }
 };
 

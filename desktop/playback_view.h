@@ -14,6 +14,7 @@
 #include <QDeadlineTimer>
 
 #include "desktop/decode_thread.h"
+#include "desktop/record_thread.h"
 
 class QNetworkReply;
 
@@ -48,6 +49,10 @@ class playback_view final : public QWidget
     void play(platform_client& client, const play_target& target);
     void play_record(platform_client& client, const play_target& target, qint64 start_time, qint64 end_time);
     void set_record_paused(bool paused);
+    void start_recording(platform_client& client, const QString& directory);
+    void stop_recording();
+    bool recording() const;
+    bool recording_ready() const;
     bool record_paused() const;
     bool record_control_ready() const;
     void stop();
@@ -65,6 +70,8 @@ class playback_view final : public QWidget
     void audible_changed(bool audible);
     void playback_error(const QString& error);
     void status_changed(const QString& status);
+    void recording_changed();
+    void recording_finished(const QString& message);
 
    protected:
     void paintEvent(QPaintEvent* event) override;
@@ -85,6 +92,9 @@ class playback_view final : public QWidget
     QPointer<QNetworkReply> request_;
     QPointer<decode_thread> decoder_;
     QPointer<platform_client> record_owner_;
+    play_target live_target_;
+    QObject* record_session_{};
+    QPointer<record_thread> recorder_;
     QString record_id_;
     bool record_paused_{};
     quint32 audio_id_{};

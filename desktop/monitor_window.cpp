@@ -1,6 +1,7 @@
 #include <utility>
 #include <algorithm>
 
+#include <QDir>
 #include <QSet>
 #include <SDL.h>
 #include <QMenu>
@@ -36,6 +37,7 @@
 #include <QStandardPaths>
 
 #include "desktop/playback_view.h"
+#include "desktop/record_thread.h"
 #include "desktop/monitor_window.h"
 #include "desktop/record_query_dialog.h"
 
@@ -49,6 +51,7 @@ monitor_window::monitor_window(QWidget* parent)
       view_layout_(new QComboBox(this)),
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
       record_pause_(new QPushButton(QStringLiteral("暂停回放"), this)),
+      record_live_(new QPushButton(QStringLiteral("开始录制"), this)),
       catalog_(new QPushButton(QStringLiteral("查询目录"), this)),
       record_query_(new QPushButton(QStringLiteral("录像查询"), this)),
       device_info_(new QPushButton(QStringLiteral("设备信息"), this)),
@@ -113,9 +116,20 @@ monitor_window::monitor_window(QWidget* parent)
                 {
                     if (selected_ == view)
                     {
-                        update_record_pause();
+                        update_view_controls();
                     }
                 });
+        connect(view,
+                &playback_view::recording_changed,
+                this,
+                [this, view]()
+                {
+                    if (selected_ == view)
+                    {
+                        update_view_controls();
+                    }
+                });
+        connect(view, &playback_view::recording_finished, this, [this](const QString& message) { statusBar()->showMessage(message); });
         connect(view,
                 &playback_view::playback_error,
                 this,
@@ -147,6 +161,16 @@ monitor_window::monitor_window(QWidget* parent)
                     menu.addAction(QStringLiteral("停止此画面"), view, &playback_view::stop);
                     menu.addAction(QStringLiteral("停止全部"), this, &monitor_window::stop_all);
                     menu.addAction(QStringLiteral("抓图"), this, &monitor_window::take_snapshot);
+                    menu.addAction(QStringLiteral("设置录像目录…"),
+                                   this,
+                                   [this]()
+                                   {
+                                       const auto directory = QFileDialog::getExistingDirectory(this, QStringLiteral("录像目录"), record_directory());
+                                       if (!directory.isEmpty())
+                                       {
+                                           QSettings().setValue(record_directory_key, directory);
+                                       }
+                                   });
                     menu.exec(view->mapToGlobal(position));
                 });
     }
@@ -327,6 +351,7 @@ monitor_window::monitor_window(QWidget* parent)
     sound_->setCheckable(true);
     sound_->setObjectName(QStringLiteral("sound_toggle"));
     record_pause_->setObjectName(QStringLiteral("record_pause"));
+    record_live_->setObjectName(QStringLiteral("record_live"));
     auto* stop = new QPushButton(QStringLiteral("停止预览"), central);
     stop->setObjectName(QStringLiteral("stop_preview"));
     auto* stop_everything = new QPushButton(QStringLiteral("停止全部"), central);
@@ -337,6 +362,7 @@ monitor_window::monitor_window(QWidget* parent)
     bottom->addWidget(fullscreen);
     bottom->addWidget(sound_);
     bottom->addWidget(record_pause_);
+    bottom->addWidget(record_live_);
     bottom->addWidget(stop);
     bottom->addWidget(stop_everything);
     layout->addLayout(bottom);
@@ -393,6 +419,24 @@ monitor_window::monitor_window(QWidget* parent)
                 }
             });
     connect(record_pause_, &QPushButton::clicked, this, [this]() { selected_->set_record_paused(!selected_->record_paused()); });
+    connect(record_live_,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                if (selected_->recording())
+                {
+                    selected_->stop_recording();
+                    return;
+                }
+                const auto directory = record_directory();
+                if (!QDir().mkpath(directory))
+                {
+                    statusBar()->showMessage(QStringLiteral("无法创建录像目录：%1").arg(directory));
+                    return;
+                }
+                selected_->start_recording(client_, directory);
+            });
     connect(sound_,
             &QPushButton::toggled,
             this,
@@ -472,11 +516,13 @@ void monitor_window::select_view(playback_view* view)
     const QSignalBlocker blocked(sound_);
     sound_->setChecked(view->audible());
     sound_->setText(view->audible() ? QStringLiteral("关闭声音") : QStringLiteral("开启声音"));
-    update_record_pause();
+    update_view_controls();
 }
 
-void monitor_window::update_record_pause()
+void monitor_window::update_view_controls()
 {
+    record_live_->setEnabled(selected_->recording() || selected_->recording_ready());
+    record_live_->setText(selected_->recording() ? QStringLiteral("停止录制") : QStringLiteral("开始录制"));
     record_pause_->setEnabled(selected_->record_control_ready());
     record_pause_->setText(selected_->record_paused() ? QStringLiteral("继续回放") : QStringLiteral("暂停回放"));
 }
@@ -1123,6 +1169,18 @@ void monitor_window::closeEvent(QCloseEvent* event)
             event->ignore();
             setEnabled(false);
             statusBar()->showMessage(QStringLiteral("正在关闭媒体连接…"));
+            QTimer::singleShot(30, this, &QWidget::close);
+            return;
+        }
+    }
+    // stop_all() 已让实时录制收尾保存，关闭录像窗口已取消下载；等它们写完或删除临时文件再退出。
+    for (auto* recorder : qApp->findChildren<record_thread*>())
+    {
+        if (recorder->isRunning())
+        {
+            event->ignore();
+            setEnabled(false);
+            statusBar()->showMessage(QStringLiteral("正在保存或清理录像文件…"));
             QTimer::singleShot(30, this, &QWidget::close);
             return;
         }

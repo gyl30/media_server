@@ -20,7 +20,14 @@
 #include <QDateTimeEdit>
 #include <QNetworkReply>
 #include <QElapsedTimer>
+#include <QDir>
+#include <QFile>
+#include <QLineEdit>
+#include <QSettings>
+#include <QTemporaryDir>
+#include <QCoreApplication>
 
+#include "desktop/record_thread.h"
 #include "desktop/platform_client.h"
 #include "desktop/record_query_dialog.h"
 
@@ -687,6 +694,124 @@ class record_query_dialog_test final : public QObject
         {
             QVERIFY(action == QStringLiteral("destruct") || action == QStringLiteral("parent-destruct"));
         }
+    }
+
+    void download_data()
+    {
+        QTest::addColumn<QString>("scenario");
+        QTest::newRow("complete") << QString("complete");
+        QTest::newRow("cancel") << QString("cancel");
+        QTest::newRow("close") << QString("close");
+        QTest::newRow("create-failed") << QString("create-failed");
+    }
+
+    // 下载复用独占历史实例：完成保存 Matroska 后 DELETE；取消、关窗或创建失败都只回收本实例且不留文件。
+    void download()
+    {
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材");
+        }
+        QFETCH(QString, scenario);
+        QTemporaryDir settings;
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settings.path());
+        QFile fixture(
+            QDir(folder).filePath(scenario == "complete" ? QStringLiteral("pcma-video-first-end.ps") : QStringLiteral("pcma-long-noend.ps")));
+        QVERIFY(fixture.open(QIODevice::ReadOnly));
+        const auto payload = fixture.readAll();
+        QTemporaryDir output;
+        platform_client client;
+        record_fixture api;
+        QVERIFY(api.start(client));
+        QTcpServer media;
+        QVERIFY(media.listen(QHostAddress::LocalHost, 0));
+        auto dialog = std::make_unique<record_query_dialog>(client, device, channel);
+        controls ui(*dialog);
+        auto* directory = dialog->findChild<QLineEdit*>(QStringLiteral("record_directory"));
+        auto* speed = dialog->findChild<QComboBox*>(QStringLiteral("record_download_speed"));
+        auto* download = dialog->findChild<QPushButton*>(QStringLiteral("record_download"));
+        auto* cancel = dialog->findChild<QPushButton*>(QStringLiteral("record_download_cancel"));
+        auto* result = dialog->findChild<QLabel*>(QStringLiteral("record_download_result"));
+        QVERIFY(ui.valid() && directory && speed && download && cancel && result);
+        QVERIFY(!download->isEnabled() && !cancel->isEnabled());
+        dialog->show();
+        ui.offset->setValue(0);
+        ui.query->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 1000);
+        respond(api.requests[0].socket, 200, QJsonDocument(response({row()})).toJson());
+        QTRY_COMPARE_WITH_TIMEOUT(ui.list->topLevelItemCount(), 1, 1000);
+        ui.list->setCurrentItem(ui.list->topLevelItem(0));
+        QVERIFY(download->isEnabled());
+        directory->setText(output.filePath(QStringLiteral("downloads")));
+        speed->setCurrentIndex(speed->findData(4));
+        download->click();
+        QVERIFY(!download->isEnabled() && cancel->isEnabled());
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 1000);
+        QCOMPARE(api.requests[1].request_line, "POST /api/devices/" + device.toUtf8() + "/channels/" + channel.toUtf8() + "/download HTTP/1.1");
+        const auto start_utc = QDateTime(QDate(2026, 10, 15), QTime(1, 2, 3), Qt::UTC).toSecsSinceEpoch();
+        const auto end_utc = QDateTime(QDate(2026, 10, 15), QTime(2, 3, 4), Qt::UTC).toSecsSinceEpoch();
+        QCOMPARE(api.requests[1].body, (QJsonObject{{"start_time", start_utc}, {"end_time", end_utc}, {"speed", 4}}));
+        QCOMPARE(QSettings().value(QString::fromLatin1(record_directory_key)).toString(), output.filePath(QStringLiteral("downloads")));
+        const QString id = QStringLiteral("22222222-2222-4222-8222-222222222222");
+        const auto target = output.filePath(QStringLiteral("downloads/%1_20261015010203_20261015020304.mkv").arg(channel));
+        if (scenario == "create-failed")
+        {
+            respond(api.requests[1].socket, 502, QJsonDocument(QJsonObject{{"error", "playback_start_failed"}, {"playback_id", id}}).toJson());
+            QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(3), 2000);
+            QCOMPARE(api.requests[2].request_line, "DELETE /api/playbacks/" + id.toUtf8() + " HTTP/1.1");
+            respond(api.requests[2].socket, 204, {});
+            QTRY_VERIFY_WITH_TIMEOUT(result->text().startsWith(QStringLiteral("下载申请失败")), 1000);
+            QVERIFY(download->isEnabled() && !cancel->isEnabled());
+            QVERIFY(!QFile::exists(target));
+            return;
+        }
+        const auto ps_url = QStringLiteral("http://127.0.0.1:%1/play/gb28181/%2/token.ps").arg(media.serverPort()).arg(id);
+        respond(
+            api.requests[1].socket,
+            201,
+            QJsonDocument(
+                QJsonObject{{"playback_id", id}, {"ps_url", ps_url}, {"expires_at", "2026-10-16T01:00:00Z"}, {"deadline", "2026-10-16T01:02:00Z"}})
+                .toJson());
+        QTRY_VERIFY_WITH_TIMEOUT(media.hasPendingConnections(), 2000);
+        QPointer<QTcpSocket> peer = media.nextPendingConnection();
+        QTRY_VERIFY_WITH_TIMEOUT(peer->bytesAvailable() > 0 && peer->peek(4096).contains("\r\n\r\n"), 2000);
+        const QByteArray header("HTTP/1.1 200 OK\r\nContent-Type: video/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
+        const auto body = scenario == "complete" ? payload : payload.first(payload.size() * 7 / 10);
+        QVERIFY(peer->write(header + QByteArray::number(static_cast<qlonglong>(body.size()), 16) + "\r\n" + body + "\r\n" +
+                            (scenario == "complete" ? QByteArray("0\r\n\r\n") : QByteArray{})) > 0);
+        if (scenario == "complete")
+        {
+            peer->disconnectFromHost();
+            QTRY_VERIFY_WITH_TIMEOUT(result->text().startsWith(QStringLiteral("下载完成")), 5000);
+            QVERIFY(result->text().contains(QStringLiteral("不代表请求范围库存完整")));
+            QFile file(target);
+            QVERIFY(file.open(QIODevice::ReadOnly));
+            QCOMPARE(file.read(4), QByteArray::fromHex("1a45dfa3"));
+            QVERIFY(download->isEnabled() && !cancel->isEnabled());
+        }
+        else
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(QFile::exists(target + QStringLiteral(".part")), 3000);
+            if (scenario == "cancel")
+            {
+                cancel->click();
+                QVERIFY(result->text().contains(QStringLiteral("已取消下载")));
+            }
+            else
+            {
+                dialog->close();
+            }
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(3), 2000);
+        QCOMPARE(api.requests[2].request_line, "DELETE /api/playbacks/" + id.toUtf8() + " HTTP/1.1");
+        respond(api.requests[2].socket, 204, {});
+        QTRY_VERIFY_WITH_TIMEOUT(QCoreApplication::instance()->findChildren<record_thread*>().isEmpty(), 5000);
+        QVERIFY(!QFile::exists(target + QStringLiteral(".part")));
+        QCOMPARE(QFile::exists(target), scenario == "complete");
+        QTest::qWait(100);
+        QCOMPARE(api.requests.size(), qsizetype(3));
     }
 
     void real_twenty_second_timeout()

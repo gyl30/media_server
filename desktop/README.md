@@ -6,7 +6,7 @@ Linux x86_64 原生 Qt Widgets 客户端，沿用传统桌面监控原型。当�
 
 ## 构建
 
-需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network（测试还需 Test）、SDL2 ≥2.0.20、Boost ≥1.89 头文件，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。Boost.Beast 只用于有限 HTTP 分帧解析，不链接 Boost.Context。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，Boost 1.92.0，FFmpeg 9.0.1；有限录像还要求 SDK 启用 MPEG-PS demuxer。
+需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network（测试还需 Test）、SDL2 ≥2.0.20、Boost ≥1.89 头文件，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。Boost.Beast 只用于有限 HTTP 分帧解析，不链接 Boost.Context。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，Boost 1.92.0，FFmpeg 9.0.1；有限录像还要求 SDK 启用 MPEG-PS demuxer；本地录制与设备下载要求启用 Matroska muxer 与 extract_extradata bsf（aac_adtstoasc 随 muxer 自动选中）。
 
 ```sh
 PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig" cmake -S desktop -B build-desktop \
@@ -34,7 +34,11 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 
 选中国标通道后可打开独立“录像查询”窗口，手动填写设备当地墙上时间和类型。开窗不发请求，窗口固定父/通道，切换树不暗改目标；刷新、换平台、关闭及重新打开会取消旧查询。查询等待平台15秒，客户端20秒，每次最多1000条，超限提示缩小范围。显示设备原样目录，不按路径或内容去重；“设备声明N条、已收到N条”不代表唯一库存或文件可回放。取消不停止实时观看、共享上游或PTZ。该功能要求同版本 `POST /api/devices/{id}/channels/{channel_id}/records/query`。详见 [录像查询子集](../docs/qt_monitor_client_stage4_record_query.md)。
 
-明确选择目录项并核对设备 UTC 偏移后，可“在选中画面回放”。时间按固定偏移换算，不自动推断历史夏令时；文件路径不作为 URL。客户端创建独占历史实例并一次认领有限 PS 输入；关闭、替换、失败及自然呈现结束只 DELETE 本次实例，不停止其他实时上游。有限队列背压、不主动丢帧；正常结束表示传输和解码呈现结束，不证明请求范围库存完整。底部“暂停回放/继续回放”对选中画面发送同会话 INFO（GB/T 28181—2016 附录 B），平台受理后才冻结画面与声音；暂停占用本次回放期限，继续时实例已结束则停止本次回放。seek、倍速和下载尚未实现，物理 NVR 验收未完成。详见 [有限呈现增量](../docs/qt_monitor_client_stage4_finite_view.md)。
+明确选择目录项并核对设备 UTC 偏移后，可“在选中画面回放”。时间按固定偏移换算，不自动推断历史夏令时；文件路径不作为 URL。客户端创建独占历史实例并一次认领有限 PS 输入；关闭、替换、失败及自然呈现结束只 DELETE 本次实例，不停止其他实时上游。有限队列背压、不主动丢帧；正常结束表示传输和解码呈现结束，不证明请求范围库存完整。底部“暂停回放/继续回放”对选中画面发送同会话 INFO（GB/T 28181—2016 附录 B），平台受理后才冻结画面与声音；暂停占用本次回放期限，继续时实例已结束则停止本次回放。seek 与回放倍速尚未实现，物理 NVR 验收未完成。详见 [有限呈现增量](../docs/qt_monitor_client_stage4_finite_view.md)。
+
+录像窗口可把选中目录项“下载选中录像”到保存目录（默认系统影片目录，与本地录制共用），倍速 1/2/4 由平台以 `s=Download`、`a=downloadspeed` 向设备请求；设备是否支持以实际应答为准。客户端只流复制 H.264 与 AAC/PCMA/PCMU 到 `<通道>_<开始>_<结束>.mkv`，不转码；只有 HTTP chunked 完整结束且解复用正常 EOF 才保存，取消、关闭窗口、损坏包、探测后出现新音轨或写盘失败都删除本次临时 `.part` 并只回收本次实例。完成也不代表请求范围库存完整。
+
+底部“开始录制/停止录制”对选中的实时画面另签一张独立票据，流复制为 `<名称>_<时间>.mkv`，从首个可解码关键帧写起；用户停止、画面停止或替换都写完整封装保存，源结束或网络中断也保存并提示中断，写盘失败删除临时文件。画面右键可设置录像目录。退出程序会等待录制收尾或下载清理完成。详见 [阶段五录制与下载](../docs/qt_monitor_client_stage5_record_download.md)。
 
 ## 观看与生命周期
 
@@ -67,7 +71,7 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、完整历史回放控制、下载、报警和对讲尚未实现，不以禁用按钮冒充功能。
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、回放 seek/倍速、报警和对讲尚未实现，不以禁用按钮冒充功能。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 

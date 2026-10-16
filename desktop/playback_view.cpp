@@ -3,9 +3,10 @@
 #include <algorithm>
 
 #include <SDL.h>
-#include <QDebug>
+#include <QDir>
 #include <QMimeData>
 #include <QPainter>
+#include <QDateTime>
 #include <QJsonArray>
 #include <QDropEvent>
 #include <QDataStream>
@@ -17,9 +18,29 @@
 
 #include "desktop/playback_view.h"
 #include "desktop/platform_client.h"
+#include "desktop/history_request.h"
 
 namespace media_server
 {
+
+namespace
+{
+
+// 实时观看与本地录制使用同一签票接口，各自独立票据与观看身份。
+void play_request(const play_target& target, QString& path, QJsonObject& body)
+{
+    path = QStringLiteral("/api/play");
+    if (target.type == play_target::kind::gb_channel)
+    {
+        path = QStringLiteral("/api/devices/%1/channels/%2/play")
+                   .arg(QString::fromLatin1(QUrl::toPercentEncoding(target.id)), QString::fromLatin1(QUrl::toPercentEncoding(target.channel_id)));
+        return;
+    }
+    const auto key = target.type == play_target::kind::source ? QStringLiteral("source_id") : QStringLiteral("push_device_id");
+    body.insert(QStringLiteral("source"), QJsonObject{{key, target.id}});
+}
+
+}    // namespace
 
 playback_view::playback_view(QWidget* parent) : QWidget(parent)
 {
@@ -37,19 +58,11 @@ void playback_view::play(platform_client& client, const play_target& target)
     stop();
     final_stats_ = {};
     session_ = new QObject(this);
+    live_target_ = target;
     set_status(QStringLiteral("%1 · 正在申请播放").arg(target.name));
-    QString path = QStringLiteral("/api/play");
+    QString path;
     QJsonObject body;
-    if (target.type == play_target::kind::gb_channel)
-    {
-        path = QStringLiteral("/api/devices/%1/channels/%2/play")
-                   .arg(QString::fromLatin1(QUrl::toPercentEncoding(target.id)), QString::fromLatin1(QUrl::toPercentEncoding(target.channel_id)));
-    }
-    else
-    {
-        const auto key = target.type == play_target::kind::source ? QStringLiteral("source_id") : QStringLiteral("push_device_id");
-        body.insert(QStringLiteral("source"), QJsonObject{{key, target.id}});
-    }
+    play_request(target, path, body);
     request_ = client.request(
         "POST",
         path,
@@ -97,72 +110,26 @@ void playback_view::play_record(platform_client& client, const play_target& targ
         return;
     }
     session_ = new QObject(this);
-    const QPointer<QObject> session = session_;
-    const QPointer<playback_view> view = this;
-    // 平台地址切换不能把旧实例的迟到补偿发送到新平台。
-    const QPointer<platform_client> owner = new platform_client(&client);
-    owner->set_base_url(client.base_url());
     const auto path =
         QStringLiteral("/api/devices/%1/channels/%2/playback")
             .arg(QString::fromLatin1(QUrl::toPercentEncoding(target.id)), QString::fromLatin1(QUrl::toPercentEncoding(target.channel_id)));
     set_status(QStringLiteral("%1 · 正在申请录像回放").arg(target.name));
-    // 创建响应必须有界收尾：画面取消后仍读取实例身份，只回收本次独占回放。
-    auto* response_context = new QObject(owner);
-    owner->request(
-        "POST",
+    request_history(
+        client,
         path,
         {{QStringLiteral("start_time"), start_time}, {QStringLiteral("end_time"), end_time}},
-        response_context,
-        [view, session, owner, response_context, name = target.name](platform_response response)
+        session_,
+        [this, name = target.name](const QUrl& url, platform_client* owner, const QString& id)
         {
-            response_context->deleteLater();
-            const auto object = response.document.object();
-            const auto id = object.value(QStringLiteral("playback_id")).toString();
-            const auto release = [owner, id]()
-            {
-                if (!owner)
-                {
-                    return;
-                }
-                if (id.isEmpty())
-                {
-                    owner->deleteLater();
-                    return;
-                }
-                owner->request("DELETE",
-                               QStringLiteral("/api/playbacks/%1").arg(QString::fromLatin1(QUrl::toPercentEncoding(id))),
-                               {},
-                               owner,
-                               [owner](platform_response result)
-                               {
-                                   if (!result.ok() && result.status != 404)
-                                   {
-                                       qWarning().noquote() << QStringLiteral("独占录像回放回收失败：") + result.error;
-                                   }
-                                   owner->deleteLater();
-                               });
-            };
-            const QUrl url(object.value(QStringLiteral("ps_url")).toString(), QUrl::StrictMode);
-            const bool valid = response.ok() && response.status == 201 && !id.isEmpty() && url.isValid() && !url.isRelative() &&
-                               (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https")) && !url.host().isEmpty() &&
-                               !url.authority(QUrl::FullyEncoded).contains(QLatin1Char('@')) && !url.hasQuery() && !url.hasFragment() &&
-                               url.path().startsWith(QStringLiteral("/play/gb28181/%1/").arg(id)) && url.path().endsWith(QStringLiteral(".ps"));
-            if (!view || !session || !valid)
-            {
-                release();
-                if (view && session)
-                {
-                    view->set_status(response.ok() ? QStringLiteral("平台返回的录像实例或媒体地址无效")
-                                                   : QStringLiteral("录像回放申请失败：%1").arg(response.error));
-                }
-                return;
-            }
-            QObject::connect(session, &QObject::destroyed, owner, release);
-            view->record_owner_ = owner;
-            view->record_id_ = id;
-            view->start_decoder(name, url, playback_mode::finite);
+            record_owner_ = owner;
+            record_id_ = id;
+            start_decoder(name, url, playback_mode::finite);
         },
-        20'000);
+        [this](const platform_response& response)
+        {
+            set_status(response.ok() ? QStringLiteral("平台返回的录像实例或媒体地址无效")
+                                     : QStringLiteral("录像回放申请失败：%1").arg(response.error));
+        });
 }
 
 void playback_view::set_record_paused(bool paused)
@@ -316,8 +283,98 @@ void playback_view::start_decoder(const QString& name, const QUrl& url, playback
     timer_.start();
 }
 
+bool playback_view::recording() const { return recorder_ || record_session_; }
+
+bool playback_view::recording_ready() const
+{
+    return decoder_ && decoder_->mode() == playback_mode::realtime && !live_target_.id.isEmpty() && !recording();
+}
+
+void playback_view::start_recording(platform_client& client, const QString& directory)
+{
+    if (!recording_ready())
+    {
+        return;
+    }
+    // 名称只作文件名片段：路径分隔符等字符替换为下划线，不会写到所选目录之外。
+    auto stem = live_target_.name.isEmpty() ? live_target_.id : live_target_.name;
+    for (auto& character : stem)
+    {
+        if (!character.isLetterOrNumber() && character != QLatin1Char('-'))
+        {
+            character = QLatin1Char('_');
+        }
+    }
+    const auto target =
+        QDir(directory).filePath(stem.left(64) + QDateTime::currentDateTime().toString(QStringLiteral("_yyyyMMdd_HHmmss")) + QStringLiteral(".mkv"));
+    record_session_ = new QObject(this);
+    QString path;
+    QJsonObject body;
+    play_request(live_target_, path, body);
+    client.request(
+        "POST",
+        path,
+        body,
+        record_session_,
+        [this, target](platform_response response)
+        {
+            record_session_->deleteLater();
+            record_session_ = nullptr;
+            const QUrl url(response.document.object().value(QStringLiteral("rtsp_url")).toString(), QUrl::StrictMode);
+            if (!response.ok() || !url.isValid() || url.scheme() != QStringLiteral("rtsp") || url.host().isEmpty())
+            {
+                emit recording_changed();
+                emit recording_finished(response.ok() ? QStringLiteral("录制申请返回的 RTSP 地址无效")
+                                                      : QStringLiteral("录制申请失败：%1").arg(response.error));
+                return;
+            }
+            // 录制线程独立保活至结束；画面停止只请求收尾保存，不在 GUI 等待。
+            auto* recorder = new record_thread(url, target, playback_mode::realtime, QCoreApplication::instance());
+            recorder_ = recorder;
+            connect(recorder,
+                    &QThread::finished,
+                    this,
+                    [this, recorder, target]()
+                    {
+                        const auto stats = recorder->snapshot();
+                        if (recorder_ == recorder)
+                        {
+                            recorder_.clear();
+                        }
+                        emit recording_changed();
+                        emit recording_finished(!stats.saved ? QStringLiteral("录制失败：%1；未保存文件").arg(stats.error)
+                                                : !stats.interrupted
+                                                    ? QStringLiteral("录制已保存：%1").arg(target)
+                                                    : QStringLiteral("录制中断（%1），已保存：%2")
+                                                          .arg(stats.error.isEmpty() ? QStringLiteral("源已结束") : stats.error, target));
+                    });
+            connect(recorder, &QThread::finished, recorder, &QObject::deleteLater);
+            recorder->start();
+            emit recording_changed();
+        },
+        10'000);
+    emit recording_changed();
+}
+
+void playback_view::stop_recording()
+{
+    delete record_session_;
+    record_session_ = nullptr;
+    if (recorder_)
+    {
+        recorder_->finish();
+        recorder_.clear();
+    }
+    emit recording_changed();
+}
+
 void playback_view::stop()
 {
+    if (recording())
+    {
+        stop_recording();
+    }
+    live_target_ = {};
     delete session_;
     session_ = nullptr;
     if (request_)
