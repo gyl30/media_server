@@ -6,6 +6,8 @@
 
 当前采用 FFmpeg 解码、SDL2 PCM 输出、Qt Widgets 显示、现有 signaling API、RTSP/TCP。不维护第二个播放器，不为观看新增私有协议。平台负责 SIP 与共享 live，桌面客户端不再实现第二个 SIP 平台。
 
+2026-10-16 用户确认复用既有大华 `172.20.44.240` 做 GB28181 实机验证，并尽可能支持标准定义的功能。按[能力补齐与实机矩阵](gb28181_device_capabilities.md)区分现实现、2016/2022 标准、设备能力与真实验收；先只读查询，再分批补齐回放控制、订阅及音频链路，不把可选能力缺失或测试凭据阻塞当作设备功能失败。
+
 开发分支 `feature/qt-monitor-client`，独立工作区 `/home/gyl/example/media_server_qt`，开始基线 `ba803c2a8c0d2a82298dd9a9f68404cc0f57f320`。不改 main、其他 Agent、原型或第三方；每阶段真实测试后，与 DEV Claude Code 只读复审，解决阻断后中文提交并推送该开发分支，不自动合并。
 
 ## 七阶段
