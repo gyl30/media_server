@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -227,6 +228,10 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 	if startError != nil {
 		if preset {
 			writeHTTPError(writer, http.StatusBadGateway, "preset_control_unconfirmed")
+			return
+		}
+		if errors.Is(startError, context.DeadlineExceeded) || errors.Is(startError, context.Canceled) {
+			writeHTTPError(writer, http.StatusBadGateway, "ptz_start_unconfirmed")
 			return
 		}
 		writeHTTPError(writer, http.StatusBadGateway, "ptz_start_failed")

@@ -21,7 +21,7 @@ Content-Type: application/json
 
 ## 响应与运行所有权
 
-成功点动为 HTTP 200，含父设备、通道、原 command、`start: accepted`、`stop: accepted`、`physical_result: unconfirmed`。无正在执行的动作时，独立 STOP 同样返回 HTTP 200，但不需要 start 字段。START 事务失败后即使 STOP 成功仍返回 502 `ptz_start_failed`；它表示 SIP 事务未成功完成，绝不证明设备没有动作：200 丢失、迟到或本地取消时，设备仍可能已执行。STOP 失败优先返回 502 `ptz_stop_unconfirmed`，不能降格为正常成功。
+成功点动为 HTTP 200，含父设备、通道、原 command、`start: accepted`、`stop: accepted`、`physical_result: unconfirmed`。无正在执行的动作时，独立 STOP 同样返回 HTTP 200，但不需要 start 字段。START 超时或本地取消、STOP 成功时返回 502 `ptz_start_unconfirmed`；其他 START 事务失败保留 502 `ptz_start_failed`，不能一概当作明确设备拒绝或没有动作。STOP 失败仍优先返回 502 `ptz_stop_unconfirmed`，不能降格为正常成功。该分类由大华实测后的增量修正补充；下列历史测试和实机原始结果保持当时的错误码，不追溯改写。
 
 已有同通道 owner 时，普通点动返回 409；手动 STOP 仅取消该 owner 的 START/等待阶段并返回 HTTP 202，含 `command: stop`、`stop: requested`、`physical_result: unconfirmed`。202 不是 STOP 完成证明。第二次 STOP、设备注销或停机不能取消已在进行的独立 STOP。不同通道可并行。
 

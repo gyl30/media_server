@@ -248,7 +248,7 @@ func TestRunDrainsHTTPBeforeStoppingSIP(t *testing.T) {
 		}
 		defer response.Body.Close()
 		body, err := io.ReadAll(response.Body)
-		if err == nil && response.StatusCode != http.StatusOK && !(response.StatusCode == http.StatusBadGateway && strings.Contains(string(body), "ptz_start_failed")) {
+		if err == nil && response.StatusCode != http.StatusOK && !(response.StatusCode == http.StatusBadGateway && strings.Contains(string(body), "ptz_start_unconfirmed")) {
 			err = fmt.Errorf("PTZ HTTP%d: %s", response.StatusCode, body)
 		}
 		ptzDone <- err

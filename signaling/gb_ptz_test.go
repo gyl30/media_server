@@ -98,11 +98,14 @@ func TestPTZAcceptedAndFailures(t *testing.T) {
 		name, command                          string
 		speed, startStatus, stopStatus, status int
 		reason                                 string
+		lateStart                              bool
 	}{
 		{name: "accepted", command: "left", speed: 64, startStatus: 200, stopStatus: 200, status: 200},
 		{name: "STOP only", command: "stop", stopStatus: 200, status: 200},
 		{name: "START rejected still STOP", command: "left", speed: 64, startStatus: 403, stopStatus: 200, status: 502, reason: "ptz_start_failed"},
-		{name: "START 200 lost still STOP", command: "left", speed: 64, stopStatus: 200, status: 502, reason: "ptz_start_failed"},
+		{name: "START 200 lost still STOP", command: "left", speed: 64, stopStatus: 200, status: 502, reason: "ptz_start_unconfirmed"},
+		{name: "START 200 after STOP", command: "left", speed: 64, startStatus: 200, stopStatus: 200, status: 502, reason: "ptz_start_unconfirmed", lateStart: true},
+		{name: "START unknown STOP rejected", command: "left", speed: 64, stopStatus: 403, status: 502, reason: "ptz_stop_unconfirmed"},
 		{name: "STOP rejected", command: "left", speed: 64, startStatus: 200, stopStatus: 403, status: 502, reason: "ptz_stop_unconfirmed"},
 		{name: "STOP timeout", command: "stop", status: 502, reason: "ptz_stop_unconfirmed"},
 	} {
@@ -110,6 +113,8 @@ func TestPTZAcceptedAndFailures(t *testing.T) {
 			s := testInfrastructure(t)
 			var mu sync.Mutex
 			var commands []ptzControl
+			stopReceived, startFinished := make(chan struct{}), make(chan struct{})
+			var stopOnce sync.Once
 			newDeviceMessagePeer(t, s, func(request *sip.Request, tx sip.ServerTransaction, _ *deviceQueryPeer) {
 				var control ptzControl
 				if err := xml.Unmarshal(request.Body(), &control); err != nil {
@@ -124,7 +129,16 @@ func TestPTZAcceptedAndFailures(t *testing.T) {
 				}
 				status := test.startStatus
 				if control.PTZCommand == "A50F0000000000B4" {
+					stopOnce.Do(func() { close(stopReceived) })
 					status = test.stopStatus
+				} else if test.lateStart {
+					defer close(startFinished)
+					select {
+					case <-stopReceived:
+					case <-time.After(2 * time.Second):
+						t.Error("STOP not received before late START response")
+						return
+					}
 				}
 				if status != 0 {
 					if err := tx.Respond(sip.NewResponseFromRequest(request, status, "test", nil)); err != nil {
@@ -137,6 +151,13 @@ func TestPTZAcceptedAndFailures(t *testing.T) {
 			registration.lastHeartbeat = time.Now()
 			s.live.sip.devices.register(registration)
 			response := apiRequest(t, s.handler(), "POST", "/api/devices/"+queryTestDeviceID+"/channels/"+presetQueryChannelID+"/ptz", fmt.Sprintf(`{"command":%q,"speed":%d}`, test.command, test.speed), test.status)
+			if test.lateStart {
+				select {
+				case <-startFinished:
+				case <-time.After(time.Second):
+					t.Fatal("late START response did not finish")
+				}
+			}
 			if test.reason != "" {
 				if !strings.Contains(response.Body.String(), test.reason) {
 					t.Fatal(response.Body.String())
@@ -325,7 +346,7 @@ func TestPTZOwnerCancellationAndIndependentSTOP(t *testing.T) {
 			releaseOnce.Do(func() { close(releaseStop) })
 			select {
 			case response := <-completed:
-				if response.Code != http.StatusOK && !(response.Code == http.StatusBadGateway && strings.Contains(response.Body.String(), "ptz_start_failed")) {
+				if response.Code != http.StatusOK && !(response.Code == http.StatusBadGateway && strings.Contains(response.Body.String(), "ptz_start_unconfirmed")) {
 					t.Fatalf("HTTP%d: %s", response.Code, response.Body.String())
 				}
 			case <-time.After(2 * time.Second):

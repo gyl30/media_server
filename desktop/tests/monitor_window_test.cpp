@@ -1445,7 +1445,11 @@ class monitor_window_test final : public QObject
         for (const int code : {400, 409, 502})
         {
             QTest::newRow(QByteArray::number(code).constData()) << QStringLiteral("left") << code << QByteArray(R"({"error":"ptz_failed"})");
+            QTest::newRow((QByteArray::number(code) + "-start-unconfirmed").constData())
+                << QStringLiteral("left") << code << QByteArray(R"({"error":"ptz_start_unconfirmed"})");
         }
+        QTest::newRow("start-failed") << QStringLiteral("left") << 502 << QByteArray(R"({"error":"ptz_start_failed"})");
+        QTest::newRow("stop-unconfirmed") << QStringLiteral("left") << 502 << QByteArray(R"({"error":"ptz_stop_unconfirmed"})");
     }
 
     void ptz_invalid_response()
@@ -1472,7 +1476,15 @@ class monitor_window_test final : public QObject
         QVERIFY(reply);
         respond(api.queries[0].socket, status, body);
         QVERIFY(QTest::qWaitFor([&] { return info->isEnabled(); }, 2000));
-        QVERIFY2(result->text().contains(QStringLiteral("失败")), qPrintable(result->text()));
+        if (status == 502 && QJsonDocument::fromJson(body).object().value(QStringLiteral("error")) == QStringLiteral("ptz_start_unconfirmed"))
+        {
+            QCOMPARE(result->text(), QStringLiteral("云台动作受理未确认；STOP 已受理，物理结果未确认"));
+        }
+        else
+        {
+            QVERIFY2(result->text().contains(QStringLiteral("失败")), qPrintable(result->text()));
+            QVERIFY(!result->text().contains(QStringLiteral("STOP 已受理")));
+        }
         QVERIFY(window.findChild<QPushButton*>(QStringLiteral("ptz_stop"))->isEnabled());
         QVERIFY(QTest::qWaitFor([&] { return reply.isNull(); }, 1000));
         window.close();

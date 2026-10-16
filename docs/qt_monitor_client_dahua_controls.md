@@ -102,4 +102,28 @@ HTTP结果分别保存在上述TEST目录的 `06-left-64.json`、`09-right-32.js
 
 后续若要分离运动期限与事务确认期限，应先独立评审其响应关联、重传停止和生命周期成本；不能通过延长动作时间、自动重试或忽略HTTP502获得表面通过。本阶段结论仅为所列实机证据及兼容边界，不是整个平台GO。
 
-待独立修正的可用性问题：`ptz_start_failed` 将未确认与明确拒绝混为一类，容易使操作员误判实际动作；应先保留错误身份与STOP合同，再评审准确的接口错误分类及Qt提示，不能把本报告视为该问题已修复。
+本次实机记录时仍待修正的可用性问题：`ptz_start_failed` 将未确认与其他事务失败混为一类，容易使操作员误判实际动作。后续增量已增加 `ptz_start_unconfirmed` 和 Qt 准确提示，见下节；上述实机原始 HTTP 失败不因此变成成功，迟到确认的可用性限制也没有消失。
+
+## 五、START 未确认的错误分类增量
+
+仅在既有 `startError` 为 `context.DeadlineExceeded`/`context.Canceled`、非预置位且独立 STOP 成功时，返回 HTTP 502 `ptz_start_unconfirmed`。Qt 精确匹配 502 与该码，显示“云台动作受理未确认；STOP 已受理，物理结果未确认”。其他 START 错误保留 `ptz_start_failed`，STOP 错误仍优先，预置位不变；不将普通网络错误一概描述成明确拒绝。
+
+不重新读取成功 START 等待满 300ms 后的 context 错误，不延长 START，不保留 STOP 后重传，没有新增生产字段、helper、timer 或关联注册表。成功响应、owner、取消及停机顺序不变。该增量改进的是事实表达，不解决此相机迟到 200 的事务成功窗口，也不承诺物理停止。
+
+RED/GREEN 证据在 DEV `/var/tmp/qt-dahua-controls-md9w0l/ptz-confirmation/`：Go UDP peer 在真实收到 STOP 的屏障之后才回复 START/200，旧代码仍返回旧错误码；Qt 旧版精确文案断言失败。补丁后的定向 Go/Qt 通过；保留明确 403、START 未确认而 STOP 拒绝、跨 500ms 无旧 START 重传、各类取消及停机、错误码与 HTTP 状态组合，不能用任意 502 放宽断言。独立 Codex 与 DEV Claude Code 只读复审均无 P0/P1，源码差异 `source.diff` SHA256 `5645f67a8f082f300bad8b91913a74197f89efe8e100694e879ea0f8ba62445e`。
+
+本次错误码修正的完整验证：
+
+| 验证 | 实际结果 |
+| --- | --- |
+| Go 定向 PTZ/关闭 | PASS，8.357秒，`go-directed-green.log` |
+| Go 全量 test | 两包 PASS，signaling117.581秒、simulator0.002秒，`go-full.log` |
+| Go vet | 退出0，`go-vet.log` |
+| Go 全量 race | 两包 PASS，signaling125.313秒、simulator1.008秒，`go-race.log` |
+| Qt 文案定向 | 26项 PASS，零失败/跳过，`qt-directed-green.log` |
+| Normal 桌面完整构建/CTest | 8/8，153.11秒；422项 QTest、零失败/跳过，`normal-ctest.log`/`normal-LastTest.log` |
+| ASan+UBSan 桌面完整构建/CTest | 8/8，156.56秒；422项 QTest、零失败/跳过，`asan-ctest.log`/`asan-LastTest.log`；leak detection开启，无sanitizer诊断 |
+
+gofmt、clang-format只读检查和diff检查通过。日志、源码差异及SHA清单保留；全部结果都是本次改动实跑，不继承上一提交，也不把编译、受控UDP peer或 mock HTTP 当作新的物理相机实测。
+
+本增量没有重新操作相机；上节真实动作与时序证据保持原范围，不把受控 peer 的迟到响应测试称为物理设备复验。

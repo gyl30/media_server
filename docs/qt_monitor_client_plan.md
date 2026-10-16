@@ -83,3 +83,5 @@
 大华云台实机补充：HTTP→真实SIP→设备独立状态证明左右点动后停止，临时预置位3保存、调用归位与删除均有效，最终三坐标残差0且原预置位列表恢复；这些实机证据更新前述相应BLOCKED状态。已抓包的右点动和两次变倍START的200迟于300毫秒，现有接口按安全合同返回502；左点动同样返回502，但不在抓包覆盖内。未延长动作或保留STOP后的START重传。变倍未观察到实际坐标变化，STOP中断goto及Qt按钮人工实机验收未做，不能写为完整PTZ PASS。详见[实机云台与预置位](qt_monitor_client_dahua_controls.md)。证据DEV `/var/tmp/qt-dahua-controls-md9w0l/`、TEST `/var/tmp/qt-dahua-a2fcc80-V2mC1Ksf/run-06-controls/`；本子集不修改生产实现。
 
 大华库存录像实测补充：RecordInfo 找到既有录像，真实 TCP 末媒体后 19.878584 秒才 FIN；旧 Qt 回放只完成246/247帧、下载误报10秒无进展。现复用平台已有绝对 `deadline`，只限制未完成的有限HTTP；完整后允许本地解码/暂停排空，实时双轨10秒规则不变，删去旧暂停进展时基。Normal及ASan+UBSan桌面各8/8、各417项QTest通过；同一设备范围两模式回放均247帧逐帧匹配、PCM计数完整，两模式下载重解码帧与PCM hash一致并完成DELETE。更新的是该设备与该库存范围的真实回放/下载边界，不回写历史受控peer为物理验收；seek、倍速、广播/对讲、物理声画及完整平台仍未GO。详见[有限录像期限修正](qt_monitor_client_history_deadline.md)。
+
+PTZ 错误身份增量：START 超时/取消且独立 STOP 成功现返回 `ptz_start_unconfirmed`，Qt 显示动作受理未确认与 STOP 协议受理，其他事务错误、STOP 优先级及预置位不变。已建立真实 UDP 迟到响应屏障和 Qt 文案 RED/GREEN，无新生产状态、helper、timer 或迟到响应 registry；没有延长300ms或改变STOP顺序。本项仅解决操作员误判，不消除真实相机迟到200的成功窗口限制。完整验证和边界见[实机云台文档的分类增量](qt_monitor_client_dahua_controls.md)。

@@ -1060,36 +1060,41 @@ void monitor_window::control_ptz(const QString& command)
     }
     const auto path = QStringLiteral("/api/devices/%1/channels/%2/ptz")
                           .arg(QString::fromLatin1(QUrl::toPercentEncoding(id)), QString::fromLatin1(QUrl::toPercentEncoding(channel)));
-    client_.request("POST",
-                    path,
-                    body,
-                    control_context_,
-                    [this, id, channel, command](platform_response response)
-                    {
-                        set_control_busy(false);
-                        if (!response.ok())
-                        {
-                            ptz_result_->setText(QStringLiteral("云台请求失败：%1；物理结果未确认").arg(response.error));
-                            return;
-                        }
-                        const auto result = response.document.object();
-                        const bool requested = response.status == 202 && command == QStringLiteral("stop") &&
-                                               result.value(QStringLiteral("stop")).toString() == QStringLiteral("requested");
-                        const bool accepted =
-                            response.status == 200 && result.value(QStringLiteral("stop")).toString() == QStringLiteral("accepted") &&
-                            (command == QStringLiteral("stop") || result.value(QStringLiteral("start")).toString() == QStringLiteral("accepted"));
-                        if (result.value(QStringLiteral("device_id")).toString() != id ||
-                            result.value(QStringLiteral("channel_id")).toString() != channel ||
-                            result.value(QStringLiteral("command")).toString() != command ||
-                            result.value(QStringLiteral("physical_result")).toString() != QStringLiteral("unconfirmed") || (!requested && !accepted))
-                        {
-                            ptz_result_->setText(QStringLiteral("云台请求失败：平台返回的控制结果无效；物理结果未确认"));
-                            return;
-                        }
-                        ptz_result_->setText(requested ? QStringLiteral("已请求停止，结果未确认；最终 STOP 结果请查看平台日志")
-                                             : command == QStringLiteral("stop") ? QStringLiteral("STOP 已受理，物理结果未确认")
-                                                                                 : QStringLiteral("点动与 STOP 均已受理，物理结果未确认"));
-                    });
+    client_.request(
+        "POST",
+        path,
+        body,
+        control_context_,
+        [this, id, channel, command](platform_response response)
+        {
+            set_control_busy(false);
+            if (!response.ok())
+            {
+                if (response.status == 502 && response.document.object().value(QStringLiteral("error")) == QStringLiteral("ptz_start_unconfirmed"))
+                {
+                    ptz_result_->setText(QStringLiteral("云台动作受理未确认；STOP 已受理，物理结果未确认"));
+                    return;
+                }
+                ptz_result_->setText(QStringLiteral("云台请求失败：%1；物理结果未确认").arg(response.error));
+                return;
+            }
+            const auto result = response.document.object();
+            const bool requested = response.status == 202 && command == QStringLiteral("stop") &&
+                                   result.value(QStringLiteral("stop")).toString() == QStringLiteral("requested");
+            const bool accepted =
+                response.status == 200 && result.value(QStringLiteral("stop")).toString() == QStringLiteral("accepted") &&
+                (command == QStringLiteral("stop") || result.value(QStringLiteral("start")).toString() == QStringLiteral("accepted"));
+            if (result.value(QStringLiteral("device_id")).toString() != id || result.value(QStringLiteral("channel_id")).toString() != channel ||
+                result.value(QStringLiteral("command")).toString() != command ||
+                result.value(QStringLiteral("physical_result")).toString() != QStringLiteral("unconfirmed") || (!requested && !accepted))
+            {
+                ptz_result_->setText(QStringLiteral("云台请求失败：平台返回的控制结果无效；物理结果未确认"));
+                return;
+            }
+            ptz_result_->setText(requested                           ? QStringLiteral("已请求停止，结果未确认；最终 STOP 结果请查看平台日志")
+                                 : command == QStringLiteral("stop") ? QStringLiteral("STOP 已受理，物理结果未确认")
+                                                                     : QStringLiteral("点动与 STOP 均已受理，物理结果未确认"));
+        });
 }
 
 void monitor_window::reload_devices()
