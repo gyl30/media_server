@@ -19,6 +19,7 @@ type manscdpEnvelope struct {
 	DeviceID   string `xml:"DeviceID"`
 	Status     string `xml:"Status"`
 	NotifyType string `xml:"NotifyType"`
+	Result     string `xml:"Result"`
 }
 
 func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
@@ -43,6 +44,10 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if message.CmdType == "Catalog" && message.XMLName.Local == "Response" {
 		s.handleCatalog(req, tx)
+		return
+	}
+	if message.CmdType == "Broadcast" && message.XMLName.Local == "Response" {
+		s.handleBroadcastResponse(req, tx, message)
 		return
 	}
 	if message.XMLName.Local == "Response" && (message.CmdType == "DeviceInfo" || message.CmdType == "DeviceStatus" || message.CmdType == "PresetQuery" || message.CmdType == "RecordInfo") {

@@ -77,6 +77,7 @@ type liveService struct {
 	tokens          *streamTokens
 	stoppingDevices map[string]struct{}
 	ptzOwners       map[liveKey]context.CancelFunc
+	broadcasts      map[string]*broadcastSession
 	sip             *sipServer
 	media           *mediaServerHTTPClient
 	ssrcs           *ssrcAllocator
@@ -97,6 +98,7 @@ func newLiveService(
 		sessions:        make(map[liveKey]*liveSession),
 		stoppingDevices: make(map[string]struct{}),
 		ptzOwners:       make(map[liveKey]context.CancelFunc),
+		broadcasts:      make(map[string]*broadcastSession),
 		sip:             sipServer,
 		media:           media,
 		ssrcs:           ssrcs,
@@ -104,7 +106,9 @@ func newLiveService(
 		inviteTimeout:   inviteTimeout,
 		byeTimeout:      byeTimeout,
 	}
-	sipServer.server.OnBye(service.handleRemoteBye)
+	sipServer.server.OnBye(sipServer.handleBye)
+	sipServer.server.OnInvite(sipServer.handleBroadcastInvite)
+	sipServer.server.OnAck(sipServer.handleBroadcastAck)
 	sipServer.live = service
 	return service
 }
@@ -490,7 +494,21 @@ func (s *liveService) waitForStop(ctx context.Context, session *liveSession, wai
 }
 
 func (s *liveService) shutdown(ctx context.Context) {
+	s.mu.Lock()
+	var broadcasts []*broadcastSession
+	for _, session := range s.broadcasts {
+		session.cancel(context.Canceled)
+		broadcasts = append(broadcasts, session)
+	}
+	s.mu.Unlock()
 	s.stopMatching(ctx, func(*liveSession) bool { return true })
+	for _, session := range broadcasts {
+		select {
+		case <-session.done:
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *liveService) stopMatching(ctx context.Context, matches func(*liveSession) bool) {
