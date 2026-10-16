@@ -34,8 +34,8 @@ QString error_text(int code)
 
 }    // namespace
 
-decode_thread::decode_thread(QUrl url, QSize output_size, playback_mode mode, QObject* parent)
-    : QThread(parent), url_(std::move(url)), output_size_(output_size), mode_(mode)
+decode_thread::decode_thread(QUrl url, QSize output_size, playback_mode mode, QDeadlineTimer finite_deadline, QObject* parent)
+    : QThread(parent), url_(std::move(url)), output_size_(output_size), mode_(mode), finite_deadline_(finite_deadline)
 {
 }
 
@@ -81,21 +81,7 @@ void decode_thread::set_output_size(QSize size)
 int decode_thread::interrupt(void* opaque)
 {
     auto* self = static_cast<decode_thread*>(opaque);
-    return self->isInterruptionRequested() || self->progress_now() >= self->io_deadline_us_;
-}
-
-void decode_thread::set_paused(bool paused) { paused_.store(paused); }
-
-qint64 decode_thread::progress_now()
-{
-    // 只在解码线程推进；按调用间隔采样暂停位，近似排除确认暂停的区间。
-    const auto now = av_gettime_relative();
-    if (!paused_.load())
-    {
-        progress_us_ += now - progress_tick_us_;
-    }
-    progress_tick_us_ = now;
-    return progress_us_;
+    return self->isInterruptionRequested() || av_gettime_relative() >= self->io_deadline_us_;
 }
 
 void decode_thread::run()
@@ -114,6 +100,10 @@ void decode_thread::run()
     const auto cleanup = qScopeGuard(
         [&]()
         {
+            if (!isInterruptionRequested() && http_input && !http_input->parser.is_done() && http_input->deadline.hasExpired())
+            {
+                error = tr("历史媒体传输超过平台截止时间");
+            }
             av_dict_free(&options);
             swr_free(&resampler);
             sws_freeContext(scaler);
@@ -149,11 +139,15 @@ void decode_thread::run()
         // 轨道探测期间的数据不回放到实时显示队列。
         format->flags |= AVFMT_FLAG_NOBUFFER;
     }
-    progress_tick_us_ = av_gettime_relative();
-    io_deadline_us_ = progress_now() + 15000000;
+    io_deadline_us_ = av_gettime_relative() + 15000000;
     if (mode_ == playback_mode::finite && (url_.scheme() == QStringLiteral("http") || url_.scheme() == QStringLiteral("https")))
     {
-        http_input = std::make_unique<finite_http_input>(*this, format->interrupt_callback);
+        if (finite_deadline_.isForever())
+        {
+            error = tr("历史媒体缺少平台截止时间");
+            return;
+        }
+        http_input = std::make_unique<finite_http_input>(*this, format->interrupt_callback, finite_deadline_);
         const auto opened = http_input->open(url_);
         if (opened < 0)
         {
@@ -163,6 +157,8 @@ void decode_thread::run()
             }
             return;
         }
+        // 有限 PS 探测可能一直读取到设备延迟发来的结束块，随后只受平台绝对预算约束。
+        io_deadline_us_ = std::numeric_limits<qint64>::max();
         auto* buffer = static_cast<uint8_t*>(av_malloc(32768));
         if (buffer)
         {
@@ -187,8 +183,8 @@ void decode_thread::run()
     {
         if (!isInterruptionRequested())
         {
-            error = progress_now() >= io_deadline_us_ || result == AVERROR(ETIMEDOUT) ? tr("连接媒体超时")
-                                                                                      : tr("打开媒体失败：%1").arg(error_text(result));
+            error = av_gettime_relative() >= io_deadline_us_ || result == AVERROR(ETIMEDOUT) ? tr("连接媒体超时")
+                                                                                             : tr("打开媒体失败：%1").arg(error_text(result));
         }
         return;
     }
@@ -198,8 +194,8 @@ void decode_thread::run()
         if (!isInterruptionRequested())
         {
             const auto cause = result < 0 ? result : io && io->error < 0 ? io->error : AVERROR(EIO);
-            error = progress_now() >= io_deadline_us_ || cause == AVERROR(ETIMEDOUT) ? tr("读取媒体轨道超时")
-                                                                                     : tr("读取媒体轨道失败：%1").arg(error_text(cause));
+            error = av_gettime_relative() >= io_deadline_us_ || cause == AVERROR(ETIMEDOUT) ? tr("读取媒体轨道超时")
+                                                                                            : tr("读取媒体轨道失败：%1").arg(error_text(cause));
         }
         return;
     }
@@ -264,16 +260,21 @@ void decode_thread::run()
     qint64 next_pcm_pts = no_media_timestamp;
     AVChannelLayout audio_input_layout{};
     const auto layout_cleanup = qScopeGuard([&]() { av_channel_layout_uninit(&audio_input_layout); });
-    qint64 video_deadline_us = progress_now() + 10000000;
+    qint64 video_deadline_us = av_gettime_relative() + 10000000;
     qint64 audio_deadline_us = video_deadline_us;
     const auto wait_for_consumer = [&]()
     {
-        const auto before = progress_now();
         consumed_.wait(&mutex_, 50);
-        const auto waited = progress_now() - before;
-        video_deadline_us += waited;
-        audio_deadline_us += waited;
-        return !isInterruptionRequested();
+        if (isInterruptionRequested())
+        {
+            return false;
+        }
+        if (http_input && http_input->context_error() < 0)
+        {
+            error = tr("历史媒体传输超过平台截止时间");
+            return false;
+        }
+        return true;
     };
 
     const auto enqueue_audio = [&](decoded_audio_block output) -> bool
@@ -352,7 +353,7 @@ void decode_thread::run()
                 timestamp == AV_NOPTS_VALUE ? no_media_timestamp : av_rescale_q(timestamp, format->streams[index]->time_base, AVRational{1, 1000000});
             if (index == video_index)
             {
-                video_deadline_us = progress_now() + 10000000;
+                video_deadline_us = av_gettime_relative() + 10000000;
                 decoded_video_frame output;
                 QSize bounds;
                 {
@@ -416,7 +417,7 @@ void decode_thread::run()
             }
             else
             {
-                audio_deadline_us = progress_now() + 10000000;
+                audio_deadline_us = av_gettime_relative() + 10000000;
                 if (!resampler)
                 {
                     const AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
@@ -499,19 +500,26 @@ void decode_thread::run()
 
     while (!isInterruptionRequested())
     {
-        io_deadline_us_ = audio ? std::min(video_deadline_us, audio_deadline_us) : video_deadline_us;
+        io_deadline_us_ = mode_ == playback_mode::finite ? std::numeric_limits<qint64>::max()
+                          : audio                        ? std::min(video_deadline_us, audio_deadline_us)
+                                                         : video_deadline_us;
         result = av_read_frame(format, packet);
         if (isInterruptionRequested())
         {
             return;
         }
-        const auto now = progress_now();
-        if (now >= video_deadline_us)
+        const auto now = av_gettime_relative();
+        if (http_input && http_input->context_error() < 0)
+        {
+            error = tr("历史媒体传输超过平台截止时间");
+            return;
+        }
+        if (mode_ == playback_mode::realtime && now >= video_deadline_us)
         {
             error = tr("视频解码无进展，已超时（10 秒）");
             return;
         }
-        if (audio && now >= audio_deadline_us)
+        if (mode_ == playback_mode::realtime && audio && now >= audio_deadline_us)
         {
             error = tr("音频解码无进展，已超时（10 秒）");
             return;

@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QHostAddress>
 #include <QJsonDocument>
+#include <QDateTime>
 #include <QElapsedTimer>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -155,7 +156,11 @@ QJsonObject ticket(const http_fixture& media, const QString& id = first_id)
 {
     auto url = media.url();
     url.setPath(QStringLiteral("/play/gb28181/%1/fixture-token.ps").arg(id));
-    return {{"playback_id", id}, {"ps_url", url.toString()}, {"expires_at", "2026-10-16T01:00:00Z"}, {"deadline", "2026-10-16T01:02:00Z"}};
+    const auto now = QDateTime::currentDateTimeUtc();
+    return {{"playback_id", id},
+            {"ps_url", url.toString()},
+            {"expires_at", now.addSecs(60).toString(Qt::ISODateWithMs)},
+            {"deadline", now.addSecs(120).toString(Qt::ISODateWithMs)}};
 }
 
 QByteArray delete_line(const QString& id = first_id) { return "DELETE /api/playbacks/" + id.toUtf8() + " HTTP/1.1"; }
@@ -390,6 +395,88 @@ class finite_playback_view_test final : public QObject
         QVERIFY(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty());
         QVERIFY(!api.parse_error && !media.parse_error);
         qInfo() << "502 cleanupPending补偿: DELETE=1 mediaGET=0 decoder=0";
+    }
+
+    void history_deadline_ticket_data()
+    {
+        QTest::addColumn<QString>("scenario");
+        QTest::addColumn<bool>("valid");
+        QTest::newRow("deadline-missing") << QStringLiteral("missing") << false;
+        QTest::newRow("deadline-invalid") << QStringLiteral("invalid") << false;
+        QTest::newRow("deadline-wrong-type") << QStringLiteral("type") << false;
+        QTest::newRow("deadline-without-timezone") << QStringLiteral("local") << false;
+        QTest::newRow("deadline-expired") << QStringLiteral("expired") << false;
+        QTest::newRow("deadline-Go-RFC3339Nano-Z") << QStringLiteral("nano") << true;
+        QTest::newRow("deadline-explicit-plus08") << QStringLiteral("offset") << true;
+    }
+
+    // 使用真实 request_history 入口：无效预算不创建 decoder，且仍回收平台独占实例。
+    void history_deadline_ticket()
+    {
+        QFETCH(QString, scenario);
+        QFETCH(bool, valid);
+        http_fixture api, media;
+        QVERIFY(api.start());
+        QVERIFY(media.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(api.url()));
+        playback_view view;
+        view.play_record(client, historical_target(), 1760000000, 1760000002);
+        const auto operations = operation_clients(client);
+        QCOMPARE(operations.size(), qsizetype(1));
+        const auto operation = operations.front();
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
+        QCOMPARE(api.requests[0].line, create_line);
+        auto response = ticket(media);
+        const auto future = QDateTime::currentDateTimeUtc().addSecs(120);
+        if (scenario == QStringLiteral("missing"))
+        {
+            response.remove(QStringLiteral("deadline"));
+        }
+        else if (scenario == QStringLiteral("invalid"))
+        {
+            response.insert(QStringLiteral("deadline"), QStringLiteral("not-a-timestamp"));
+        }
+        else if (scenario == QStringLiteral("type"))
+        {
+            response.insert(QStringLiteral("deadline"), 123);
+        }
+        else if (scenario == QStringLiteral("local"))
+        {
+            response.insert(QStringLiteral("deadline"), future.toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss")));
+        }
+        else if (scenario == QStringLiteral("expired"))
+        {
+            response.insert(QStringLiteral("deadline"), QDateTime::currentDateTimeUtc().addSecs(-1).toString(Qt::ISODateWithMs));
+        }
+        else if (scenario == QStringLiteral("nano"))
+        {
+            response.insert(QStringLiteral("deadline"), future.toString(QStringLiteral("yyyy-MM-ddTHH:mm:ss")) + QStringLiteral(".123456789Z"));
+        }
+        else
+        {
+            QCOMPARE(scenario, QStringLiteral("offset"));
+            response.insert(QStringLiteral("deadline"), future.toOffsetFromUtc(8 * 3600).toString(Qt::ISODateWithMs));
+        }
+        QVERIFY(api.respond(0, 201, response));
+        if (valid)
+        {
+            QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
+            QCOMPARE(QCoreApplication::instance()->findChildren<decode_thread*>().size(), qsizetype(1));
+            view.stop();
+        }
+        else
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(view.status().contains(QStringLiteral("无效")), 2000);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api.requests[1].line, delete_line());
+        QVERIFY(api.respond(1, 204));
+        QTRY_VERIFY_WITH_TIMEOUT(operation.isNull(), 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty(), 3000);
+        QCOMPARE(media.requests.size(), valid ? qsizetype(1) : qsizetype(0));
+        QCOMPARE(api.requests.size(), qsizetype(2));
+        QVERIFY(!api.parse_error && !media.parse_error);
     }
 
     void present_complete_ps_data()
@@ -669,7 +756,10 @@ class finite_playback_view_test final : public QObject
         view.show();
         view.play_record(client, historical_target(), 1760000000, 1760000002);
         QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
-        QVERIFY(api.respond(0, 201, ticket(media)));
+        auto response = ticket(media);
+        const QDeadlineTimer transport_budget(2600, Qt::PreciseTimer);
+        response.insert(QStringLiteral("deadline"), QDateTime::currentDateTimeUtc().addMSecs(2600).toString(Qt::ISODateWithMs));
+        QVERIFY(api.respond(0, 201, response));
         QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
         QPointer<decode_thread> decoder = QCoreApplication::instance()->findChildren<decode_thread*>().front();
         // 2 秒素材连同终止块一次发完；剩余帧落在有限队列内时解码线程先结束。
@@ -682,7 +772,8 @@ class finite_playback_view_test final : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(view.record_paused(), 2000);
         const auto frozen = view.rendered_frames();
         QTRY_VERIFY_WITH_TIMEOUT(decoder && decoder->isFinished(), 4000);
-        QTest::qWait(200);
+        QTRY_VERIFY_WITH_TIMEOUT(transport_budget.hasExpired(), 3000);
+        QTest::qWait(100);
         QCOMPARE(view.rendered_frames(), frozen);
         QVERIFY(frozen < 50);
         QVERIFY(view.record_control_ready());

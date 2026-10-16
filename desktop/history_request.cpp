@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QPointer>
+#include <QDateTime>
 
 #include "desktop/history_request.h"
 #include "desktop/platform_client.h"
@@ -13,7 +14,7 @@ void request_history(platform_client& client,
                      const QString& path,
                      const QJsonObject& body,
                      QObject* consumer,
-                     std::function<void(const QUrl& url, platform_client* owner, const QString& id)> ready,
+                     std::function<void(const QUrl& url, platform_client* owner, const QString& id, QDeadlineTimer deadline)> ready,
                      std::function<void(const platform_response& response)> failed)
 {
     const QPointer<QObject> session = consumer;
@@ -57,10 +58,13 @@ void request_history(platform_client& client,
                                });
             };
             const QUrl url(object.value(QStringLiteral("ps_url")).toString(), QUrl::StrictMode);
+            const auto end = QDateTime::fromString(object.value(QStringLiteral("deadline")).toString(), Qt::ISODateWithMs);
+            const auto remaining = QDateTime::currentDateTimeUtc().msecsTo(end);
             const bool valid = response.ok() && response.status == 201 && !id.isEmpty() && url.isValid() && !url.isRelative() &&
                                (url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https")) && !url.host().isEmpty() &&
                                !url.authority(QUrl::FullyEncoded).contains(QLatin1Char('@')) && !url.hasQuery() && !url.hasFragment() &&
-                               url.path().startsWith(QStringLiteral("/play/gb28181/%1/").arg(id)) && url.path().endsWith(QStringLiteral(".ps"));
+                               url.path().startsWith(QStringLiteral("/play/gb28181/%1/").arg(id)) && url.path().endsWith(QStringLiteral(".ps")) &&
+                               end.isValid() && end.timeSpec() != Qt::LocalTime && remaining > 0;
             if (!session || !valid)
             {
                 release();
@@ -71,7 +75,7 @@ void request_history(platform_client& client,
                 return;
             }
             QObject::connect(session, &QObject::destroyed, owner, release);
-            ready(url, owner, id);
+            ready(url, owner, id, QDeadlineTimer(remaining, Qt::PreciseTimer));
         },
         20'000);
 }

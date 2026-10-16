@@ -346,6 +346,12 @@ class decode_thread_test final : public QObject
         QTest::addColumn<bool>("success");
         QTest::newRow("complete-chunked") << QString("complete") << true;
         QTest::newRow("fragmented-header-and-chunks") << QString("fragmented") << true;
+        QTest::newRow("complete-body-delayed-chunklast") << QString("delayed") << true;
+        QTest::newRow("short-body-delayed-probe-chunklast") << QString("probe-delayed") << true;
+        QTest::newRow("complete-before-budget-backpressure-after-budget") << QString("eof-budget") << true;
+        QTest::newRow("missing-chunklast-budget") << QString("budget") << false;
+        QTest::newRow("paused-video-backpressure-budget") << QString("paused-video") << false;
+        QTest::newRow("paused-audio-backpressure-budget") << QString("paused-audio") << false;
         QTest::newRow("missing-chunklast") << QString("missing") << false;
         QTest::newRow("invalid-chunk-length") << QString("invalid") << false;
         QTest::newRow("declared-chunk-longer-than-FIN") << QString("short") << false;
@@ -364,7 +370,8 @@ class decode_thread_test final : public QObject
         }
         QFETCH(QString, scenario);
         QFETCH(bool, success);
-        const auto path = QDir(folder).filePath("pcma-audio-first-noend.ps");
+        const bool long_body = scenario == "delayed" || scenario == "budget" || scenario.startsWith("paused-");
+        const auto path = QDir(folder).filePath(long_body ? "pcma-long-noend.ps" : "pcma-audio-first-noend.ps");
         QFile file(path);
         QVERIFY(file.open(QIODevice::ReadOnly));
         const auto payload = file.readAll();
@@ -389,12 +396,16 @@ class decode_thread_test final : public QObject
         local_consumer.stop();
         reference.consume(local);
         QVERIFY2(local.snapshot().error.isEmpty(), qPrintable(local.snapshot().error));
-        QCOMPARE(reference.video_frames, quint64(50));
-        QCOMPARE(reference.pcm_bytes, qsizetype(96000 * 4));
+        QCOMPARE(reference.video_frames, long_body ? quint64(200) : quint64(50));
+        QCOMPARE(reference.pcm_bytes, long_body ? qsizetype(384000 * 4) : qsizetype(96000 * 4));
 
         QTcpServer server;
         QVERIFY(server.listen(QHostAddress::LocalHost, 0));
-        decode_thread thread(QUrl(QString("http://127.0.0.1:%1/history/test.ps").arg(server.serverPort())), QSize(320, 240), playback_mode::finite);
+        const bool budget = scenario == "budget" || scenario.startsWith("paused-");
+        decode_thread thread(QUrl(QString("http://127.0.0.1:%1/history/test.ps").arg(server.serverPort())),
+                             QSize(320, 240),
+                             playback_mode::finite,
+                             QDeadlineTimer(budget || scenario == "eof-budget" ? 1500 : 30000, Qt::PreciseTimer));
         const auto stop = qScopeGuard(
             [&]()
             {
@@ -406,8 +417,32 @@ class decode_thread_test final : public QObject
             });
         output_capture output;
         QTimer consumer;
-        connect(&consumer, &QTimer::timeout, this, [&]() { output.consume(thread); });
-        consumer.start(1);
+        connect(&consumer,
+                &QTimer::timeout,
+                this,
+                [&]()
+                {
+                    if (scenario == "paused-video")
+                    {
+                        thread.take_audio_blocks();
+                    }
+                    else if (scenario == "paused-audio")
+                    {
+                        thread.take_video_frames();
+                    }
+                    else
+                    {
+                        output.consume(thread);
+                    }
+                });
+        if (scenario == "eof-budget")
+        {
+            QTimer::singleShot(2200, &consumer, [&]() { consumer.start(1); });
+        }
+        else
+        {
+            consumer.start(1);
+        }
         thread.start();
         QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections(), 2000);
         auto* peer = server.nextPendingConnection();
@@ -432,7 +467,7 @@ class decode_thread_test final : public QObject
                 const auto chunk = payload.mid(offset, chunk_size);
                 response += QByteArray::number(static_cast<qlonglong>(chunk.size()), 16) + "\r\n" + chunk + "\r\n";
             }
-            if (scenario != "missing")
+            if (scenario != "missing" && scenario != "delayed" && scenario != "probe-delayed" && !budget)
             {
                 response += "0\r\n\r\n";
             }
@@ -478,12 +513,35 @@ class decode_thread_test final : public QObject
             else
             {
                 QCOMPARE(peer->write(response), qint64(response.size()));
-                peer->disconnectFromHost();
+                if (scenario != "delayed" && scenario != "probe-delayed" && !budget)
+                {
+                    peer->disconnectFromHost();
+                }
             }
         };
         request_connection = connect(peer, &QTcpSocket::readyRead, this, respond);
         respond();
-        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), 4000);
+        QTimer tail;
+        if (scenario == "delayed" || scenario == "probe-delayed")
+        {
+            // 先确认完成探测并实际解码，避免延迟仅落在 15 秒探测窗口中。
+            if (scenario == "delayed")
+            {
+                QTRY_VERIFY_WITH_TIMEOUT(thread.snapshot().video_frames > 10, 4000);
+            }
+            tail.setSingleShot(true);
+            connect(&tail,
+                    &QTimer::timeout,
+                    this,
+                    [&]()
+                    {
+                        QCOMPARE(peer->write("0\r\n\r\n"), qint64(5));
+                        peer->disconnectFromHost();
+                    });
+            // 模拟设备发完全部 PS 后，晚于实时 10 秒期限才关闭完整 HTTP 分帧。
+            tail.start(scenario == "delayed" ? 11000 : 16500);
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), budget ? 4000 : 21000);
         consumer.stop();
         output.consume(thread);
         QVERIFY(request.startsWith("GET /history/test.ps HTTP/1.1\r\n"));
@@ -502,6 +560,19 @@ class decode_thread_test final : public QObject
         else
         {
             QVERIFY2(!stats.error.isEmpty(), "无效 HTTP 响应不能被当作正常媒体 EOF");
+            if (budget)
+            {
+                QVERIFY2(stats.error.contains(QStringLiteral("截止时间")), qPrintable(stats.error));
+                QVERIFY(stats.video_frames > 0);
+                if (scenario == "paused-video")
+                {
+                    QCOMPARE(stats.video_frames, quint64(decoded_video_capacity + 1));
+                }
+                if (scenario == "paused-audio")
+                {
+                    QVERIFY(stats.pcm_samples * 4 > static_cast<quint64>(decoded_pcm_capacity));
+                }
+            }
         }
     }
 

@@ -7,6 +7,7 @@
 #include <QThread>
 #include <QByteArray>
 #include <QSslSocket>
+#include <QDeadlineTimer>
 
 #include <boost/beast/http.hpp>
 
@@ -27,8 +28,9 @@ struct finite_http_input
     QByteArray wire;
     QThread& thread;
     AVIOInterruptCB interrupt;
+    QDeadlineTimer deadline;
 
-    finite_http_input(QThread& owner, AVIOInterruptCB io_interrupt);
+    finite_http_input(QThread& owner, AVIOInterruptCB io_interrupt, QDeadlineTimer transport_deadline);
     ~finite_http_input();
 
     int context_error() const;

@@ -82,7 +82,10 @@ class playback_view final : public QWidget
 
    private:
     void update_media();
-    void start_decoder(const QString& name, const QUrl& url, playback_mode mode = playback_mode::realtime);
+    void start_decoder(const QString& name,
+                       const QUrl& url,
+                       playback_mode mode = playback_mode::realtime,
+                       QDeadlineTimer finite_deadline = QDeadlineTimer::Forever);
     void wait_for_gb_media(platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline);
     void reset_audio();
     void set_status(const QString& text);

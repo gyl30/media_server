@@ -271,10 +271,10 @@ void record_query_dialog::start_download()
          {QStringLiteral("end_time"), end_time},
          {QStringLiteral("speed"), download_speed_->currentData().toInt()}},
         download_session_,
-        [this, target](const QUrl& url, platform_client*, const QString&)
+        [this, target](const QUrl& url, platform_client*, const QString&, QDeadlineTimer deadline)
         {
             // 下载线程独立保活至结束；取消只请求中断，由线程删除本次临时文件。
-            auto* downloader = new record_thread(url, target, playback_mode::finite, QCoreApplication::instance());
+            auto* downloader = new record_thread(url, target, playback_mode::finite, deadline, QCoreApplication::instance());
             downloader_ = downloader;
             connect(downloader,
                     &QThread::finished,

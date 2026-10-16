@@ -64,8 +64,8 @@ int64_t seek_file(void* opaque, int64_t offset, int whence)
 
 }    // namespace
 
-record_thread::record_thread(QUrl url, QString target, playback_mode mode, QObject* parent)
-    : QThread(parent), url_(std::move(url)), target_(std::move(target)), mode_(mode)
+record_thread::record_thread(QUrl url, QString target, playback_mode mode, QDeadlineTimer finite_deadline, QObject* parent)
+    : QThread(parent), url_(std::move(url)), target_(std::move(target)), mode_(mode), finite_deadline_(finite_deadline)
 {
 }
 
@@ -100,6 +100,11 @@ void record_thread::run()
     const auto cleanup = qScopeGuard(
         [&]()
         {
+            if (!isInterruptionRequested() && !finish_requested_.load() && http_input && !http_input->parser.is_done() &&
+                http_input->deadline.hasExpired())
+            {
+                error = tr("历史媒体传输超过平台截止时间");
+            }
             avformat_free_context(output);
             if (output_io)
             {
@@ -143,7 +148,12 @@ void record_thread::run()
     const bool finite = mode_ == playback_mode::finite;
     if (finite && (url_.scheme() == QStringLiteral("http") || url_.scheme() == QStringLiteral("https")))
     {
-        http_input = std::make_unique<finite_http_input>(*this, input->interrupt_callback);
+        if (finite_deadline_.isForever())
+        {
+            error = tr("历史媒体缺少平台截止时间");
+            return;
+        }
+        http_input = std::make_unique<finite_http_input>(*this, input->interrupt_callback, finite_deadline_);
         if (const auto opened = http_input->open(url_); opened < 0)
         {
             if (!isInterruptionRequested())
@@ -152,6 +162,7 @@ void record_thread::run()
             }
             return;
         }
+        io_deadline_us_ = std::numeric_limits<qint64>::max();
         auto* buffer = static_cast<uint8_t*>(av_malloc(io_buffer_size));
         input_io = buffer ? avio_alloc_context(buffer, io_buffer_size, 0, http_input.get(), &finite_http_input::read, nullptr, nullptr) : nullptr;
         if (!input_io)
@@ -263,7 +274,9 @@ void record_thread::run()
     qint64 audio_deadline_us = video_deadline_us;
     while (!isInterruptionRequested() && !finish_requested_.load())
     {
-        io_deadline_us_ = audio_index >= 0 ? std::min(video_deadline_us, audio_deadline_us) : video_deadline_us;
+        io_deadline_us_ = finite             ? std::numeric_limits<qint64>::max()
+                          : audio_index >= 0 ? std::min(video_deadline_us, audio_deadline_us)
+                                             : video_deadline_us;
         result = av_read_frame(input, packet);
         if (isInterruptionRequested() || finish_requested_.load())
         {
@@ -271,7 +284,13 @@ void record_thread::run()
             break;
         }
         const auto now = av_gettime_relative();
-        if (now >= video_deadline_us || (audio_index >= 0 && now >= audio_deadline_us))
+        if (http_input && http_input->context_error() < 0)
+        {
+            av_packet_unref(packet);
+            error = tr("历史媒体传输超过平台截止时间");
+            break;
+        }
+        if (!finite && (now >= video_deadline_us || (audio_index >= 0 && now >= audio_deadline_us)))
         {
             av_packet_unref(packet);
             error = now >= video_deadline_us ? tr("视频无进展，已超时（10 秒）") : tr("音频无进展，已超时（10 秒）");

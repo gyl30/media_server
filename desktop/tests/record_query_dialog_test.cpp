@@ -768,12 +768,13 @@ class record_query_dialog_test final : public QObject
             return;
         }
         const auto ps_url = QStringLiteral("http://127.0.0.1:%1/play/gb28181/%2/token.ps").arg(media.serverPort()).arg(id);
-        respond(
-            api.requests[1].socket,
-            201,
-            QJsonDocument(
-                QJsonObject{{"playback_id", id}, {"ps_url", ps_url}, {"expires_at", "2026-10-16T01:00:00Z"}, {"deadline", "2026-10-16T01:02:00Z"}})
-                .toJson());
+        respond(api.requests[1].socket,
+                201,
+                QJsonDocument(QJsonObject{{"playback_id", id},
+                                          {"ps_url", ps_url},
+                                          {"expires_at", QDateTime::currentDateTimeUtc().addSecs(60).toString(Qt::ISODateWithMs)},
+                                          {"deadline", QDateTime::currentDateTimeUtc().addSecs(120).toString(Qt::ISODateWithMs)}})
+                    .toJson());
         QTRY_VERIFY_WITH_TIMEOUT(media.hasPendingConnections(), 2000);
         QPointer<QTcpSocket> peer = media.nextPendingConnection();
         QTRY_VERIFY_WITH_TIMEOUT(peer->bytesAvailable() > 0 && peer->peek(4096).contains("\r\n\r\n"), 2000);

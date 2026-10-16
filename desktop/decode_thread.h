@@ -1,7 +1,6 @@
 #ifndef DESKTOP_DECODE_THREAD_H
 #define DESKTOP_DECODE_THREAD_H
 
-#include <atomic>
 #include <limits>
 #include <vector>
 
@@ -13,6 +12,7 @@
 #include <QString>
 #include <QByteArray>
 #include <QWaitCondition>
+#include <QDeadlineTimer>
 
 namespace media_server
 {
@@ -68,14 +68,17 @@ class decode_thread final : public QThread
     Q_OBJECT
 
    public:
-    decode_thread(QUrl url, QSize output_size, playback_mode mode = playback_mode::realtime, QObject* parent = nullptr);
+    decode_thread(QUrl url,
+                  QSize output_size,
+                  playback_mode mode = playback_mode::realtime,
+                  QDeadlineTimer finite_deadline = QDeadlineTimer::Forever,
+                  QObject* parent = nullptr);
 
    public:
     std::vector<decoded_video_frame> take_video_frames();
     std::vector<decoded_audio_block> take_audio_blocks();
     decoder_snapshot snapshot() const;
     void set_output_size(QSize size);
-    void set_paused(bool paused);
     playback_mode mode() const;
 
    protected:
@@ -83,16 +86,13 @@ class decode_thread final : public QThread
 
    private:
     static int interrupt(void* opaque);
-    qint64 progress_now();
 
    private:
     QUrl url_;
     QSize output_size_;
     playback_mode mode_;
+    QDeadlineTimer finite_deadline_;
     qint64 io_deadline_us_{};
-    std::atomic<bool> paused_{};
-    qint64 progress_us_{};
-    qint64 progress_tick_us_{};
     mutable QMutex mutex_;
     QWaitCondition consumed_;
     std::vector<decoded_video_frame> video_frames_;

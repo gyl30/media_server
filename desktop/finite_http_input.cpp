@@ -16,7 +16,8 @@ extern "C"
 namespace media_server
 {
 
-finite_http_input::finite_http_input(QThread& owner, AVIOInterruptCB io_interrupt) : thread(owner), interrupt(io_interrupt)
+finite_http_input::finite_http_input(QThread& owner, AVIOInterruptCB io_interrupt, QDeadlineTimer transport_deadline)
+    : thread(owner), interrupt(io_interrupt), deadline(transport_deadline)
 {
     socket.setReadBufferSize(65536);
     parser.header_limit(65536);
@@ -26,10 +27,12 @@ finite_http_input::finite_http_input(QThread& owner, AVIOInterruptCB io_interrup
 
 finite_http_input::~finite_http_input() { socket.abort(); }
 
-// 与 FFmpeg 共用同一中断回调，期限按所属线程的进展时基判断。
+// 完整 HTTP 之后只保留取消；网络预算不限制已经取回的解码尾部和呈现排空。
 int finite_http_input::context_error() const
 {
-    return thread.isInterruptionRequested() ? AVERROR_EXIT : interrupt.callback(interrupt.opaque) ? AVERROR(ETIMEDOUT) : 0;
+    return thread.isInterruptionRequested()                                                       ? AVERROR_EXIT
+           : (!parser.is_done() && deadline.hasExpired()) || interrupt.callback(interrupt.opaque) ? AVERROR(ETIMEDOUT)
+                                                                                                  : 0;
 }
 
 int finite_http_input::wait()

@@ -6,6 +6,7 @@
 #include <QUrl>
 #include <QString>
 #include <QJsonObject>
+#include <QDeadlineTimer>
 
 #include "desktop/platform_client.h"
 
@@ -19,7 +20,7 @@ void request_history(platform_client& client,
                      const QString& path,
                      const QJsonObject& body,
                      QObject* consumer,
-                     std::function<void(const QUrl& url, platform_client* owner, const QString& id)> ready,
+                     std::function<void(const QUrl& url, platform_client* owner, const QString& id, QDeadlineTimer deadline)> ready,
                      std::function<void(const platform_response& response)> failed);
 
 }    // namespace media_server

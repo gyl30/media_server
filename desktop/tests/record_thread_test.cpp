@@ -209,6 +209,8 @@ class record_thread_test final : public QObject
     {
         QTest::addColumn<QString>("scenario");
         QTest::newRow("complete") << QString("complete");
+        QTest::newRow("complete-body-delayed-chunklast") << QString("delayed");
+        QTest::newRow("missing-chunklast-budget") << QString("budget");
         QTest::newRow("missing-chunklast") << QString("missing");
         QTest::newRow("cancel") << QString("cancel");
         QTest::newRow("complete-chunked-truncated-pes") << QString("truncated");
@@ -229,7 +231,7 @@ class record_thread_test final : public QObject
         const auto target = directory.filePath(QStringLiteral("download.mkv"));
         media_server_fixture media;
         QVERIFY(media.start());
-        record_thread thread(media.url(), target, playback_mode::finite);
+        record_thread thread(media.url(), target, playback_mode::finite, QDeadlineTimer(scenario == "budget" ? 1500 : 30000, Qt::PreciseTimer));
         const auto stop = qScopeGuard(
             [&]()
             {
@@ -239,6 +241,7 @@ class record_thread_test final : public QObject
         thread.start();
         QTRY_VERIFY_WITH_TIMEOUT(media.ready(), 3000);
         QVERIFY(media.request.startsWith("GET /play/gb28181/id/token.ps HTTP/1.1\r\n"));
+        QTimer tail;
         if (scenario == "cancel")
         {
             QVERIFY(media.send(stream_header + chunk(payload.first(payload.size() * 7 / 10))));
@@ -250,24 +253,56 @@ class record_thread_test final : public QObject
         {
             // 截断场景 HTTP 分帧完整，但最后一个 PES 少 100 字节，解复用器会标记损坏包。
             const auto body = scenario == "truncated" ? payload.first(payload.size() - 100) : payload;
-            QVERIFY(media.send(stream_header + chunk(body) + (scenario == "missing" ? QByteArray{} : QByteArray("0\r\n\r\n"))));
-            media.peer->disconnectFromHost();
+            const auto complete_now = scenario != "missing" && scenario != "delayed" && scenario != "budget";
+            QVERIFY(media.send(stream_header + chunk(body) + (complete_now ? QByteArray("0\r\n\r\n") : QByteArray{})));
+            if (scenario == "delayed")
+            {
+                // 探测已完成且封装确实开始；不能把 11 秒全部算在初始探测窗口。
+                QTRY_VERIFY_WITH_TIMEOUT(thread.snapshot().video_packets > 10, 5000);
+                tail.setSingleShot(true);
+                connect(&tail,
+                        &QTimer::timeout,
+                        this,
+                        [&]()
+                        {
+                            QVERIFY(media.send("0\r\n\r\n"));
+                            media.peer->disconnectFromHost();
+                        });
+                tail.start(11000);
+            }
+            else if (scenario != "budget")
+            {
+                media.peer->disconnectFromHost();
+            }
         }
-        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), 8000);
+        QTRY_VERIFY_WITH_TIMEOUT(thread.isFinished(), scenario == "budget" ? 4000 : 17000);
         const auto stats = thread.snapshot();
         QVERIFY(!QFile::exists(target + QStringLiteral(".part")));
-        if (scenario == "complete")
+        if (scenario == "complete" || scenario == "delayed")
         {
             QVERIFY2(stats.saved && stats.error.isEmpty(), qPrintable(stats.error));
             decoded_output actual;
             QVERIFY2(decode_file(target, actual), qPrintable(actual.error));
             QCOMPARE(actual.video.size(), qsizetype(200));
             QCOMPARE(stats.video_packets, quint64(200));
+            if (scenario == "delayed")
+            {
+                decoded_output expected;
+                QVERIFY2(decode_file(file.fileName(), expected), qPrintable(expected.error));
+                QCOMPARE(actual.video, expected.video);
+                QCOMPARE(actual.pcm_bytes, expected.pcm_bytes);
+                QCOMPARE(actual.pcm.result(), expected.pcm.result());
+            }
         }
         else
         {
             QVERIFY(!stats.saved);
             QVERIFY(!QFile::exists(target));
+            if (scenario == "budget")
+            {
+                QVERIFY2(stats.error.contains(QStringLiteral("截止时间")), qPrintable(stats.error));
+                QVERIFY(stats.video_packets > 10);
+            }
             QCOMPARE(stats.error.isEmpty(), scenario == "cancel");
         }
         qInfo().noquote() << scenario << "saved=" << stats.saved << "error=" << stats.error;

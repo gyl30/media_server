@@ -34,7 +34,7 @@ class record_thread final : public QThread
     Q_OBJECT
 
    public:
-    record_thread(QUrl url, QString target, playback_mode mode, QObject* parent = nullptr);
+    record_thread(QUrl url, QString target, playback_mode mode, QDeadlineTimer finite_deadline = QDeadlineTimer::Forever, QObject* parent = nullptr);
 
    public:
     // 实时录制停止并保存；有限下载只能取消（requestInterruption）。
@@ -51,6 +51,7 @@ class record_thread final : public QThread
     QUrl url_;
     QString target_;
     playback_mode mode_;
+    QDeadlineTimer finite_deadline_;
     std::atomic<bool> finish_requested_{};
     qint64 io_deadline_us_{};
     mutable QMutex mutex_;

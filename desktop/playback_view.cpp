@@ -119,11 +119,11 @@ void playback_view::play_record(platform_client& client, const play_target& targ
         path,
         {{QStringLiteral("start_time"), start_time}, {QStringLiteral("end_time"), end_time}},
         session_,
-        [this, name = target.name](const QUrl& url, platform_client* owner, const QString& id)
+        [this, name = target.name](const QUrl& url, platform_client* owner, const QString& id, QDeadlineTimer deadline)
         {
             record_owner_ = owner;
             record_id_ = id;
-            start_decoder(name, url, playback_mode::finite);
+            start_decoder(name, url, playback_mode::finite, deadline);
         },
         [this](const platform_response& response)
         {
@@ -156,7 +156,7 @@ void playback_view::set_record_paused(bool paused)
                     set_status(QStringLiteral("录像实例已结束或到期，已停止本次回放"));
                     return;
                 }
-                // 结果未知时设备可能已执行；不自动发送相反指令。暂停若实际生效，解码进展期限会以错误结束本次回放。
+                // 结果未知时设备可能已执行；不自动发送相反指令，仍受原历史实例绝对期限约束。
                 // 呈现中的帧状态会覆盖画面文本，失败另经错误信号提示。
                 set_status(paused ? QStringLiteral("暂停未确认：%1；继续播放").arg(response.error)
                                   : QStringLiteral("继续未确认：%1；本地仍暂停，可重试或停止").arg(response.error));
@@ -164,7 +164,6 @@ void playback_view::set_record_paused(bool paused)
                 return;
             }
             record_paused_ = paused;
-            decoder_->set_paused(paused);
             if (paused)
             {
                 if (wall_pts_ != no_media_timestamp)
@@ -253,10 +252,11 @@ void playback_view::wait_for_gb_media(
         static_cast<int>(std::max<qint64>(1, std::min<qint64>(5000, deadline.remainingTime()))));
 }
 
-void playback_view::start_decoder(const QString& name, const QUrl& url, playback_mode mode)
+void playback_view::start_decoder(const QString& name, const QUrl& url, playback_mode mode, QDeadlineTimer finite_deadline)
 {
     // 解码线程独立保活至 finished，关闭画面不在 GUI 中等待网络线程。
-    auto* decoder = new decode_thread(url, QSize(std::max(160, width()), std::max(100, height())), mode, QCoreApplication::instance());
+    auto* decoder =
+        new decode_thread(url, QSize(std::max(160, width()), std::max(100, height())), mode, finite_deadline, QCoreApplication::instance());
     decoder_ = decoder;
     connect(decoder,
             &QThread::finished,
@@ -329,7 +329,7 @@ void playback_view::start_recording(platform_client& client, const QString& dire
                 return;
             }
             // 录制线程独立保活至结束；画面停止只请求收尾保存，不在 GUI 等待。
-            auto* recorder = new record_thread(url, target, playback_mode::realtime, QCoreApplication::instance());
+            auto* recorder = new record_thread(url, target, playback_mode::realtime, QDeadlineTimer::Forever, QCoreApplication::instance());
             recorder_ = recorder;
             connect(recorder,
                     &QThread::finished,
