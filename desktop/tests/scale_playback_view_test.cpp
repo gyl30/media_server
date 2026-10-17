@@ -10,6 +10,7 @@
 #include <QTimer>
 #include <QThread>
 #include <QSignalSpy>
+#include <QEventLoop>
 #include <QScopeGuard>
 #include <QElapsedTimer>
 #include <QCoreApplication>
@@ -345,18 +346,33 @@ class scale_playback_view_test final : public QObject
 
     void timed_scale_pacing_data()
     {
-        QTest::addColumn<bool>("device_responds");
+        QTest::addColumn<double>("requested_scale");
+        QTest::addColumn<int>("actual_numerator");
+        QTest::addColumn<int>("actual_denominator");
+        QTest::addColumn<int>("repeat_count");
         QTest::addColumn<bool>("audible");
-        QTest::newRow("request-2-actual-2-return-1-muted") << true << false;
-        QTest::newRow("request-2-actual-1-muted") << false << false;
-        QTest::newRow("request-2-actual-2-return-1-audible") << true << true;
-        QTest::newRow("request-2-actual-1-audible") << false << true;
+        QTest::addColumn<int>("finish_deadline_ms");
+        QTest::newRow("request-2-actual-2-return-1-muted") << 2.0 << 2 << 1 << 8 << false << 74000;
+        QTest::newRow("request-2-actual-1-muted") << 2.0 << 1 << 1 << 8 << false << 74000;
+        QTest::newRow("request-2-actual-2-return-1-audible") << 2.0 << 2 << 1 << 8 << true << 74000;
+        QTest::newRow("request-2-actual-1-audible") << 2.0 << 1 << 1 << 8 << true << 74000;
+        QTest::newRow("request-0.25-actual-0.25-return-1-audible") << 0.25 << 1 << 4 << 8 << true << 86000;
+        QTest::newRow("request-0.5-actual-0.5-return-1-audible") << 0.5 << 1 << 2 << 8 << true << 82000;
+        QTest::newRow("request-4-actual-4-return-1-audible") << 4.0 << 4 << 1 << 12 << true << 106000;
+        QTest::newRow("request-4-actual-3.43-return-1-audible") << 4.0 << 343 << 100 << 12 << true << 106000;
     }
 
     void timed_scale_pacing()
     {
-        QFETCH(bool, device_responds);
+        QFETCH(double, requested_scale);
+        QFETCH(int, actual_numerator);
+        QFETCH(int, actual_denominator);
+        QFETCH(int, repeat_count);
         QFETCH(bool, audible);
+        QFETCH(int, finish_deadline_ms);
+        const double actual_rate = static_cast<double>(actual_numerator) / actual_denominator;
+        const qint64 source_duration_us = qint64(repeat_count) * 8000000;
+        const qint64 changed_source_end_us = 8000000 + qint64(16000000) * actual_numerator / actual_denominator;
         const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
         if (folder.isEmpty())
         {
@@ -383,7 +399,7 @@ class scale_playback_view_test final : public QObject
         }
         QByteArray source;
         QList<QByteArray> expected;
-        for (int repeat = 0; repeat < 8; ++repeat)
+        for (int repeat = 0; repeat < repeat_count; ++repeat)
         {
             source += shifted_pes_timestamps(original, repeat * 8 * 90000);
             expected += reference;
@@ -420,7 +436,7 @@ class scale_playback_view_test final : public QObject
             packs.append({bytes, pts_us});
             position = end;
         }
-        QCOMPARE(packs.size(), qsizetype(3200));
+        QCOMPARE(packs.size(), qsizetype(400 * repeat_count));
 
         http_fixture api, media;
         QVERIFY(api.start());
@@ -470,7 +486,7 @@ class scale_playback_view_test final : public QObject
                     }
                 });
         QSignalSpy errors(&view, &playback_view::playback_error);
-        view.play_record(client, historical_target(), 1760000000, 1760000064);
+        view.play_record(client, historical_target(), 1760000000, 1760000000 + source_duration_us / 1000000);
         const auto operations = operation_clients(client);
         QCOMPARE(operations.size(), qsizetype(1));
         QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
@@ -490,6 +506,37 @@ class scale_playback_view_test final : public QObject
         QObject telemetry;
         connect(media_socket, &QTcpSocket::bytesWritten, &telemetry, [&](qint64 bytes) { bytes_written += bytes; });
 
+        // QTRY/qWait每轮休眠最多10ms，会把5ms呈现timer节流到不足100fps；运行媒体时使用真实事件循环。
+        const auto await_media = [](const auto& predicate, int timeout_ms)
+        {
+            if (predicate())
+            {
+                return true;
+            }
+            if (timeout_ms <= 0)
+            {
+                return false;
+            }
+            QEventLoop loop;
+            QTimer condition, deadline;
+            condition.setTimerType(Qt::PreciseTimer);
+            condition.setInterval(5);
+            deadline.setTimerType(Qt::PreciseTimer);
+            deadline.setSingleShot(true);
+            QObject::connect(&condition, &QTimer::timeout, &loop, [&]()
+            {
+                if (predicate())
+                {
+                    loop.quit();
+                }
+            });
+            QObject::connect(&deadline, &QTimer::timeout, &loop, &QEventLoop::quit);
+            condition.start();
+            deadline.start(timeout_ms);
+            loop.exec();
+            return predicate();
+        };
+
         QList<pacing_sample> samples;
         QElapsedTimer elapsed;
         elapsed.start();
@@ -499,7 +546,7 @@ class scale_playback_view_test final : public QObject
         QList<qint64> dispatch_lateness;
         bool send_ok = media.send(0, stream_header);
         bool eof_sent = false;
-        const qint64 wire_end_ms = device_responds ? 48000 : 64000;
+        const qint64 wire_end_ms = (24000000 + source_duration_us - changed_source_end_us) / 1000;
         QTimer sender, sampler;
         sender.setTimerType(Qt::PreciseTimer);
         sender.setInterval(1);
@@ -520,9 +567,10 @@ class scale_playback_view_test final : public QObject
                     while (sent < packs.size())
                     {
                         const auto pts_us = packs[sent].pts_us;
-                        const qint64 due_us = !device_responds || pts_us < 8000000 ? pts_us
-                                              : pts_us < 40000000                  ? 8000000 + (pts_us - 8000000) / 2
-                                                                                   : 24000000 + pts_us - 40000000;
+                        // 有理数整数时刻独立于请求值；3.43倍也不累计浮点步进误差。
+                        const qint64 due_us = pts_us < 8000000                 ? pts_us
+                                              : pts_us < changed_source_end_us ? 8000000 + (pts_us - 8000000) * actual_denominator / actual_numerator
+                                                                               : 24000000 + pts_us - changed_source_end_us;
                         const auto now_us = elapsed.nsecsElapsed() / 1000;
                         if (due_us > now_us)
                         {
@@ -584,30 +632,30 @@ class scale_playback_view_test final : public QObject
                 });
         sender.start();
         sampler.start();
-        QTRY_VERIFY_WITH_TIMEOUT(view.record_seek_ready(), 7000);
+        QVERIFY(await_media([&]() { return view.record_seek_ready(); }, 7000));
         qInfo() << "scale_first_ready_ms=" << elapsed.elapsed() << "convergence_deadline_ms=18000; 固定窗口，不搜索通过片段";
-        QTRY_VERIFY_WITH_TIMEOUT(elapsed.elapsed() >= 7000, 7500);
-        view.scale_record(2);
-        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 2000);
+        QVERIFY(await_media([&]() { return elapsed.elapsed() >= 7000; }, 7500));
+        view.scale_record(requested_scale);
+        QVERIFY(await_media([&]() { return api.requests.size() == 2; }, 2000));
         QCOMPARE(api.requests[1].line, control_line("scale"));
-        QCOMPARE(QJsonDocument::fromJson(api.requests[1].body).object(), (QJsonObject{{"scale", 2}}));
+        QCOMPARE(QJsonDocument::fromJson(api.requests[1].body).object(), (QJsonObject{{"scale", requested_scale}}));
         QVERIFY(api.respond(1, 204));
-        QTRY_VERIFY_WITH_TIMEOUT(view.record_seek_ready(), 2000);
-        QTRY_VERIFY_WITH_TIMEOUT(elapsed.elapsed() >= 24000, 18000);
+        QVERIFY(await_media([&]() { return view.record_seek_ready(); }, 2000));
+        QVERIFY(await_media([&]() { return elapsed.elapsed() >= 24000; }, 18000));
         QCOMPARE(QCoreApplication::instance()->findChildren<decode_thread*>().size(), qsizetype(1));
         QCOMPARE(QCoreApplication::instance()->findChildren<decode_thread*>().front(), decoder.data());
         QCOMPARE(operation_clients(client).size(), qsizetype(1));
         QCOMPARE(operation_clients(client).front(), operations.front());
         QCOMPARE(view.audible(), audible);
         view.scale_record(1);
-        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(3), 2000);
+        QVERIFY(await_media([&]() { return api.requests.size() == 3; }, 2000));
         QCOMPARE(api.requests[2].line, control_line("scale"));
         QCOMPARE(QJsonDocument::fromJson(api.requests[2].body).object(), (QJsonObject{{"scale", 1}}));
         QVERIFY(api.respond(2, 204));
-        QTRY_VERIFY_WITH_TIMEOUT(view.record_seek_ready(), 2000);
-        // 留足原1x错误实现完整排空64秒素材的预算，使 RED 落在节奏断言而非人为截断传输。
-        const int finish_budget_ms = static_cast<int>(74000 - elapsed.elapsed());
-        QTRY_VERIFY_WITH_TIMEOUT(view.status().startsWith(QStringLiteral("录像传输及呈现已结束")), finish_budget_ms);
+        QVERIFY(await_media([&]() { return view.record_seek_ready(); }, 2000));
+        // 预设绝对期限：原四行74秒，慢速86/82秒，高速106秒；不随运行结果放宽。
+        const int finish_budget_ms = static_cast<int>(finish_deadline_ms - elapsed.elapsed());
+        QVERIFY(await_media([&]() { return view.status().startsWith(QStringLiteral("录像传输及呈现已结束")); }, finish_budget_ms));
         sampler.stop();
         QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 3000);
         QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(4), 2000);
@@ -623,10 +671,10 @@ class scale_playback_view_test final : public QObject
         QVERIFY(!api.parse_error && !media.parse_error);
         QVERIFY(errors.isEmpty());
         QVERIFY2(view.snapshot().error.isEmpty(), qPrintable(view.snapshot().error));
-        QCOMPARE(view.snapshot().video_frames, quint64(1600));
-        QCOMPARE(view.rendered_frames(), quint64(1600));
-        QCOMPARE(view.snapshot().audio_samples, quint64(512000));
-        QCOMPARE(view.snapshot().pcm_samples, quint64(3072000));
+        QCOMPARE(view.snapshot().video_frames, quint64(reference.size() * repeat_count));
+        QCOMPARE(view.rendered_frames(), quint64(reference.size() * repeat_count));
+        QCOMPARE(view.snapshot().audio_samples, quint64(64000 * repeat_count));
+        QCOMPARE(view.snapshot().pcm_samples, reference_tone.frames * repeat_count);
         QCOMPARE(view.snapshot().video_dropped, quint64(0));
         QCOMPARE(view.snapshot().audio_dropped, quint64(0));
         if (audible)
@@ -640,14 +688,15 @@ class scale_playback_view_test final : public QObject
             QCOMPARE(output_tone.clear_observed_frames, quint64(0));
             for (int channel = 0; channel < 2; ++channel)
             {
-                // 独立8秒参考含自己的滤波尾；允许8份拼接的7处边界及EOF相位误差，总计最多16周期。
-                const auto expected_cycles = static_cast<qint64>(reference_tone.cycles[channel] * 8);
+                // 独立8秒参考含自己的滤波尾；拼接及EOF相位误差预设每份2周期，8/12份最多16/24周期。
+                const auto expected_cycles = static_cast<qint64>(reference_tone.cycles[channel] * repeat_count);
                 const auto actual_cycles = static_cast<qint64>(output_tone.cycles[channel]);
-                QVERIFY2(std::abs(actual_cycles - expected_cycles) <= 16, "累计排入PCM的正向过零与独立解码参考不符；并非逐样本内容等价检查");
+                QVERIFY2(std::abs(actual_cycles - expected_cycles) <= 2 * repeat_count,
+                         "累计排入PCM的正向过零与独立解码参考不符；并非逐样本内容等价检查");
                 QVERIFY(output_tone.rms(channel) >= reference_tone.rms(channel) * 0.8);
                 QVERIFY(output_tone.rms(channel) <= reference_tone.rms(channel) * 1.2);
                 qInfo() << "scale_pcm_complete channel=" << channel << "actual_output_frames=" << output_tone.frames
-                        << "reference_input_frames=" << reference_tone.frames * 8 << "cycles=" << actual_cycles
+                        << "reference_input_frames=" << reference_tone.frames * repeat_count << "cycles=" << actual_cycles
                         << "reference_cycles=" << expected_cycles << "rms=" << output_tone.rms(channel)
                         << "reference_rms=" << reference_tone.rms(channel) << "; 仅提交PCM及dummy排空，不是声学验收";
             }
@@ -671,13 +720,15 @@ class scale_playback_view_test final : public QObject
                 << "; 非物理屏幕/声音验收";
         QVERIFY2(dispatch_lateness.back() <= 100, "发送事件循环迟到超过100ms；夹具不满足预设实时输入条件");
         // 首个固定窗口在18秒前完成收敛检查；不是把首帧约5秒后的缓存当作稳态。
-        assert_window(samples, 16000, 18000, device_responds ? 2.0 : 1.0, audible, reference_tone);
-        assert_window(samples, 18000, 22000, device_responds ? 2.0 : 1.0, audible, reference_tone);
+        assert_window(samples, 16000, 18000, actual_rate, audible, reference_tone);
+        assert_window(samples, 18000, 22000, actual_rate, audible, reference_tone);
         assert_window(samples, 34000, 38000, 1.0, audible, reference_tone);
-        // 均值达标不能掩盖先突发后停顿；每个预设窗口还逐秒检查相同的±10%阈值。
-        for (qint64 begin_ms = 16000; begin_ms < 22000; begin_ms += 1000)
+        // 均值达标不能掩盖先突发后停顿；仅0.25倍用2秒子窗：25fps的一秒6/7帧量化可偏12%，两秒12/13帧仅偏4%。
+        // 其他行保留逐秒检查，所有固定窗口及子窗仍为相同的±10%阈值。
+        const qint64 subwindow_ms = actual_numerator == 1 && actual_denominator == 4 ? 2000 : 1000;
+        for (qint64 begin_ms = 16000; begin_ms < 22000; begin_ms += subwindow_ms)
         {
-            assert_window(samples, begin_ms, begin_ms + 1000, device_responds ? 2.0 : 1.0, audible, reference_tone);
+            assert_window(samples, begin_ms, begin_ms + subwindow_ms, actual_rate, audible, reference_tone);
         }
         for (qint64 begin_ms = 34000; begin_ms < 38000; begin_ms += 1000)
         {
