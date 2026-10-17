@@ -235,7 +235,7 @@ def main():
                 raise RuntimeError(f"非 glibc 依赖逃逸出运行包：{name}: {path}")
     dirty = run(["git", "-C", str(repository), "status", "--porcelain=v1", "--untracked-files=all"])
     cache = (build / "CMakeCache.txt").read_text()
-    compiler_match = re.search(r"^CMAKE_CXX_COMPILER:FILEPATH=(.+)$", cache, re.MULTILINE)
+    compiler_match = re.search(r"^CMAKE_CXX_COMPILER:(?:FILEPATH|STRING)=(.+)$", cache, re.MULTILINE)
     source_files = [path for path in (repository / "desktop").rglob("*")
                     if path.is_file() and (path.suffix in (".cpp", ".h", ".py", ".md") or path.name == "CMakeLists.txt")]
     source_files += [repository / "signaling/gb_http.go", repository / "signaling/gb_http_test.go"]

@@ -99,3 +99,5 @@ PTZ 错误身份增量：START 超时/取消且独立 STOP 成功现返回 `ptz_
 2026-10-17接续完成广播内部SIP控制owner：SQLite高水位SourceID、Notify/独立Response/反向INVITE与双ACK路由、单设备占用、会话结束通知及统一清理。删除HTTP取消提前撤设备fence有真实RED/GREEN。最终Go全量test/race/vet通过；修正后真实大华在单一SIP进程连续完成尾号4/5两次控制并归零，沿用原DB，不发送音频或SET配置。DEV Claude最终只读复审无P0/P1。此增量尚无公开HTTP、租约、Qt采集或广播UI，未采纳直送/中继路线，也不改变旧广播INCOMPLETE/INCONCLUSIVE和平台未GO结论。边界、SHA及证据见[广播内部控制owner](qt_monitor_client_stage6_broadcast_control.md)。
 
 第二机实际播放补验：clean基线347decb的真实Qt窗口探针在TEST通过大华单路12秒及同源四路30秒，75/574项断言零失败；四路停三留一继续呈现，全部进程正常回收。私有Pulse记录到归属于Qt PID的非零PCM，认证SSH/Xvfb截图确认实际相机画面；它们是数字音频和虚拟屏幕，非物理听音/显示或安装版程序外部播放操作。原scp遇UNIX socket的外层INCOMPLETE记录保留，另行补收普通文件与SHA。未改生产实现或重跑全套回归，公开分发和完整平台仍未GO，详见[第二机播放补验](qt_monitor_client_stage7_second_play.md)。
+
+内部包追溯增量：修正CMake编译器路径为STRING时版本漏记，完整打包CLI真实RED/GREEN通过，准确记录Ubuntu GCC16.0.1 experimental。三份实际GCC运行库另与本地16.2.0构建产物逐字节匹配，签名源码归档及有限源码核对保留；不把编译器与运行库版本混同，不据此关闭项目许可证、源码交付或公开分发门槛。详见[运行包来源补证](qt_monitor_client_package_provenance.md)。
