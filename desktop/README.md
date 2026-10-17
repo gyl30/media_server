@@ -6,7 +6,7 @@ Linux x86_64 原生 Qt Widgets 客户端，沿用传统桌面监控原型。当�
 
 ## 构建
 
-需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network（测试还需 Test）、SDL2 ≥2.0.20、Boost ≥1.89 头文件，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。Boost.Beast 只用于有限 HTTP 分帧解析，不链接 Boost.Context。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，Boost 1.92.0，FFmpeg 9.0.1；有限录像还要求 SDK 启用 MPEG-PS demuxer；本地录制与设备下载要求启用 Matroska muxer 与 extract_extradata bsf（aac_adtstoasc 随 muxer 自动选中）。
+需要 CMake ≥3.22、C++20 编译器、Qt ≥6.2 的 Widgets/Network/WebSockets（测试还需 Test）、SDL2 ≥2.0.20、Boost ≥1.89 头文件，以及 FFmpeg ≥6.0 的 avformat/avcodec/avutil/swscale/swresample shared 开发库。Boost.Beast 只用于有限 HTTP 分帧解析，不链接 Boost.Context。桌面使用动态库依赖，不从静态 SDK 的 private 库清单拉入无关组件。实际验证的编译器是 GCC 16.0.1 experimental，Qt 6.2.4，SDL2 2.0.20，Boost 1.92.0，FFmpeg 9.0.1；有限录像还要求 SDK 启用 MPEG-PS demuxer；本地录制与设备下载要求启用 Matroska muxer 与 extract_extradata bsf（aac_adtstoasc 随 muxer 自动选中）；麦克风上传要求 pcm_alaw encoder。Qt WebSockets 必须与实际 Qt 库匹配，不自行实现 WebSocket 协议。
 
 ```sh
 PKG_CONFIG_PATH="$FFMPEG_PREFIX/lib/pkgconfig" cmake -S desktop -B build-desktop \
@@ -16,13 +16,15 @@ FFMPEG_TEST_EXECUTABLE=/path/to/ffmpeg ctest --test-dir build-desktop --output-o
 ./build-desktop/gb_monitor
 ```
 
-`FFMPEG_PREFIX` 是本地已安装的 FFmpeg SDK 路径，不是固定用户目录。构建只针对独立 `desktop/`，不改变媒体服务器的 CMake 依赖配置。fixture 生成 CLI 必须包含 libx264/AAC/G.711/Opus 编码能力；播放库无需包含这些编码器。缺少 CLI 时解码测试会跳过，必须检查 QTest 的 skipped 计数，不能把它计为解码通过。
+`FFMPEG_PREFIX` 是本地已安装的 FFmpeg SDK 路径，不是固定用户目录。构建只针对独立 `desktop/`，不改变媒体服务器的 CMake 依赖配置。fixture 生成 CLI 必须包含 libx264/AAC/G.711/Opus 编码能力；播放库不需要视频编码器，对讲需要上述 PCMA 编码器。缺少 CLI 时解码测试会跳过，必须检查 QTest 的 skipped 计数，不能把它计为解码通过。
 
 在客户端平台地址栏填 signaling 地址，例如 `http://127.0.0.1:9090`，刷新设备后双击通道/源预览。支持网关路径前缀；不接受 URL 内嵌凭据、query 或 fragment。API 认证沿用部署网关，不另造客户端密码协议。
 
 先点击目标画面，再双击设备通道；也可把树中的通道/普通源拖到目标画面。底部或画面右键切换1/4/9/16布局，缩布局会停止隐藏的会话。声音按钮只作用于当前选中画面；选择本身不切换声音。停止/替换默认静音，需重新显式开声。支持全屏/Escape、保持比例及PNG抓图（当前显示分辨率）。偏好只保存平台地址、布局、比例和窗口位置，不保存票据或恢复自动播放。
 
 选中国标设备或通道后可“查询目录”；202及界面“已受理”仅表示SIP MESSAGE被接受，稍后手动双击设备查看实际返回的通道，不表示目录已收齐。
+
+“开始对讲”上送本机默认麦克风，目标是当前选择的父国标设备；设备回传声音仍由对应实时画面的“开启声音”独立控制。先准备采集和 PCMA 编码，再申请一次性上传 URL，经真实 WebSocket 连接后才开始采集。停止、切换平台及关闭窗口会关闭采集并精确删除本次 talk_id；建立中的取消仍等待有界响应清理，不误删其他 owner。当前只验证直连 LAN 的音频上传，状态“上送麦克风”不代表设备听音或完整双向对讲验收。前后端必须同版本，旧平台不走兼容旁路。详见[Qt 音频上传增量](../docs/qt_monitor_client_stage6_qt_talk.md)。
 
 右侧“基本”页可显式查询设备信息、设备状态；选中通道时查询其所属注册设备，不宣称通道级状态。信息只显示本次实际响应，不缓存或自动轮询；设备自报在线状态不替代平台注册在线状态。切换设备、刷新、换平台或关闭会隔离旧回复。`Result=ERROR` 即使 HTTP 200 也明确显示设备拒绝；超时只允许手动重试。该功能要求同版本 signaling 的 `POST /api/devices/{id}/query`，旧平台返回404时不走兼容旁路；验证与边界见 [查询子集验证](../docs/qt_monitor_client_stage3_queries.md)。
 
@@ -71,9 +73,9 @@ QT_QPA_PLATFORM=offscreen ./build-desktop/desktop_playback_probe \
 
 正常服务器用的 `/home/gyl/ffmpeg901` 是启用 GPL/version3 的静态 FFmpeg，不能不加区分地当作桌面发行依赖。本轮另行构建同版本、不启 GPL/version3/nonfree 的 shared decoder SDK，原 SDK 不改。动态依赖、Qt 插件、实际构建参数、许可材料和宿主 ABI 必须随内部运行包核对；仓库项目许可证尚未确定，内部验证通过不代表对外二进制分发许可已经闭合。
 
-报警页显示已注册设备及所属通道上报的近期报警，激活时每 2 秒读取一次，最多显示 500 条。平台只在内存保留最近 1000 条；重启会重置列表，容量淘汰会提示缺口，不是持久化或无损报警档案。查询失败保留已有列表，切换平台会取消旧请求。当前没有报警订阅、复位或广播/对讲。接口、游标和验收边界见 [阶段六报警](../docs/qt_monitor_client_stage6_alarms.md)。
+报警页显示已注册设备及所属通道上报的近期报警，激活时每 2 秒读取一次，最多显示 500 条。平台只在内存保留最近 1000 条；重启会重置列表，容量淘汰会提示缺口，不是持久化或无损报警档案。查询失败保留已有列表，切换平台会取消旧请求。当前没有报警订阅或复位；对讲上传与设备听音的边界见前述音频上传章节。接口、游标和验收边界见 [阶段六报警](../docs/qt_monitor_client_stage6_alarms.md)。
 
-原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、回放 seek/倍速和广播/对讲尚未实现，不以禁用按钮冒充功能。
+原型位于开发机 `designs/gb28181-desktop-client/`，按要求不提交。聚焦/光圈/巡航、回放 seek/倍速和完整双向对讲尚未验收，不以禁用按钮或仅上传成功冒充功能；不提供独立广播产品入口。
 
 内部搬运目录可在已完成 shared SDK 构建后生成（输出路径必须不存在，其父目录须已存在）：
 

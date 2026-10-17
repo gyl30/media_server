@@ -24,6 +24,7 @@ namespace media_server
 {
 
 class playback_view;
+class talk_session;
 class record_query_dialog;
 
 class monitor_window final : public QMainWindow
@@ -62,6 +63,7 @@ class monitor_window final : public QMainWindow
     QObject* listing_{};
     QObject* control_context_{};
     QPointer<record_query_dialog> record_dialog_;
+    QPointer<talk_session> talk_;
     std::array<playback_view*, 16> views_{};
     playback_view* selected_{};
     quint32 audio_id_{};
@@ -69,6 +71,7 @@ class monitor_window final : public QMainWindow
     QGridLayout* grid_;
     QComboBox* view_layout_;
     QPushButton* sound_;
+    QPushButton* talk_button_;
     QPushButton* record_pause_;
     QPushButton* record_live_;
     QTreeWidget* alarm_list_;

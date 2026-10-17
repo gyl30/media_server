@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -219,5 +221,161 @@ func TestTalkRealMediaUpload(t *testing.T) {
 			}
 			apiRequest(t, w.s.handler(), "GET", path, "", http.StatusNotFound)
 		})
+	}
+}
+
+// 真实 Qt/SDL callback→FFmpeg PCMA→WebSocket→C++ RTP，仍非相机声学验收。
+func TestTalkQtCaptureMedia(t *testing.T) {
+	controlURL, probe := os.Getenv("GB_AUDIO_TEST_MEDIA_URL"), os.Getenv("GB_AUDIO_TEST_QT_PROBE")
+	if controlURL == "" || probe == "" {
+		t.Skip("requires isolated media_server and desktop_talk_probe")
+	}
+	address, err := url.Parse(controlURL)
+	if err != nil || address.Scheme != "http" || address.Hostname() != "127.0.0.1" || address.Path != "" || address.RawQuery != "" {
+		t.Fatal("isolated IPv4 loopback media required")
+	}
+	port, err := strconv.ParseUint(address.Port(), 10, 16)
+	if err != nil || port == 0 {
+		t.Fatal("explicit media port required")
+	}
+	w := newBroadcastWire(t)
+	w.s.media.server.controlURL = controlURL
+	w.s.media.server.httpPort = uint16(port)
+	api := httptest.NewServer(w.s.handler())
+	t.Cleanup(api.Close)
+	rtp, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rtp.Close() })
+	rtcp, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rtcp.Close() })
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, probe, api.URL, queryTestDeviceID)
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	completed := make(chan struct{})
+	var commandErr error
+	go func() {
+		commandErr = command.Wait()
+		close(completed)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		<-completed
+		t.Logf("Qt probe output: %s", output.String())
+	})
+	notify, ok := w.read(t).(*sip.Request)
+	if !ok || notify.Method != sip.MESSAGE {
+		t.Fatalf("missing Qt Notify: %v", notify)
+	}
+	var business struct {
+		SN       int
+		SourceID string
+	}
+	if err := xml.Unmarshal(notify.Body(), &business); err != nil {
+		t.Fatal(err)
+	}
+	w.send(t, sip.NewResponseFromRequest(notify, 200, "OK", nil))
+	w.business(t, business.SN, 200)
+	invite := w.request(sip.INVITE, business.SourceID)
+	invite.AppendHeader(sip.NewHeader("Subject", business.SourceID+":0,"+queryTestDeviceID+":0"))
+	invite.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	invite.SetBody([]byte(fmt.Sprintf("v=0\r\no=device 0 0 IN IP4 127.0.0.1\r\ns=Play\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=audio %d RTP/AVP 8\r\na=recvonly\r\na=rtpmap:8 PCMA/8000/1\r\na=rtcp:%d\r\ny=0123456789\r\n", rtp.LocalAddr().(*net.UDPAddr).Port, rtcp.LocalAddr().(*net.UDPAddr).Port)))
+	w.send(t, invite)
+	answer, ok := w.read(t).(*sip.Response)
+	if !ok || answer.StatusCode != 200 {
+		t.Fatalf("Qt SIP answer: %v", answer)
+	}
+	w.ack(t, invite, answer, false, invite.CSeq().SeqNo)
+	w.s.live.mu.Lock()
+	owner := w.s.live.broadcasts[queryTestDeviceID]
+	w.s.live.mu.Unlock()
+	if owner == nil {
+		t.Fatal("Qt owner missing")
+	}
+	var previousSequence uint16
+	var previousTimestamp uint32
+	var pcm []float64
+	firstRTP := time.Now()
+	for index := range 60 {
+		_ = rtp.SetReadDeadline(time.Now().Add(3 * time.Second))
+		packet := make([]byte, 2048)
+		count, _, err := rtp.ReadFrom(packet)
+		if err != nil || count != 172 || packet[0] != 0x80 || packet[1]&0x7f != 8 || binary.BigEndian.Uint32(packet[8:12]) != 123456789 {
+			t.Fatalf("Qt RTP: count=%d error=%v", count, err)
+		}
+		sequence, timestamp := binary.BigEndian.Uint16(packet[2:4]), binary.BigEndian.Uint32(packet[4:8])
+		if index > 0 && (sequence != previousSequence+1 || timestamp-previousTimestamp != 160) {
+			t.Fatal("Qt RTP ordering or audio clock mismatch")
+		}
+		previousSequence, previousTimestamp = sequence, timestamp
+		for _, sample := range packet[12:count] {
+			value := sample ^ 0x55
+			magnitude := int(value&15) << 4
+			segment := (value >> 4) & 7
+			if segment == 0 {
+				magnitude += 8
+			} else {
+				magnitude += 0x108
+				magnitude <<= segment - 1
+			}
+			if value&0x80 == 0 {
+				magnitude = -magnitude
+			}
+			pcm = append(pcm, float64(magnitude)/32768)
+		}
+		if os.Getenv("SDL_AUDIODRIVER") == "dummy" && !bytes.Equal(packet[12:count], bytes.Repeat([]byte{0xd5}, 160)) {
+			t.Fatal("real SDL dummy silence did not survive FFmpeg/WS/RTP")
+		}
+	}
+	t.Logf("Qt capture received %d PCMA samples in %s", len(pcm), time.Since(firstRTP))
+	if expected := os.Getenv("GB_AUDIO_TEST_CAPTURE_TONE_HZ"); expected != "" {
+		frequency, err := strconv.ParseFloat(expected, 64)
+		if err != nil || frequency <= 0 || frequency >= 4000 {
+			t.Fatal("invalid capture tone expectation")
+		}
+		var sine, cosine, energy float64
+		pcm = pcm[800:] // 排除启动设备/服务器的首100ms；其余完整窗口均参与，不挑选片段。
+		for index, value := range pcm {
+			angle := 2 * math.Pi * frequency * float64(index) / 8000
+			sine += value * math.Sin(angle)
+			cosine += value * math.Cos(angle)
+			energy += value * value
+		}
+		rms := math.Sqrt(energy / float64(len(pcm)))
+		correlation := math.Sqrt2 * math.Hypot(sine, cosine) / float64(len(pcm)) / rms
+		t.Logf("Qt captured tone %.1fHz RMS=%.6f normalized correlation=%.6f", frequency, rms, correlation)
+		if rms < 0.01 || math.IsNaN(correlation) || correlation < 0.90 {
+			t.Fatal("captured signal did not retain the predeclared digital test tone")
+		}
+	}
+	bye, ok := w.read(t).(*sip.Request)
+	if !ok || bye.Method != sip.BYE {
+		t.Fatalf("Qt normal stop did not issue BYE: %v", bye)
+	}
+	w.send(t, sip.NewResponseFromRequest(bye, 200, "OK", nil))
+	select {
+	case <-completed:
+		if commandErr != nil {
+			t.Fatalf("Qt probe: %v\n%s", commandErr, output.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Qt probe retained after stop")
+	}
+	select {
+	case <-owner.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Qt SIP owner retained")
+	}
+	if err := w.s.media.post(t.Context(), controlURL+"/gb28181/audio/status", map[string]string{"session_id": owner.mediaID}, 204, nil); !isMediaServerNotFound(err) {
+		t.Fatalf("Qt media owner retained: %v", err)
 	}
 }

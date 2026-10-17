@@ -37,6 +37,7 @@
 #include <QStandardPaths>
 
 #include "desktop/playback_view.h"
+#include "desktop/talk_session.h"
 #include "desktop/record_thread.h"
 #include "desktop/monitor_window.h"
 #include "desktop/record_query_dialog.h"
@@ -50,6 +51,7 @@ monitor_window::monitor_window(QWidget* parent)
       grid_(new QGridLayout),
       view_layout_(new QComboBox(this)),
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
+      talk_button_(new QPushButton(QStringLiteral("开始对讲"), this)),
       record_pause_(new QPushButton(QStringLiteral("暂停回放"), this)),
       record_live_(new QPushButton(QStringLiteral("开始录制"), this)),
       alarm_list_(new QTreeWidget(this)),
@@ -203,6 +205,49 @@ monitor_window::monitor_window(QWidget* parent)
     queries->addWidget(catalog_);
     queries->addWidget(record_query_);
     side->addLayout(queries);
+    talk_button_->setObjectName(QStringLiteral("talk_device"));
+    talk_button_->setToolTip(QStringLiteral("向选中国标设备上送麦克风；设备回传声音通过观看画面的“开启声音”独立控制"));
+    side->addWidget(talk_button_);
+    connect(talk_button_,
+            &QPushButton::clicked,
+            this,
+            [this]()
+            {
+                if (talk_)
+                {
+                    talk_button_->setEnabled(false);
+                    talk_->stop();
+                    return;
+                }
+                const auto* item = devices_->currentItem();
+                const auto data = item ? item->data(0, Qt::UserRole).toMap() : QVariantMap{};
+                const auto id = data.value(QStringLiteral("id")).toString();
+                auto* session = new talk_session(client_.base_url(), id, this);
+                talk_ = session;
+                talk_button_->setText(QStringLiteral("停止对讲"));
+                statusBar()->showMessage(QStringLiteral("正在建立设备 %1 的音频上传…").arg(id));
+                connect(session,
+                        &talk_session::transmitting,
+                        this,
+                        [this, id]() { statusBar()->showMessage(QStringLiteral("正在向 %1 上送麦克风；设备听音未确认").arg(id)); });
+                connect(session,
+                        &talk_session::finished,
+                        this,
+                        [this, session](const QString& error)
+                        {
+                            if (talk_ == session)
+                            {
+                                talk_ = nullptr;
+                                talk_button_->setText(QStringLiteral("开始对讲"));
+                                const auto* item = devices_->currentItem();
+                                const auto kind = item ? item->data(0, Qt::UserRole).toMap().value(QStringLiteral("kind")).toString() : QString{};
+                                talk_button_->setEnabled(listing_ && (kind == QStringLiteral("gb_device") || kind == QStringLiteral("gb_channel")));
+                                statusBar()->showMessage(error.isEmpty() ? QStringLiteral("对讲上传已停止") : error);
+                            }
+                            session->deleteLater();
+                        });
+                session->start();
+            });
     devices_->setHeaderLabel(QStringLiteral("设备与通道"));
     devices_->setObjectName(QStringLiteral("device_tree"));
     devices_->setDragEnabled(true);
@@ -770,6 +815,7 @@ void monitor_window::set_control_busy(bool busy)
     const auto kind = item ? item->data(0, Qt::UserRole).toMap().value(QStringLiteral("kind")).toString() : QString{};
     const bool channel = listing_ && kind == QStringLiteral("gb_channel");
     const bool device = listing_ && (channel || kind == QStringLiteral("gb_device"));
+    talk_button_->setEnabled(talk_ || device);
     device_info_->setEnabled(device && !busy);
     device_status_->setEnabled(device && !busy);
     preset_query_->setEnabled(channel && !busy);
@@ -1109,6 +1155,10 @@ void monitor_window::reload_devices()
     client_.set_base_url(base);
     if (client_.base_url() != previous)
     {
+        if (talk_)
+        {
+            talk_->stop();
+        }
         stop_all();
     }
     QSettings().setValue(QStringLiteral("platform_url"), base.toString());
@@ -1261,6 +1311,15 @@ void monitor_window::closeEvent(QCloseEvent* event)
     delete listing_;
     listing_ = nullptr;
     control_context_ = nullptr;
+    if (talk_)
+    {
+        talk_->stop();
+        event->ignore();
+        setEnabled(false);
+        statusBar()->showMessage(QStringLiteral("正在关闭设备对讲…"));
+        QTimer::singleShot(30, this, &QWidget::close);
+        return;
+    }
     for (auto* worker : qApp->findChildren<decode_thread*>())
     {
         if (worker->isRunning())
