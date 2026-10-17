@@ -50,6 +50,7 @@ class playback_view final : public QWidget
     void play_record(platform_client& client, const play_target& target, qint64 start_time, qint64 end_time);
     void set_record_paused(bool paused);
     void seek_record(double position);
+    void scale_record(double scale);
     void start_recording(platform_client& client, const QString& directory);
     void stop_recording();
     bool recording() const;

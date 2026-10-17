@@ -233,6 +233,40 @@ void playback_view::seek_record(double position)
     set_status(QStringLiteral("正在请求录像定位"));
 }
 
+void playback_view::scale_record(double scale)
+{
+    if (!record_seek_ready() || (scale != 0.25 && scale != 0.5 && scale != 1 && scale != 2 && scale != 4))
+    {
+        return;
+    }
+    request_ = record_owner_->request(
+        "POST",
+        QStringLiteral("/api/playbacks/%1/scale").arg(QString::fromLatin1(QUrl::toPercentEncoding(record_id_))),
+        {{QStringLiteral("scale"), scale}},
+        session_,
+        [this](platform_response response)
+        {
+            request_.clear();
+            if (!response.ok() || response.status != 204)
+            {
+                if (response.status == 404 || response.document.object().value(QStringLiteral("error")) == QStringLiteral("playback_not_streaming"))
+                {
+                    stop();
+                    set_status(QStringLiteral("录像实例已结束或到期，已停止本次回放"));
+                    return;
+                }
+                const auto error = response.error.isEmpty() ? QStringLiteral("平台未返回204（HTTP %1）").arg(response.status) : response.error;
+                set_status(QStringLiteral("倍速结果未知：%1；不自动重试，请观察画面或停止").arg(error));
+                emit playback_error(status_);
+                return;
+            }
+            // 204 仅表示设备受理，不以请求倍率改变本地时钟、媒体队列或暂停状态。
+            set_status(QStringLiteral("设备已受理倍速请求，实际媒体节奏由设备决定；本地呈现时钟未调整"));
+        },
+        8'000);
+    set_status(QStringLiteral("正在请求录像倍速"));
+}
+
 void playback_view::wait_for_gb_media(
     platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline)
 {
