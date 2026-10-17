@@ -59,6 +59,8 @@ type liveSession struct {
 	established chan struct{}
 	done        chan struct{}
 	cleanupErr  error
+	// 仅交互回放保存原请求的 NPT 范围；下载/直播为 0，表示不适用 seek/scale，而非播放状态。
+	playbackDuration int64
 	// dialog 串行同一对话内的 INFO 与 BYE，并保护 cseq。
 	dialog sync.Mutex
 	cseq   uint32

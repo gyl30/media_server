@@ -32,7 +32,7 @@ type playbackControlPeer struct {
 	sender  net.Addr
 }
 
-func newPlaybackControlPeer(t *testing.T) *playbackControlPeer {
+func newPlaybackControlPeer(t *testing.T, purposes ...gbSession) *playbackControlPeer {
 	t.Helper()
 	s := testInfrastructure(t)
 	deletes := new(atomic.Int32)
@@ -94,7 +94,11 @@ func newPlaybackControlPeer(t *testing.T) *playbackControlPeer {
 			t.Error("SIP server did not exit")
 		}
 	})
-	ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1700000000, 1700000010, sessionPlayback, 1)
+	purpose := sessionPlayback
+	if len(purposes) != 0 {
+		purpose = purposes[0]
+	}
+	ticket, err := s.startPlayback(t.Context(), gbPlaybackDevice, gbPlaybackChannel, 1700000000, 1700000010, purpose, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,11 +168,19 @@ func (p *playbackControlPeer) respond(response *sip.Response) {
 	}
 }
 
-func (p *playbackControlPeer) control(action string) <-chan *httptest.ResponseRecorder {
+func (p *playbackControlPeer) control(action string, bodies ...string) <-chan *httptest.ResponseRecorder {
 	result := make(chan *httptest.ResponseRecorder, 1)
 	go func() {
 		recorder := httptest.NewRecorder()
-		p.s.handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/playbacks/"+p.session.streamID+"/"+action, nil))
+		body := ""
+		if len(bodies) != 0 {
+			body = bodies[0]
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/playbacks/"+p.session.streamID+"/"+action, strings.NewReader(body))
+		if len(bodies) != 0 {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		p.s.handler().ServeHTTP(recorder, request)
 		result <- recorder
 	}()
 	return result
@@ -280,30 +292,34 @@ func TestGBPlaybackControlSequence(t *testing.T) {
 }
 
 func TestGBPlaybackDeleteInterruptsControl(t *testing.T) {
-	p := newPlaybackControlPeer(t)
-	base := p.invite.CSeq().SeqNo
-	pause := p.control("pause")
-	p.next(sip.INFO)
-	started := time.Now()
-	deleted := make(chan *httptest.ResponseRecorder, 1)
-	go func() {
-		recorder := httptest.NewRecorder()
-		p.s.handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/playbacks/"+p.session.streamID, nil))
-		deleted <- recorder
-	}()
-	// 显式停止取消在途等待（非超时，502）；BYE 仍排在已发 INFO 之后。
-	p.wait(pause, http.StatusBadGateway, "playback_control_failed")
-	bye := p.next(sip.BYE)
-	if elapsed := time.Since(started); elapsed >= playbackControlTimeout {
-		t.Fatalf("BYE 等待了完整 INFO 超时: %s", elapsed)
+	for _, command := range []struct{ action, body string }{{"pause", ""}, {"seek", `{"position":2.5}`}, {"scale", `{"scale":2}`}} {
+		t.Run(command.action, func(t *testing.T) {
+			p := newPlaybackControlPeer(t)
+			base := p.invite.CSeq().SeqNo
+			pause := p.control(command.action, command.body)
+			p.next(sip.INFO)
+			started := time.Now()
+			deleted := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				recorder := httptest.NewRecorder()
+				p.s.handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/playbacks/"+p.session.streamID, nil))
+				deleted <- recorder
+			}()
+			// 显式停止取消在途等待（非超时，502）；BYE 仍排在已发 INFO 之后。
+			p.wait(pause, http.StatusBadGateway, "playback_control_failed")
+			bye := p.next(sip.BYE)
+			if elapsed := time.Since(started); elapsed >= playbackControlTimeout {
+				t.Fatalf("BYE 等待了完整 INFO 超时: %s", elapsed)
+			}
+			if bye.CSeq().SeqNo != base+2 {
+				t.Fatalf("BYE CSeq=%d，期望 %d", bye.CSeq().SeqNo, base+2)
+			}
+			p.respond(sip.NewResponseFromRequest(bye, sip.StatusOK, "OK", nil))
+			p.wait(deleted, http.StatusNoContent, "")
+			p.wait(p.control("pause"), http.StatusNotFound, "playback_not_found")
+			gbPlaybackResources(t, p.s, 0, 0, 0)
+		})
 	}
-	if bye.CSeq().SeqNo != base+2 {
-		t.Fatalf("BYE CSeq=%d，期望 %d", bye.CSeq().SeqNo, base+2)
-	}
-	p.respond(sip.NewResponseFromRequest(bye, sip.StatusOK, "OK", nil))
-	p.wait(deleted, http.StatusNoContent, "")
-	p.wait(p.control("pause"), http.StatusNotFound, "playback_not_found")
-	gbPlaybackResources(t, p.s, 0, 0, 0)
 }
 
 func TestGBPlaybackControlRequiresStreaming(t *testing.T) {
@@ -329,10 +345,145 @@ func TestGBPlaybackControlRequiresStreaming(t *testing.T) {
 	if !strings.Contains(recorder.Body.String(), "playback_not_streaming") {
 		t.Fatalf("未认领实例控制: %s", recorder.Body.String())
 	}
+	for _, command := range []struct{ action, body string }{{"seek", `{"position":1}`}, {"scale", `{"scale":2}`}} {
+		apiRequest(t, s.handler(), http.MethodPost, "/api/playbacks/"+ticket.PlaybackID+"/"+command.action, command.body, http.StatusConflict)
+	}
 	// 普通实时 ID 不能走历史控制入口。
 	view, err := s.live.startLive(t.Context(), gbPlaybackDevice, gbPlaybackChannel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	apiRequest(t, s.handler(), http.MethodPost, "/api/playbacks/"+view.streamID+"/pause", "", http.StatusNotFound)
+	apiRequest(t, s.handler(), http.MethodPost, "/api/playbacks/"+view.streamID+"/seek", `{"position":1}`, http.StatusNotFound)
+}
+
+func TestGBPlaybackRangeScaleSequence(t *testing.T) {
+	p := newPlaybackControlPeer(t)
+	base := p.invite.CSeq().SeqNo
+	deadline, _ := p.session.ctx.Deadline()
+	for index, command := range []struct{ action, body, header string }{
+		{"seek", `{"position":0}`, "Range: npt=0-"},
+		{"seek", `{"position":0.25}`, "Range: npt=0.25-"},
+		{"seek", `{"position":10}`, "Range: npt=10-"},
+		{"scale", `{"scale":0.25}`, "Scale: 0.25"},
+		{"scale", `{"scale":0.5}`, "Scale: 0.5"},
+		{"scale", `{"scale":1}`, "Scale: 1"},
+		{"scale", `{"scale":2}`, "Scale: 2"},
+		{"scale", `{"scale":4}`, "Scale: 4"},
+	} {
+		t.Run(command.header, func(t *testing.T) {
+			result := p.control(command.action, command.body)
+			info := p.next(sip.INFO)
+			sequence := base + uint32(index) + 1
+			p.checkInfo(info, sequence, fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\n%s\r\n\r\n", sequence, command.header))
+			p.wait(p.control("scale", `{"scale":1}`), http.StatusConflict, "playback_control_busy")
+			p.respond(p.innerOK(info, sequence))
+			p.wait(result, http.StatusNoContent, "")
+		})
+	}
+	if after, _ := p.session.ctx.Deadline(); !after.Equal(deadline) {
+		t.Fatalf("交互控制改变了原实例期限: %s -> %s", deadline, after)
+	}
+	gbPlaybackResources(t, p.s, 1, 0, 1)
+	for index, action := range []string{"seek", "scale"} {
+		body := `{"position":1}`
+		if action == "scale" {
+			body = `{"scale":2}`
+		}
+		result := p.control(action, body)
+		info := p.next(sip.INFO)
+		if info.CSeq().SeqNo != base+9+uint32(index) {
+			t.Fatal("拒绝路径未延续原对话 CSeq")
+		}
+		if action == "seek" {
+			p.respond(sip.NewResponseFromRequest(info, 488, "Not Acceptable Here", nil))
+		} else {
+			p.respond(p.innerOK(info, info.CSeq().SeqNo+1))
+		}
+		p.wait(result, http.StatusBadGateway, "device_rejected")
+	}
+}
+
+func TestGBPlaybackRangeScaleValidation(t *testing.T) {
+	p := newPlaybackControlPeer(t)
+	for _, command := range []struct{ action, body string }{
+		{"seek", ""}, {"seek", `{}`}, {"seek", `null`}, {"seek", `{"position":null}`},
+		{"seek", `{"position":"1"}`}, {"seek", `{"position":true}`}, {"seek", `{"position":[]}`},
+		{"seek", `{"position":-0.01}`}, {"seek", `{"position":10.01}`}, {"seek", `{"position":1e309}`},
+		{"seek", `{"position":1,"scale":2}`}, {"seek", `{"position":1,"unknown":0}`}, {"seek", `{"position":1} {}`},
+		{"scale", ""}, {"scale", `{}`}, {"scale", `null`}, {"scale", `{"scale":null}`},
+		{"scale", `{"scale":"2"}`}, {"scale", `{"scale":true}`}, {"scale", `{"scale":[]}`},
+		{"scale", `{"scale":0}`}, {"scale", `{"scale":-1}`}, {"scale", `{"scale":0.3}`},
+		{"scale", `{"scale":8}`}, {"scale", `{"scale":1e309}`}, {"scale", `{"scale":2,"position":1}`},
+		{"scale", `{"scale":2,"unknown":0}`}, {"scale", `{"scale":2} {}`},
+	} {
+		t.Run(command.action+command.body, func(t *testing.T) {
+			p.wait(p.control(command.action, command.body), http.StatusBadRequest, "invalid_request")
+		})
+	}
+	// 非法请求没有占用 CSeq 或留下 INFO；随后合法控制仍是原对话的第一条 INFO。
+	result := p.control("seek", `{"position":-0}`)
+	info := p.next(sip.INFO)
+	p.checkInfo(info, p.invite.CSeq().SeqNo+1, fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\nRange: npt=0-\r\n\r\n", p.invite.CSeq().SeqNo+1))
+	p.respond(sip.NewResponseFromRequest(info, sip.StatusOK, "OK", nil))
+	p.wait(result, http.StatusNoContent, "")
+}
+
+func TestGBPlaybackRangeScaleDownloadIsolation(t *testing.T) {
+	p := newPlaybackControlPeer(t, sessionDownload)
+	p.wait(p.control("seek", `{"position":1}`), http.StatusBadRequest, "invalid_request")
+	p.wait(p.control("scale", `{"scale":2}`), http.StatusBadRequest, "invalid_request")
+	// 不借新动作改变旧 pause/resume 对历史实例的已有行为。
+	result := p.control("pause")
+	info := p.next(sip.INFO)
+	sequence := p.invite.CSeq().SeqNo + 1
+	p.checkInfo(info, sequence, fmt.Sprintf("PAUSE RTSP/1.0\r\nCSeq: %d\r\nPauseTime: now\r\n\r\n", sequence))
+	p.respond(p.innerOK(info, sequence))
+	p.wait(result, http.StatusNoContent, "")
+}
+
+func TestGBPlaybackRangeScaleCancellation(t *testing.T) {
+	p := newPlaybackControlPeer(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/api/playbacks/"+p.session.streamID+"/seek", strings.NewReader(`{"position":2.5}`)).WithContext(ctx)
+		request.Header.Set("Content-Type", "application/json")
+		p.s.handler().ServeHTTP(recorder, request)
+		result <- recorder
+	}()
+	p.next(sip.INFO)
+	cancel()
+	p.wait(result, http.StatusBadGateway, "playback_control_failed")
+	// 取消只结束等待，不自动发送反向动作；停止仍在同一对话延续 CSeq。
+	stopped := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		p.s.handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/playbacks/"+p.session.streamID, nil))
+		stopped <- recorder
+	}()
+	bye := p.next(sip.BYE)
+	if bye.CSeq().SeqNo != p.invite.CSeq().SeqNo+2 {
+		t.Fatal("取消后 BYE 未延续原 INFO CSeq")
+	}
+	p.respond(sip.NewResponseFromRequest(bye, sip.StatusOK, "OK", nil))
+	p.wait(stopped, http.StatusNoContent, "")
+	gbPlaybackResources(t, p.s, 0, 0, 0)
+}
+
+func TestGBPlaybackScaleTimeout(t *testing.T) {
+	p := newPlaybackControlPeer(t)
+	deadline, _ := p.session.ctx.Deadline()
+	started := time.Now()
+	result := p.control("scale", `{"scale":2}`)
+	p.next(sip.INFO)
+	p.wait(result, http.StatusGatewayTimeout, "playback_control_failed")
+	if elapsed := time.Since(started); elapsed < playbackControlTimeout-100*time.Millisecond || elapsed > playbackControlTimeout+time.Second {
+		t.Fatalf("Scale 未遵守总控制期限: %s", elapsed)
+	}
+	if after, _ := p.session.ctx.Deadline(); !after.Equal(deadline) {
+		t.Fatal("Scale 超时改变了原实例期限")
+	}
 }

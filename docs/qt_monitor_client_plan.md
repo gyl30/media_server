@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-17 接续同会话 Range/Scale 信令：`/api/playbacks/{id}/seek` 接受原范围内相对秒数，`/scale` 接受基本五种倍率；复用原 dialog/CSeq、控制与 BYE 串行、5秒总期限及原 owner 预算。仅新增不可变录像范围，旧暂停/恢复与下载行为不变；HTTP 204只确认协议受理，不代表精确到位或实际倍率。真实 UDP 对端 RED/GREEN与race已通过，Qt 尚未接入，不能标记完整 seek/倍速通过，见[历史信令增量](qt_monitor_client_stage4_playback_owner.md)。
+
 2026-10-17 补齐 [16 个独立源观看](qt_monitor_client_stage7_multisource.md)：仅扩展既有探针逐格指定不同 push 设备，生产播放器不变。DEV H.264 1080p25、8 AAC/4 PCMA/4 无音轨在共同30秒内每格解码及呈现749–750帧；有限发布源自然EOF、20个进程退出0及receiver归零通过。首轮无限FFmpeg发布者TERM清理FAIL和私有监督器解包错误均保留；后续有限源PASS不替代TERM故障，也不代表第二机16路、物理声音或完整阶段七GO。
 
 2026-10-17 接续完成 [Web 麦克风与可信 HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)：详情按钮、AudioWorklet PCMA、单消息credit与取消/迟到201清理；统一公开媒体HTTP origin避免安全页面混合内容。Chrome实际音频/SIP/C++ RTP、路由和隐藏停止、HTTPS双轨WHEP及Go全量test/race/vet通过。Firefox142.0补验确认在采集源连接8kHz上下文时因不同采样率抛NotSupportedError，当前上传BLOCKED；生产TalkCapture拒绝与清理通过、零对讲POST，不等于采集或整链通过。真实相机双向声学和完整阶段六仍未完成。
@@ -86,7 +88,7 @@
 
 阶段七部分复验已执行：最新桌面源码同源16路1080p25 H.264/AAC独立解码，共同30秒每路750帧、音视频逐秒进展、关闭与线程回收通过。clean源码 `a2da6dd` 内部包在DEV完成含空格路径搬移、包内Qt/XCB加载与正常关闭；第二机完成SHA、依赖、offscreen加载，并通过独立认证SSH/Xvfb验证TEST实际XCB窗口及正常关闭。第二机实际播放/声音未验收。完整数据、工具失败、SHA与边界见[Codex接手与阶段七部分验收](qt_monitor_client_takeover_verification.md)，不是正式容量或物理设备结论。
 
-后续真实缺口：同会话 seek/回放倍速、广播/对讲仍未实现，整个阶段六未完成。seek 需要已验证的媒体边界（例如有效 RTP-Info）并明确传给 Qt 刷新解复用/解码/PCM，不能靠猜 PTS 或重开会话替代；广播/对讲需要采集、纯音频媒体方向及真实设备端验收，现有视频 PS sender 不等同音频链路。阶段七第二机本地桌面/播放/声音、物理设备与公共分发许可边界尚未闭合，不能据观看回归与跨机窗口验证宣布整个平台 GO。
+该检查点之后的真实缺口以本文最新增量为准：同会话 seek/回放倍速的 Qt 呈现仍未实现，整个阶段六仍未完成。设备未给出可靠标记时可以做真实媒体的 best-effort 展示，但不能承诺响应后首帧归属或精确落点；不重开会话冒充定位、不清空原始 HTTP/PS 字节。是否需要解码刷新与音频时钟适配必须由实际媒体证据决定，不为缺少 RTP-Info 引入通用状态机。广播/对讲的后续实现见本文开头记录，真实设备声音与公共分发许可边界仍未闭合，不能据观看回归宣布整个平台 GO。
 
 大华广播入口已完成私有取证：主设备目标返回独立 Broadcast Result=OK 并反向 INVITE，提供 recvonly PCMA/8000 PT8。修正私有 UAS handler 提前返回、并补全原事务 ACK 路由后（本轮两条真实 ACK 都走顶层路由），真实 200/ACK、500 包/10秒近零静音 UDP 写出、正常 BYE 和端口释放通过；原失败保留。未收到相机 RTCP，不等于设备收包、解码或听音通过；Qt采集、跨主机直送与正式广播/对讲仍未实现。首发候选方案为 Qt 作为真实输入、Go SIP控制的直连LAN直送，以跨主机设备实际收音为采纳门槛，不提前排除必要的中继。详见[大华广播入口取证](qt_monitor_client_dahua_broadcast.md)。
 

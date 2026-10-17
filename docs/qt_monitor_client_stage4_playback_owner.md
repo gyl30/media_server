@@ -56,6 +56,29 @@ CleanupPending 不因到期而忘记：BYE 发出不等于设备确认停送，�
 
 验证：`gb_playback_control_test.go` 使用真实 UDP SIP 原始对端，覆盖附录 B 体、对话 tag/Call-ID、外内层 CSeq 递增、在途 busy、空体 200、内层 CSeq 不符、内层 455、非 `RTSP/1.0` 首行、外层 488、5 秒无响应 504、DELETE 打断在途 INFO 且 BYE 序号在 INFO 之后、未认领 409 与实时 ID 404。原 `live_dialog_test` 改为经会话分配 BYE 序号后继续与 sipgo 对照路径逐头比较；修改前它真实失败（CSeq 123 对 124），日志 `/var/tmp/qt-claude-owner-work/pause-design/dialog-test-red-01.log`。全量 Go：`/var/tmp/qt-claude-owner-work/pause-go/` 的 `full-go-02.log`（111.719 秒）、`full-race-01.log`（119.390 秒）、`vet-01.log` 均通过；首轮 `full-go-01.log` 的 `TestPresetControlFailuresStillStop/timeout` 失败保留，HEAD 源码同用例 60 次失败 2 次、当前 60 次失败 4 次且签名相同（STOP 之后到达未应答 MESSAGE 的重传），判定为既有测试不稳定，未在本增量修改。
 
+## 同会话 Range / Scale 信令增量（2026-10-17）
+
+接续 `d983904`，复用上述控制入口、dialog 锁、CSeq 和 5 秒总期限，新增：
+
+| 请求 | JSON 正文 | 原 dialog 内的 INFO 正文 |
+| --- | --- | --- |
+| `POST /api/playbacks/{playback_id}/seek` | `{"position":5.25}` | `PLAY RTSP/1.0`、相同 `CSeq`、`Range: npt=5.25-` |
+| `POST /api/playbacks/{playback_id}/scale` | `{"scale":2}` | `PLAY RTSP/1.0`、相同 `CSeq`、`Scale: 2` |
+
+依据 GB/T 28181—2016 附录 B：Range 为原请求录像起点的相对秒数，允许小数及闭区间 `[0, end_time-start_time]`；Scale 支持基本值 `0.25 / 0.5 / 1 / 2 / 4`。不支持倒放、其他倍率或同一 INFO 混发 Range 与 Scale。`position=-0` 规范化为 `npt=0-`。两动作均要求 `application/json` 且只有各自一个数值字段；缺失、null、字符串、未知字段、非有限数、负位置及越界返回 400 `invalid_request`，不发送 INFO 或占用 CSeq。
+
+唯一新增成员 `liveSession.playbackDuration int64` 在交互回放构造时写入原请求时长，发布到已有 sessions map 后不再修改；旧成员无法推导这个录像范围，绝对 context deadline 还包含票据 TTL 和宽限，不能用它代替。直播/下载保持 0，表示新动作不适用，不是关闭或播放状态。新动作不作用于下载，旧 pause/resume 行为保持。未新增数据库字段、Token 状态、注册表、定时任务、重试或回滚。
+
+HTTP 204 **仅表示设备 SIP/MANSRTSP 受理**，不证明已经定位、精确落点、实际倍率或音视频呈现正确。设备可能忽略或延迟执行；取消、超时及传输失败仍为结果未知，不自动反向补发，也不重建 INVITE、receiver、媒体 GET 或票据。设备拒绝、busy、停止取消、内层 CSeq 校验及旧错误身份与前节一致。即使低倍率或暂停，仍消耗原 owner 绝对预算；控制不会延期。Qt 尚未接入这两个动作，不能将本增量称作完整客户端 seek/倍速通过。
+
+`gb_playback_control_test.go` 复用真实 loopback UDP SIP 对端和受控媒体 HTTP，验证位置起点/小数/终点、五种倍率、同 Call-ID/tag 与连续 CSeq、每条 INFO 仅一类头、busy、非法参数零 INFO、下载隔离、DELETE 打断 seek/scale 后 BYE 序号、请求取消、外层拒绝、内层 CSeq 错误、5 秒总期限及 owner deadline 不变。不是实际摄像机或 Qt 媒体呈现测试。
+
+私有证据：DEV `/var/tmp/qt-go-playback-control-d983904-Ckb5Km/`。旧生产代码下 `red.log` 中合法 seek/scale 未产生 INFO、取消场景也无法进入控制；`red-scale-timeout.log` 单独确认旧实现不能进入新的 Scale 等待。最小实现后 `green.log` 定向测试 15.947 秒通过；`race.log` 同组 race 17.190 秒通过，`green-validation-final.log` 补验负零规范化。旧 UDP 对端销毁警告均保留，不能说日志完全无警告。
+
+最终复审删除了 JSON float64 解码后不可达的额外 NaN/Inf 判断；原 `1e309` 等负测仍由解码失败拒绝，未放宽校验。最终三份Go源码 SHA 固定在 `final-go-source.sha256`：`gb_playback.go` 为 `57d60bfe7855eaf33320bf1b1dea83e231fb81cd924b0de07a1189ab4a1fde86`。同一最终源码的 `GOMAXPROCS=2 go test -p 1 -count=1 ./...` 在 `full-go-02.log` 通过（主包136.205秒、模拟器0.003秒）；`go test -race -p 1 -count=1 ./...` 在 `full-race-02.log` 通过（143.008秒、1.008秒）；`go vet -p 1 ./...` 在 `vet-01.log` 退出0。先前带冗余判断的 `full-go-01.log` 与 `full-race-01.log` 也保留，不混称最终版本。gofmt及diff检查通过，独立只读复审未见P0/P1。
+
+本增量没有C++/Qt修改，未重跑C++ CTest、ASan、浏览器或真实媒体；不把Go race称作解码器内存插桩，也不把旧大华取证当作这两个新HTTP入口的实机验收。
+
 ## 证据与验证边界
 
 定向基础证据：DEV `/var/tmp/media-server-qt-history-foundation-1g5AaGey/`。结束交错测试使用真实 UDP SIP 与受控媒体 HTTP 边界，不是实际 PS 解码。

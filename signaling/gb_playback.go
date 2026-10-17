@@ -22,9 +22,10 @@ const playbackDrainTimeout = 20 * time.Second
 const playbackControlTimeout = 5 * time.Second
 
 var (
-	errPlaybackNotStreaming = errors.New("playback is not streaming")
-	errPlaybackControlBusy  = errors.New("playback control is in progress")
-	errPlaybackRejected     = errors.New("device rejected playback control")
+	errPlaybackNotStreaming   = errors.New("playback is not streaming")
+	errPlaybackControlBusy    = errors.New("playback control is in progress")
+	errPlaybackRejected       = errors.New("device rejected playback control")
+	errPlaybackControlInvalid = errors.New("invalid playback control")
 )
 
 type playbackTicket struct {
@@ -129,6 +130,9 @@ func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, chan
 	session := &liveSession{
 		key: liveKey{deviceID: deviceID, channelID: channelID, historyID: id}, streamID: id, ssrc: ssrc,
 		state: livePreparing, ctx: operationContext, cancel: cancel, claimed: make(chan struct{}), established: make(chan struct{}), done: make(chan struct{}),
+	}
+	if purpose == sessionPlayback {
+		session.playbackDuration = endTime - startTime
 	}
 	live.sessions[session.key] = session
 	live.mu.Unlock()
@@ -247,14 +251,37 @@ func (s *infrastructureServer) handlePlaybackDelete(writer http.ResponseWriter, 
 
 func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter, request *http.Request) {
 	id, action := request.PathValue("playback_id"), request.PathValue("action")
-	if !validUUIDv4(id) || (action != "pause" && action != "resume") {
+	if !validUUIDv4(id) || (action != "pause" && action != "resume" && action != "seek" && action != "scale") {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	err := s.live.controlPlayback(request.Context(), id, action == "pause")
+	var value float64
+	if action == "seek" || action == "scale" {
+		field := "position"
+		if action == "scale" {
+			field = "scale"
+		}
+		var command map[string]*float64
+		if !decodeJSON(writer, request, &command) || len(command) != 1 || command[field] == nil {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		value = *command[field]
+		if value < 0 ||
+			(action == "scale" && value != 0.25 && value != 0.5 && value != 1 && value != 2 && value != 4) {
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		if value == 0 {
+			value = 0 // JSON -0 也是范围起点，MANSRTSP 中统一写为 0。
+		}
+	}
+	err := s.live.controlPlayback(request.Context(), id, action, value)
 	switch {
 	case err == nil:
 		writer.WriteHeader(http.StatusNoContent)
+	case errors.Is(err, errPlaybackControlInvalid):
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 	case errors.Is(err, errLiveNotFound):
 		writeHTTPError(writer, http.StatusNotFound, "playback_not_found")
 	case errors.Is(err, errPlaybackNotStreaming):
@@ -275,8 +302,8 @@ func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter,
 	}
 }
 
-// controlPlayback 在原对话内发送一次 GB/T 28181-2016 附录 B 的 MANSRTSP INFO；暂停不改变 owner 期限。
-func (s *liveService) controlPlayback(ctx context.Context, id string, pause bool) error {
+// controlPlayback 在原对话内发送一次 GB/T 28181-2016 附录 B 的 MANSRTSP INFO；受理不证明媒体生效，也不改变 owner 期限。
+func (s *liveService) controlPlayback(ctx context.Context, id, action string, value float64) error {
 	s.mu.Lock()
 	var session *liveSession
 	for _, candidate := range s.sessions {
@@ -287,6 +314,10 @@ func (s *liveService) controlPlayback(ctx context.Context, id string, pause bool
 	s.mu.Unlock()
 	if session == nil {
 		return errLiveNotFound
+	}
+	if (action == "seek" || action == "scale") &&
+		(session.playbackDuration == 0 || (action == "seek" && value > float64(session.playbackDuration))) {
+		return errPlaybackControlInvalid
 	}
 	if !session.dialog.TryLock() {
 		return errPlaybackControlBusy
@@ -305,8 +336,13 @@ func (s *liveService) controlPlayback(ctx context.Context, id string, pause bool
 	request := session.nextDialogRequest(sip.INFO)
 	sequence := request.CSeq().SeqNo
 	body := fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\nRange: npt=now-\r\n\r\n", sequence)
-	if pause {
+	switch action {
+	case "pause":
 		body = fmt.Sprintf("PAUSE RTSP/1.0\r\nCSeq: %d\r\nPauseTime: now\r\n\r\n", sequence)
+	case "seek":
+		body = fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\nRange: npt=%s-\r\n\r\n", sequence, strconv.FormatFloat(value, 'f', -1, 64))
+	case "scale":
+		body = fmt.Sprintf("PLAY RTSP/1.0\r\nCSeq: %d\r\nScale: %s\r\n\r\n", sequence, strconv.FormatFloat(value, 'f', -1, 64))
 	}
 	request.AppendHeader(sip.NewHeader("Content-Type", "Application/MANSRTSP"))
 	request.SetBody([]byte(body))
