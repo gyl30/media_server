@@ -21,6 +21,13 @@ PLUGINS = (
     "tls/libqopensslbackend.so",
 )
 FFMPEG_LIBRARIES = ("avutil", "avcodec", "avformat", "swscale", "swresample")
+# 当前 Ubuntu/Qt 组合的 libproxy 0.4.17 会按编译期绝对路径 dlopen，ldd 看不到这些资源。
+LIBPROXY_RESOURCES = (
+    "modules/network_networkmanager.so",
+    "modules/config_gnome3.so",
+    "pxgsettings",
+)
+LIBPROXY_BUNDLE = Path("lib/libproxy/0.4.17")
 HOST_LIBRARIES = re.compile(
     r"^(ld-linux[^/]*|libc\.so\..*|libm\.so\..*|libpthread\.so\..*|libdl\.so\..*|"
     r"librt\.so\..*|libresolv\.so\..*|libutil\.so\..*|libanl\.so\..*|libnss_[^/]*)$"
@@ -133,11 +140,19 @@ def main():
     env.pop("LD_PRELOAD", None)
     env["LD_LIBRARY_PATH"] = str(prefix / "lib")
     main_libraries = dependencies(build / "gb_monitor", env)
+    libproxy_resources = {}
+    if "libproxy.so.1" in main_libraries:
+        libproxy_source = main_libraries["libproxy.so.1"].parent / "libproxy/0.4.17"
+        for relative in LIBPROXY_RESOURCES:
+            resource = libproxy_source / relative
+            if not resource.is_file():
+                parser.error(f"本已验证的 libproxy 0.4.17 组合缺少运行资源：{resource}")
+            libproxy_resources[LIBPROXY_BUNDLE / relative] = resource
     # 主程序先载入的同 SONAME runtime 会被插件复用；单独 ldd 插件否则可能选中宿主旧 GCC。
     runtime_directories = {str(path.parent) for name, path in main_libraries.items()
                            if name in ("libstdc++.so.6", "libgcc_s.so.1", "libgomp.so.1")}
     env["LD_LIBRARY_PATH"] = os.pathsep.join([str(prefix / "lib"), *sorted(runtime_directories)])
-    roots = [build / "gb_monitor", *(plugins / relative for relative in PLUGINS), *tls_libraries]
+    roots = [build / "gb_monitor", *(plugins / relative for relative in PLUGINS), *tls_libraries, *libproxy_resources.values()]
     libraries = {}
     for binary in roots:
         for name, path in dependencies(binary, env).items():
@@ -195,6 +210,18 @@ def main():
         plugin_metadata.append(entry)
         if entry["copyright"] is None:
             unresolved_licenses.append(str(plugin))
+    libproxy_outputs = []
+    libproxy_metadata = []
+    for relative, resource in libproxy_resources.items():
+        destination = output / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(resource, destination)
+        libproxy_outputs.append(destination)
+        entry = package_notice(resource, licenses)
+        entry.update({"source": str(resource), "bundle_path": str(relative), "sha256": sha256(destination)})
+        libproxy_metadata.append(entry)
+        if entry["copyright"] is None:
+            unresolved_licenses.append(str(resource))
     (licenses / "ffmpeg").mkdir()
     for name in ("LICENSE.md", "COPYING.LGPLv2.1"):
         shutil.copy2(source / name, licenses / "ffmpeg" / name)
@@ -209,6 +236,15 @@ def main():
         'root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
         'export LD_LIBRARY_PATH="$root/lib"\n'
         'export QT_PLUGIN_PATH="$root/lib/qt6/plugins"\n'
+        + ('export PX_MODULE_PATH="$root/lib/libproxy/0.4.17/modules"\n'
+           'export PX_GSETTINGS="$root/lib/libproxy/0.4.17/pxgsettings"\n'
+           'if [ "${GNOME_DESKTOP_SESSION_ID+x}" = x ] || [ "${DESKTOP_SESSION-}" = gnome ] || [ "${DESKTOP_SESSION-}" = mate ]; then\n'
+           '  case "$root" in *[!A-Za-z0-9_./-]*)\n'
+           '    echo "libproxy 0.4.17 的 GNOME helper 不支持此安装路径，请使用仅含字母、数字、下划线、点、斜线和连字符的路径" >&2\n'
+           '    exit 1;;\n'
+           '  esac\n'
+           'fi\n' if libproxy_resources else '')
+        +
         'unset LD_PRELOAD QT_QPA_PLATFORM_PLUGIN_PATH\n'
         'exec "$root/bin/gb_monitor" "$@"\n'
     )
@@ -220,12 +256,17 @@ def main():
         '只验收 Linux x86_64、构建机同代 glibc ABI；不附带 glibc、加载器、字体、显卡驱动、'
         'X11/Wayland/PulseAudio 服务或系统 CA。真实图形、声音和网络仍需目标系统提供。\n'
         '仅包含 xcb/offscreen 平台及 OpenSSL 3 TLS 插件；不附带输入法插件。\n'
+        'libproxy 0.4.17 的现有 NetworkManager/GSettings 模块和辅助程序随包携带；'
+        'D-Bus/NetworkManager 服务、GNOME GSettings schema 与用户代理配置仍由目标桌面系统提供，'
+        '本包不声称验证完整桌面代理/PAC 环境。\n'
+        'libproxy 0.4.17 的 GNOME helper 使用 shell 执行路径；GNOME/MATE 模式仅接受由字母、数字、'
+        '下划线、点、斜线及连字符组成的安装路径，否则启动器明确拒绝，不静默跳过代理。\n'
         'manifest 中 dirty 构建不能冒充纯净 HEAD 可重现发行版；原始路径是追溯信息，不是运行依赖。\n'
     )
     verify_env = env.copy()
     verify_env["LD_LIBRARY_PATH"] = str(output / "lib")
     verification = {}
-    for binary in [output / "bin/gb_monitor", *plugin_outputs]:
+    for binary in [output / "bin/gb_monitor", *plugin_outputs, *libproxy_outputs]:
         text = run(["ldd", "-r", str(binary)], verify_env)
         if "not found" in text or "undefined symbol:" in text:
             raise RuntimeError(f"运行包动态链接失败：{binary}\n{text}")
@@ -255,6 +296,7 @@ def main():
                  "os_release": Path("/etc/os-release").read_text()},
         "ffmpeg_version": ffmpeg_version, "ffmpeg": ffmpeg,
         "qt_plugin_source": str(plugins), "plugins": plugin_metadata, "libraries": metadata,
+        "libproxy_resources": libproxy_metadata,
         "runtime_aliases": runtime_aliases,
         "project_source_sha256": {str(path.relative_to(repository)): sha256(path) for path in sorted(source_files)},
         "unresolved_license_sources": sorted(set(unresolved_licenses)),
