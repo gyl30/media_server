@@ -119,7 +119,8 @@ class platform_fixture final : public QObject
                             }
                             socket->setProperty("answered", true);
                             const auto path = bytes.split(' ').value(1);
-                            if (path.startsWith("/api/playbacks/") && (path.endsWith("/seek") || path.endsWith("/pause") || path.endsWith("/resume")))
+                            if (path.startsWith("/api/playbacks/") &&
+                                (path.endsWith("/seek") || path.endsWith("/scale") || path.endsWith("/pause") || path.endsWith("/resume")))
                             {
                                 playback_controls.append(
                                     {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
@@ -399,14 +400,26 @@ class monitor_window_test final : public QObject
         auto* layout = window.findChild<QComboBox*>(QStringLiteral("view_layout"));
         auto* position = window.findChild<QDoubleSpinBox*>(QStringLiteral("record_position"));
         auto* seek = window.findChild<QPushButton*>(QStringLiteral("record_seek"));
+        auto* scale_value = window.findChild<QComboBox*>(QStringLiteral("record_scale_value"));
+        auto* scale = window.findChild<QPushButton*>(QStringLiteral("record_scale"));
         auto* range = window.findChild<QLabel*>(QStringLiteral("record_range"));
-        QVERIFY(layout && position && seek && range);
+        QVERIFY(layout && position && seek && scale_value && scale && range);
+        QCOMPARE(scale->text(), QStringLiteral("请求倍率"));
+        QCOMPARE(scale_value->count(), 5);
+        QCOMPARE(scale_value->currentData().toDouble(), 1.0);
+        QCOMPARE(scale_value->toolTip(), QStringLiteral("请求设备倍率，不代表实际发送或呈现倍率；选择后须点击请求倍率"));
+        const QList<double> scales{0.25, 0.5, 1.0, 2.0, 4.0};
+        for (int index = 0; index < scales.size(); ++index)
+        {
+            QCOMPARE(scale_value->itemData(index).toDouble(), scales[index]);
+        }
         layout->setCurrentIndex(layout->findData(4));
         auto* first = slot_view(window, 1);
         auto* second = slot_view(window, 2);
         QVERIFY(first && second);
         QVERIFY(select_gb_channel(window));    // 首次异步连接会 stop_all，须先等真实列表/通道响应完成。
         QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         QCOMPARE(position->maximum(), 0.0);
         const play_target target{play_target::kind::gb_channel, QStringLiteral("device"), QStringLiteral("channel"), QStringLiteral("录像")};
         first->play_record(client, target, 1700000000, 1700000005);
@@ -417,29 +430,43 @@ class monitor_window_test final : public QObject
         QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:20")));
         QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:25")));
         QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         position->setValue(2.125);
+        scale_value->setCurrentIndex(scale_value->findData(2.0));
         seek->click();
+        scale->click();
         QCOMPARE(api.playback_controls.size(), 0);
         QTest::mouseClick(second, Qt::LeftButton);
         QCOMPARE(position->maximum(), 10.0);
         QCOMPARE(position->value(), 0.0);
+        QCOMPARE(scale_value->currentData().toDouble(), 1.0);
         QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:30")));
         QVERIFY(!seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         window.findChild<QPushButton*>(QStringLiteral("stop_preview"))->click();
         QCOMPARE(position->maximum(), 0.0);
         QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         QCOMPARE(first->record_start(), qint64(1700000000));
         QCOMPARE(first->record_end(), qint64(1700000005));
         window.close();
     }
 
-    // 真实 PS 仅证明 UI 控制绑定，不模拟设备定位结果或声称精确边界已闭合。
+    void record_seek_selected_view_with_media_data()
+    {
+        QTest::addColumn<bool>("scale_control");
+        QTest::newRow("seek") << false;
+        QTest::newRow("scale") << true;
+    }
+
+    // 真实 PS 仅证明 UI 控制绑定，不模拟设备定位/倍率结果或声称精确边界已闭合。
     void record_seek_selected_view_with_media()
     {
+        QFETCH(bool, scale_control);
         const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
         if (folder.isEmpty())
         {
-            QSKIP("未指定私有PS素材；默认CTest不代表录像定位UI的真实媒体启用验收");
+            QSKIP("未指定私有PS素材；默认CTest不代表录像定位/倍率UI的真实媒体启用验收");
         }
         QFile file(QDir(folder).filePath(QStringLiteral("pcma-long-noend.ps")));
         QVERIFY(file.open(QIODevice::ReadOnly));
@@ -472,7 +499,10 @@ class monitor_window_test final : public QObject
         auto* position = window.findChild<QDoubleSpinBox*>(QStringLiteral("record_position"));
         auto* seek = window.findChild<QPushButton*>(QStringLiteral("record_seek"));
         auto* pause = window.findChild<QPushButton*>(QStringLiteral("record_pause"));
-        QVERIFY(layout && position && seek && pause);
+        auto* scale_value = window.findChild<QComboBox*>(QStringLiteral("record_scale_value"));
+        auto* scale = window.findChild<QPushButton*>(QStringLiteral("record_scale"));
+        QVERIFY(layout && position && seek && pause && scale_value && scale);
+        auto* control = scale_control ? scale : seek;
         layout->setCurrentIndex(layout->findData(4));
         auto* first = slot_view(window, 1);
         auto* second = slot_view(window, 2);
@@ -503,43 +533,87 @@ class monitor_window_test final : public QObject
         QTRY_VERIFY_WITH_TIMEOUT(first->record_seek_ready() && second->record_seek_ready(), 8000);
         QTest::mouseClick(first, Qt::LeftButton);
         QTRY_VERIFY_WITH_TIMEOUT(seek->isEnabled(), 1000);
+        QVERIFY(scale_value->isEnabled() && scale->isEnabled());
         position->setValue(2.125);
+        scale_value->setCurrentIndex(scale_value->findData(2.0));
         QCoreApplication::processEvents();
         QCOMPARE(position->value(), 2.125);
+        QCOMPARE(scale_value->currentData().toDouble(), 2.0);
+        QVERIFY(first->record_seek_ready());
         QCOMPARE(api.playback_controls.size(), 0);    // 改数值不发送，必须显式确认。
         QTest::mouseClick(second, Qt::LeftButton);
         QCOMPARE(position->maximum(), 10.0);
         QCOMPARE(position->value(), 0.0);
+        QCOMPARE(scale_value->currentData().toDouble(), 1.0);
         position->setValue(7.5);
-        seek->click();
+        scale_value->setCurrentIndex(scale_value->findData(2.0));
+        QVERIFY(second->record_seek_ready());
+        QCOMPARE(api.playback_controls.size(), 0);
+        control->click();
         QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 1, 2000);
-        QCOMPARE(api.playback_controls[0].path, QStringLiteral("/api/playbacks/%1/seek").arg(ids[1]).toUtf8());
-        QCOMPARE(api.playback_controls[0].body, (QJsonObject{{"position", 7.5}}));
+        const auto action = scale_control ? QStringLiteral("scale") : QStringLiteral("seek");
+        QCOMPARE(api.playback_controls[0].request_line, QStringLiteral("POST /api/playbacks/%1/%2 HTTP/1.1").arg(ids[1], action).toUtf8());
+        QCOMPARE(api.playback_controls[0].path, QStringLiteral("/api/playbacks/%1/%2").arg(ids[1], action).toUtf8());
+        QCOMPARE(api.playback_controls[0].body, scale_control ? (QJsonObject{{"scale", 2.0}}) : (QJsonObject{{"position", 7.5}}));
         QVERIFY(!position->isEnabled() && !seek->isEnabled() && !pause->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         seek->click();
+        scale->click();
         QCOMPARE(api.playback_controls.size(), 1);
         QTest::mouseClick(first, Qt::LeftButton);
         QVERIFY(seek->isEnabled());
+        QVERIFY(scale_value->isEnabled() && scale->isEnabled());
         QCOMPARE(position->maximum(), 5.0);
         position->setValue(1.25);
+        scale_value->setCurrentIndex(scale_value->findData(0.5));
         respond(api.playback_controls[0].socket, 204, {});
         QTRY_VERIFY_WITH_TIMEOUT(second->record_seek_ready(), 2000);
         QCOMPARE(position->value(), 1.25);    // 非选中格的迟到受理不覆盖当前输入。
+        QCOMPARE(scale_value->currentData().toDouble(), 0.5);
         pause->click();
         QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 2, 2000);
         QCOMPARE(api.playback_controls[1].path, QStringLiteral("/api/playbacks/%1/pause").arg(ids[0]).toUtf8());
         respond(api.playback_controls[1].socket, 204, {});
         QTRY_VERIFY_WITH_TIMEOUT(first->record_paused(), 2000);
         QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
         seek->click();
+        scale->click();
         QCOMPARE(api.playback_controls.size(), 2);
         pause->click();
         QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 3, 2000);
         respond(api.playback_controls[2].socket, 204, {});
         QTRY_VERIFY_WITH_TIMEOUT(first->record_seek_ready() && seek->isEnabled(), 2000);
         QCOMPARE(position->value(), 1.25);
+        QCOMPARE(scale_value->currentData().toDouble(), 0.5);
+        QVERIFY(scale_value->isEnabled() && scale->isEnabled());
+        if (scale_control)
+        {
+            for (double value : {0.25, 0.5, 1.0, 2.0, 4.0})
+            {
+                const auto previous = api.playback_controls.size();
+                scale_value->setCurrentIndex(scale_value->findData(value));
+                QCoreApplication::processEvents();
+                QVERIFY(first->record_seek_ready());
+                QCOMPARE(api.playback_controls.size(), previous);
+                scale->click();
+                QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), previous + 1, 2000);
+                QCOMPARE(api.playback_controls.back().request_line, QStringLiteral("POST /api/playbacks/%1/scale HTTP/1.1").arg(ids[0]).toUtf8());
+                QCOMPARE(api.playback_controls.back().body, (QJsonObject{{"scale", value}}));
+                QVERIFY(!scale_value->isEnabled() && !scale->isEnabled() && !pause->isEnabled() && !seek->isEnabled());
+                scale->click();
+                QCOMPARE(api.playback_controls.size(), previous + 1);
+                respond(api.playback_controls.back().socket, 204, {});
+                QTRY_VERIFY_WITH_TIMEOUT(first->record_seek_ready() && scale->isEnabled(), 2000);
+                QCOMPARE(scale_value->currentData().toDouble(), value);
+            }
+        }
         window.findChild<QPushButton*>(QStringLiteral("stop_preview"))->click();
         QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(!scale_value->isEnabled() && !scale->isEnabled());
+        const auto previous = api.playback_controls.size();
+        scale->click();
+        QCOMPARE(api.playback_controls.size(), previous);
         QVERIFY(second->record_seek_ready());
         QCOMPARE(api.record_plays.size(), 2);
         QCOMPARE(api.media.size(), 2);

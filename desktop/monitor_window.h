@@ -76,6 +76,8 @@ class monitor_window final : public QMainWindow
     QPushButton* record_pause_;
     QDoubleSpinBox* record_position_;
     QPushButton* record_seek_;
+    QComboBox* record_scale_value_;
+    QPushButton* record_scale_;
     QLabel* record_range_;
     QPushButton* record_live_;
     QTreeWidget* alarm_list_;
