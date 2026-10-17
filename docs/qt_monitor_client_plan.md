@@ -14,7 +14,7 @@
 
 ## 七阶段
 
-2026-10-17 接续完成 [Web 麦克风与可信 HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)：详情按钮、AudioWorklet PCMA、单消息credit与取消/迟到201清理；统一公开媒体HTTP origin避免安全页面混合内容。Chrome实际音频/SIP/C++ RTP、路由和隐藏停止、HTTPS双轨WHEP及Go全量test/race/vet通过。仍不等于真实相机双向声学验收；Firefox采集、物理声学和完整阶段六仍未完成。
+2026-10-17 接续完成 [Web 麦克风与可信 HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)：详情按钮、AudioWorklet PCMA、单消息credit与取消/迟到201清理；统一公开媒体HTTP origin避免安全页面混合内容。Chrome实际音频/SIP/C++ RTP、路由和隐藏停止、HTTPS双轨WHEP及Go全量test/race/vet通过。Firefox142.0补验确认在采集源连接8kHz上下文时因不同采样率抛NotSupportedError，当前上传BLOCKED；生产TalkCapture拒绝与清理通过、零对讲POST，不等于采集或整链通过。真实相机双向声学和完整阶段六仍未完成。
 
 2026-10-17 用户再次收口后续范围：取消独立广播产品/UI，保留双向对讲所需的内部 Broadcast SIP 控制；Qt/Web 采集音频直接上送媒体服务器，由媒体侧发送设备侧 RTP，Go 不转发音频。回传音频必须另行实际验证。录像只来自 GB 设备，设备决定倍速与定位精度；媒体侧转发，Qt 必要呈现适配不能再次限速或把 HTTP 受理当成精确到位。不新增中心录像/VOD，不影响已有 Qt 本地录制。后续按音频后端、Qt/Web 对讲、设备录像倍速、同会话定位、综合回归推进；[音频发送后端增量](qt_monitor_client_stage6_audio_transport.md)不等同完整对讲验收。
 

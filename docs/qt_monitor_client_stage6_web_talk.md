@@ -53,6 +53,16 @@ HTTPS关闭时生产播放器的DELETE得到404，符合资源已被会话终止
 - 素材参数检查前先创建 Chrome profile 的泄漏有 RED/GREEN；把 profile 创建移至输入检查之后。缺失文件和目录输入均退出1且不产生 profile。
 - 手动直接执行未设置 executable 位的运行脚本被 shell拒绝，改为明确 `bash` 调用；该次没有启动媒体进程，不算媒体失败。
 
+## Firefox 采集兼容性补验
+
+2026-10-17 在 clean `ecc02068d8d14a802a9b31efcd7430f8fe52f0a1` 上补验 Firefox 142.0，独立证据为 DEV `/tmp/qt-firefox-capture-ecc0206-BxGF27rh/`。生产 `talk.js` 与 `talk-worklet.js` 的快照 SHA 与该提交工作树逐字节相同；没有修改生产或测试代码，没有将 Chrome 的结果推定为 Firefox 通过。
+
+Firefox 使用本轮私有 profile 和显式 fake capture preference，不是物理麦克风。BiDi 指针点击实测 `isTrusted=true`、用户激活有效，loopback 页面为安全上下文。`getUserMedia()` 成功；8000Hz AudioContext 为 running，生产 Worklet 模块加载成功，但 `createMediaStreamSource()` 抛出 `NotSupportedError`：`Connecting AudioNodes from AudioContexts with different sample-rate is currently not supported.` 因而当前实现的 **Firefox 142.0 麦克风上传为 BLOCKED**，不是 PCMA 或对讲整链 PASS；此结论不代表所有版本、设备和浏览器都不支持。
+
+再用实际 `TalkCapture` 类复验同一失败路径：状态为 preparing→stopping→stopped，页面与静态 HTTP 服务分别观察到对讲 POST 数为0，麦克风 track 已 ended、AudioContext 已 closed、current owner 已释放。仅“预期不支持时的拒绝与清理”通过，没有进入 WS、SIP 或真实相机。没有为该限制增加第二套采样器、静默丢音频或关闭浏览器安全校验。
+
+`result-production.json` SHA256 为 `d7af102f1b8ad6d3976ace0e7ae5408ac0782d3c05437388564a17e308835bf0`；`sha256sums.json` 保留页面、生产源码快照、三轮结果和日志清单。首轮键盘探针超时原样保留，不能算通过。结果中的 `firefoxExecutable=/usr/bin/dash` 来自 spawn 后、exec 前的启动包装器，不作为最终 Firefox 映像的证据；版本取自实际 `firefox --version`。本轮 Firefox 均由自己的 PID 收尾，HTTP 服务关闭，最终无本轮 profile 对应的 Firefox 进程，未修改 Pulse、用户 profile 或系统配置。
+
 ## 复用与验证命令
 
 离线测试（需要指定当前实际 FFmpeg CLI）：
@@ -67,7 +77,7 @@ FFMPEG_TEST_EXECUTABLE=/home/gyl/bin/ffmpeg node tests/web_console/talk_worklet.
 
 只读独立复审未发现可达P0/P1。新增状态为实际资源、取消signal、真实在途HTTP/cleanup promise和Worklet封包/单credit；没有新增数据库字段、token消费副本、自动重试、通用音频工厂或媒体线程。
 
-仍未验证：物理麦克风/相机扬声器及同步回传听音、Firefox音频采集、真实用户权限对话框操作、真实慢网络持续背压、设备拔出、页面真正销毁时的keepalive收尾、第二机Web对讲。它们为NOT_RUN/未完成，不由数字音频、路由退出或HTTPS播放自动推导PASS。真实双向声学与整个阶段六/平台仍未GO。
+仍未验证：物理麦克风/相机扬声器及同步回传听音、真实用户权限对话框操作、真实慢网络持续背压、设备拔出、页面真正销毁时的keepalive收尾、第二机Web对讲。它们为NOT_RUN/未完成，不由数字音频、路由退出或HTTPS播放自动推导PASS。Firefox 142.0采集为上述实测兼容性BLOCKED，不再列为未执行；其失败清理通过不等于采集功能通过。真实双向声学与整个阶段六/平台仍未GO。
 
 资源清理仅针对本轮：已删除四个自有构建目录的730个可再生成对象文件，共1,690,792,376字节；命令范围及文件清单保留于证据根，不删除源码、测试可执行程序、依赖前缀或其他Agent目录。后续只在核实归属后处理本轮 `/tmp`、`/var/tmp` 临时产物。
 
