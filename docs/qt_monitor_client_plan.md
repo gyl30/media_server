@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 接续[Qt录像按输入节奏呈现](qt_monitor_client_stage4_scale_presentation.md)：首次Scale后复用有界队列反馈而非请求值驱动视频与SWR执行速度，分段保留已提交音频的历史PTS映射；线程最终PCM取完后才flush，短尾仅flush输出亦可自然收尾。完整64源秒定时PS的1→2→1及请求2但实际1对照，静音/有声四行均逐帧paint、源PCM、固定及逐秒窗口检查；短尾32源样本普通输出0、flush8、资源清理通过。Normal及ASan+UBSan+LSan全量各10/10、各469项QTest零失败/跳过通过（631.98/636.05秒）。此增量暂不代表全倍率、主窗口按钮或真实大华Scale呈现验收，七阶段目标不缩减。
+
 2026-10-18 接续[Qt同会话Scale控制入口](qt_monitor_client_stage4_scale_control.md)：播放组件固定原owner/session发送基本五倍率，复用在途互斥与取消清理，不新增状态、不改本地媒体时钟，也暂不开放主窗口按钮。受控定时PS已稳定复现2×源写入但4秒窗口仅实际paint100帧的固定1×限制；这属于仍待完成的呈现功能，不将控制204或完整1×媒体回归冒充双轨倍速通过。原始RED保留，后续继续音频输出时间映射与实际节奏验证，七阶段目标不缩减。
 
 2026-10-18 接续修复[Firefox原生采样率对讲](qt_monitor_client_stage6_web_talk.md#原生采样率修复与整链补验2026-10-18)：AudioContext不再强制8kHz，Worklet保留8k精确编码，追加有界低通/跨块相位降采；44.1/48k各10秒80000样本、抗混叠与credit RED/GREEN通过。Firefox142.0实际44100Hz采集经Go/SIP和C++转发的60包数字1kHz验相关通过，Chrome回归及两浏览器19/19生命周期通过；两者可信HTTPS/WSS、Go race和后端ASan/UBSan/LSan整链亦通过，最终Go全量test/race/vet通过。保留历史BLOCKED及私有探针失败，不把受控数字音源/peer写成真实相机声学验收。只清理本轮三个成功且已退出的浏览器profile约53MB，配置和失败证据保留；Qt倍速呈现与完整阶段六仍未完成。

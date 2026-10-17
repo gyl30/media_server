@@ -2,6 +2,7 @@
 #define DESKTOP_PLAYBACK_VIEW_H
 
 #include <deque>
+#include <optional>
 
 #include <QUrl>
 #include <QImage>
@@ -17,6 +18,7 @@
 #include "desktop/record_thread.h"
 
 class QNetworkReply;
+struct SwrContext;
 
 namespace media_server
 {
@@ -93,6 +95,7 @@ class playback_view final : public QWidget
                        QDeadlineTimer finite_deadline = QDeadlineTimer::Forever);
     void wait_for_gb_media(platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline);
     void reset_audio();
+    qint64 audio_clock();
     void set_status(const QString& text);
 
    private:
@@ -113,6 +116,21 @@ class playback_view final : public QWidget
     QElapsedTimer wall_clock_;
     qint64 wall_pts_{no_media_timestamp};
     qint64 audio_end_pts_{no_media_timestamp};
+    // 累计输出帧对应真实源PTS；已排入SDL的旧比例不能随新比例重解释。
+    struct audio_span
+    {
+        qint64 first_frame{};
+        qint64 last_frame{};
+        qint64 first_pts{};
+        qint64 last_pts{};
+    };
+    std::deque<audio_span> audio_spans_;
+    SwrContext* audio_resampler_{};
+    qint64 audio_input_end_pts_{no_media_timestamp};
+    qint64 audio_output_frames_{};
+    qint64 audio_clock_frames_{};
+    QElapsedTimer audio_clock_timer_;
+    std::optional<double> presentation_rate_;
     qint64 shown_pts_{no_media_timestamp};
     qint64 shown_end_pts_{no_media_timestamp};
     QImage image_;

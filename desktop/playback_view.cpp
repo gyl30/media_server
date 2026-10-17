@@ -21,6 +21,13 @@
 #include "desktop/platform_client.h"
 #include "desktop/history_request.h"
 
+extern "C"
+{
+#include <libavutil/opt.h>
+#include <libavutil/channel_layout.h>
+#include <libswresample/swresample.h>
+}
+
 namespace media_server
 {
 
@@ -166,12 +173,16 @@ void playback_view::set_record_paused(bool paused)
                 emit playback_error(status_);
                 return;
             }
+            if (paused && presentation_rate_)
+            {
+                audio_clock();
+            }
             record_paused_ = paused;
             if (paused)
             {
                 if (wall_pts_ != no_media_timestamp)
                 {
-                    wall_pts_ += wall_clock_.nsecsElapsed() / 1000;
+                    wall_pts_ += static_cast<qint64>(wall_clock_.nsecsElapsed() / 1000 * presentation_rate_.value_or(1.0));
                 }
                 if (audio_id_ != 0)
                 {
@@ -181,6 +192,7 @@ void playback_view::set_record_paused(bool paused)
                 return;
             }
             wall_clock_.restart();
+            audio_clock_timer_.restart();
             set_status(QStringLiteral("录像继续回放"));
         },
         8'000);
@@ -239,6 +251,24 @@ void playback_view::scale_record(double scale)
     {
         return;
     }
+    if (!presentation_rate_)
+    {
+        presentation_rate_ = 1.0;
+        timer_.setTimerType(Qt::PreciseTimer);
+        timer_.setInterval(5);
+        if (audio_id_ != 0 && audio_end_pts_ != no_media_timestamp)
+        {
+            const auto frames = (SDL_GetQueuedAudioSize(audio_id_) + 2LL * audio_period_bytes_) / 4;
+            if (frames != 0)
+            {
+                audio_spans_.push_back({0, frames, audio_end_pts_ - frames * 1'000'000 / 48'000, audio_end_pts_});
+                audio_output_frames_ = frames;
+                audio_clock_frames_ = 0;
+                audio_clock_timer_.start();
+            }
+        }
+        audio_input_end_pts_ = audio_end_pts_;
+    }
     request_ = record_owner_->request(
         "POST",
         QStringLiteral("/api/playbacks/%1/scale").arg(QString::fromLatin1(QUrl::toPercentEncoding(record_id_))),
@@ -260,8 +290,8 @@ void playback_view::scale_record(double scale)
                 emit playback_error(status_);
                 return;
             }
-            // 204 仅表示设备受理，不以请求倍率改变本地时钟、媒体队列或暂停状态。
-            set_status(QStringLiteral("设备已受理倍速请求，实际媒体节奏由设备决定；本地呈现时钟未调整"));
+            // 204 不是媒体边界；实际呈现比例由有界媒体积压反馈，不使用请求倍率。
+            set_status(QStringLiteral("设备已受理倍速请求，按实际输入节奏呈现"));
         },
         8'000);
     set_status(QStringLiteral("正在请求录像倍速"));
@@ -479,7 +509,10 @@ void playback_view::stop()
     record_start_ = 0;
     record_end_ = 0;
     record_paused_ = false;
+    presentation_rate_.reset();
     timer_.stop();
+    timer_.setTimerType(Qt::CoarseTimer);
+    timer_.setInterval(10);
     reset_audio();
     video_.clear();
     pcm_.clear();
@@ -502,6 +535,49 @@ void playback_view::reset_audio()
     }
     audio_period_bytes_ = 0;
     audio_end_pts_ = no_media_timestamp;
+    audio_input_end_pts_ = no_media_timestamp;
+    audio_output_frames_ = 0;
+    audio_clock_frames_ = 0;
+    audio_clock_timer_.invalidate();
+    audio_spans_.clear();
+    swr_free(&audio_resampler_);
+}
+
+qint64 playback_view::audio_clock()
+{
+    if (audio_id_ == 0)
+    {
+        return no_media_timestamp;
+    }
+    const auto queued = SDL_GetQueuedAudioSize(audio_id_);
+    if (!presentation_rate_)
+    {
+        return audio_end_pts_ == no_media_timestamp ? no_media_timestamp
+                                                    : audio_end_pts_ - (queued + 2LL * audio_period_bytes_) * 1'000'000 / 192'000;
+    }
+    if (!record_paused_)
+    {
+        if (queued != 0)
+        {
+            audio_clock_frames_ = std::max(audio_clock_frames_, audio_output_frames_ - (queued + 2LL * audio_period_bytes_) / 4);
+            audio_clock_timer_.restart();
+        }
+        else if (audio_clock_timer_.isValid())
+        {
+            audio_clock_frames_ = std::min(audio_output_frames_, audio_clock_frames_ + audio_clock_timer_.nsecsElapsed() * 48'000 / 1'000'000'000);
+            audio_clock_timer_.restart();
+        }
+    }
+    if (audio_spans_.empty())
+    {
+        return no_media_timestamp;
+    }
+    while (audio_spans_.size() > 1 && audio_clock_frames_ >= audio_spans_.front().last_frame)
+    {
+        audio_spans_.pop_front();
+    }
+    const auto& span = audio_spans_.front();
+    return span.first_pts + (span.last_pts - span.first_pts) * (audio_clock_frames_ - span.first_frame) / (span.last_frame - span.first_frame);
 }
 
 void playback_view::set_audible(quint32 audio_id, int period_bytes)
@@ -510,9 +586,16 @@ void playback_view::set_audible(quint32 audio_id, int period_bytes)
     {
         return;
     }
+    auto anchor = audio_id == 0 && !video_.empty() && video_.back().pts_us != no_media_timestamp ? video_.back().pts_us : shown_pts_;
+    if (presentation_rate_)
+    {
+        // update_media已选定当前epoch的时钟，切换静音不能再改选另一条音轨。
+        anchor = wall_pts_ == no_media_timestamp
+                     ? shown_pts_
+                     : wall_pts_ + (record_paused_ ? 0 : static_cast<qint64>(wall_clock_.nsecsElapsed() / 1000 * *presentation_rate_));
+    }
     reset_audio();
     pcm_.clear();
-    const auto anchor = audio_id == 0 && !video_.empty() && video_.back().pts_us != no_media_timestamp ? video_.back().pts_us : shown_pts_;
     if (anchor != no_media_timestamp)
     {
         wall_pts_ = anchor;
@@ -574,6 +657,7 @@ void playback_view::update_media()
             video_evicted = true;
         }
     }
+    const bool finished_audio_taken = finished_before_take && pcm_.empty();
     auto audio = !finite || pcm_.empty() ? decoder_->take_audio_blocks() : std::vector<decoded_audio_block>{};
     if (audible())
     {
@@ -598,30 +682,167 @@ void playback_view::update_media()
             set_status(QStringLiteral("音频设备已断开；继续静音解码"));
             emit playback_error(status_);
         }
-        while (audio_id_ != 0 && !pcm_.empty() && SDL_GetQueuedAudioSize(audio_id_) < 19'200)
+        while (audio_id_ != 0 && !pcm_.empty() && SDL_GetQueuedAudioSize(audio_id_) < (presentation_rate_ ? 1'920U : 19'200U))
         {
             auto& block = pcm_.front();
-            if (audio_end_pts_ != no_media_timestamp && block.pts_us != no_media_timestamp && std::abs(block.pts_us - audio_end_pts_) > 100'000)
+            const auto prior_end = presentation_rate_ ? audio_input_end_pts_ : audio_end_pts_;
+            if (prior_end != no_media_timestamp && block.pts_us != no_media_timestamp && std::abs(block.pts_us - prior_end) > 100'000)
             {
                 SDL_ClearQueuedAudio(audio_id_);
+                audio_spans_.clear();
+                audio_output_frames_ = 0;
+                audio_clock_frames_ = 0;
+                audio_clock_timer_.restart();
+                swr_free(&audio_resampler_);
+                audio_end_pts_ = no_media_timestamp;
             }
-            if (SDL_QueueAudio(audio_id_, block.pcm.constData(), static_cast<Uint32>(block.pcm.size())) != 0)
+            const auto input_frames =
+                presentation_rate_ ? std::min(block.pcm.size() / 4, static_cast<qsizetype>(480 * *presentation_rate_)) : block.pcm.size() / 4;
+            const auto input_start = presentation_rate_ && block.pts_us == no_media_timestamp ? audio_input_end_pts_ : block.pts_us;
+            const auto input_end = input_start == no_media_timestamp ? no_media_timestamp : input_start + input_frames * 1'000'000 / 48'000;
+            QByteArray output;
+            qint64 output_end = input_end;
+            if (presentation_rate_)
+            {
+                int result = 0;
+                if (!audio_resampler_)
+                {
+                    AVChannelLayout layout = AV_CHANNEL_LAYOUT_STEREO;
+                    result =
+                        swr_alloc_set_opts2(&audio_resampler_, &layout, AV_SAMPLE_FMT_S16, 48'000, &layout, AV_SAMPLE_FMT_S16, 48'000, 0, nullptr);
+                    if (result >= 0)
+                    {
+                        result = av_opt_set_int(audio_resampler_, "flags", SWR_FLAG_RESAMPLE, 0);
+                    }
+                    if (result >= 0)
+                    {
+                        result = swr_init(audio_resampler_);
+                    }
+                }
+                if (result >= 0)
+                {
+                    result = swr_set_compensation(audio_resampler_, static_cast<int>(std::lround(48'000 * (1 - *presentation_rate_))), 48'000);
+                }
+                if (result >= 0)
+                {
+                    result = swr_get_out_samples(audio_resampler_, static_cast<int>(input_frames));
+                }
+                if (result >= 0)
+                {
+                    output.resize(result * 4);
+                    auto* destination = reinterpret_cast<uint8_t*>(output.data());
+                    const auto* source = reinterpret_cast<const uint8_t*>(block.pcm.constData());
+                    result = swr_convert(audio_resampler_, &destination, result, &source, static_cast<int>(input_frames));
+                }
+                if (result < 0)
+                {
+                    set_audible(0, 0);
+                    set_status(QStringLiteral("音频变速失败；继续静音解码"));
+                    emit playback_error(status_);
+                    break;
+                }
+                output.resize(result * 4);
+                audio_input_end_pts_ = input_end;
+                if (audio_end_pts_ == no_media_timestamp)
+                {
+                    audio_end_pts_ = input_start;
+                }
+                if (input_end != no_media_timestamp)
+                {
+                    output_end = std::max(audio_end_pts_, input_end - swr_get_delay(audio_resampler_, 1'000'000));
+                }
+            }
+            else
+            {
+                output = block.pcm;
+            }
+            if (!output.isEmpty() && SDL_QueueAudio(audio_id_, output.constData(), static_cast<Uint32>(output.size())) != 0)
             {
                 set_audible(0, 0);
                 set_status(QStringLiteral("音频输出失败；继续静音解码"));
                 emit playback_error(status_);
                 break;
             }
-            if (block.pts_us != no_media_timestamp)
+            if (input_start != no_media_timestamp)
             {
                 if (finite && wall_pts_ == no_media_timestamp)
                 {
-                    wall_pts_ = block.pts_us;
+                    wall_pts_ = input_start;
                     wall_clock_.start();
                 }
-                audio_end_pts_ = block.pts_us + block.pcm.size() * 1'000'000 / 192'000;
+                if (presentation_rate_ && !output.isEmpty())
+                {
+                    audio_spans_.push_back({audio_output_frames_, audio_output_frames_ + output.size() / 4, audio_end_pts_, output_end});
+                }
+                if (!output.isEmpty())
+                {
+                    audio_end_pts_ = output_end;
+                }
             }
-            pcm_.pop_front();
+            if (presentation_rate_)
+            {
+                audio_output_frames_ += output.size() / 4;
+                if (!output.isEmpty() && !audio_clock_timer_.isValid())
+                {
+                    audio_clock_timer_.start();
+                }
+            }
+            if (input_frames * 4 == block.pcm.size())
+            {
+                pcm_.pop_front();
+            }
+            else
+            {
+                block.pcm.remove(0, input_frames * 4);
+                block.pts_us = input_end;
+            }
+        }
+        if (audio_id_ != 0 && audio_resampler_ && finished_audio_taken && pcm_.empty())
+        {
+            QByteArray tail;
+            int result = 0;
+            do
+            {
+                result = swr_set_compensation(audio_resampler_, static_cast<int>(std::lround(48'000 * (1 - *presentation_rate_))), 48'000);
+                if (result < 0)
+                {
+                    break;
+                }
+                result = swr_get_out_samples(audio_resampler_, 0);
+                if (result < 0)
+                {
+                    break;
+                }
+                const auto offset = tail.size();
+                tail.resize(offset + result * 4);
+                auto* destination = reinterpret_cast<uint8_t*>(tail.data() + offset);
+                result = swr_convert(audio_resampler_, &destination, result, nullptr, 0);
+                if (result >= 0)
+                {
+                    tail.resize(offset + result * 4);
+                }
+            } while (result > 0);
+            swr_free(&audio_resampler_);
+            if (result < 0 || (!tail.isEmpty() && SDL_QueueAudio(audio_id_, tail.constData(), static_cast<Uint32>(tail.size())) != 0))
+            {
+                set_audible(0, 0);
+                set_status(QStringLiteral("音频尾部输出失败；继续静音解码"));
+                emit playback_error(status_);
+            }
+            else if (!tail.isEmpty())
+            {
+                // flush后的delay可能仍非零；仅将真实剩余源区间映射到实际尾部输出。
+                if (audio_input_end_pts_ != no_media_timestamp)
+                {
+                    audio_spans_.push_back({audio_output_frames_, audio_output_frames_ + tail.size() / 4, audio_end_pts_, audio_input_end_pts_});
+                    audio_end_pts_ = audio_input_end_pts_;
+                }
+                audio_output_frames_ += tail.size() / 4;
+                if (!audio_clock_timer_.isValid())
+                {
+                    audio_clock_timer_.start();
+                }
+            }
         }
         if (audio_id_ != 0 && !record_paused_ && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PAUSED &&
             SDL_GetQueuedAudioSize(audio_id_) >= (finite ? 1U : 9'600U))
@@ -649,13 +870,21 @@ void playback_view::update_media()
         wall_pts_ = video_.front().pts_us;
         wall_clock_.restart();
     }
-    const auto video_clock = wall_pts_ == no_media_timestamp ? no_media_timestamp : wall_pts_ + wall_clock_.nsecsElapsed() / 1000;
+    const auto video_clock = wall_pts_ == no_media_timestamp
+                                 ? no_media_timestamp
+                                 : wall_pts_ + static_cast<qint64>(wall_clock_.nsecsElapsed() / 1000 * presentation_rate_.value_or(1.0));
+    bool adopted_audio_clock = false;
+    const auto current_audio_clock = audible() ? audio_clock() : no_media_timestamp;
     if (audio_id_ != 0 && audio_end_pts_ != no_media_timestamp && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PLAYING &&
-        SDL_GetQueuedAudioSize(audio_id_) != 0)
+        (SDL_GetQueuedAudioSize(audio_id_) != 0 || (presentation_rate_ && audio_clock_frames_ < audio_output_frames_)))
     {
         // SDL 队列不包含已交给后端的 period，按双 period 估算；同步偏差另用数字回环验证。
-        clock = audio_end_pts_ - (SDL_GetQueuedAudioSize(audio_id_) + 2LL * audio_period_bytes_) * 1'000'000 / 192'000;
-        if (finite && shown_end_pts_ != no_media_timestamp && video_clock != no_media_timestamp && std::abs(clock - video_clock) > 1'000'000)
+        clock = current_audio_clock;
+        if (clock == no_media_timestamp)
+        {
+            clock = video_clock;
+        }
+        else if (finite && shown_end_pts_ != no_media_timestamp && video_clock != no_media_timestamp && std::abs(clock - video_clock) > 1'000'000)
         {
             // 音视频先后进入新段；旧轨不得把另一轨拖回相差数秒的时钟。
             clock = video_clock;
@@ -664,11 +893,12 @@ void playback_view::update_media()
         {
             wall_pts_ = clock;
             wall_clock_.restart();
+            adopted_audio_clock = true;
         }
     }
     else if (wall_pts_ != no_media_timestamp)
     {
-        clock = wall_pts_ + wall_clock_.nsecsElapsed() / 1000;
+        clock = video_clock;
     }
     if (!video_.empty() && clock == no_media_timestamp)
     {
@@ -683,6 +913,34 @@ void playback_view::update_media()
         wall_pts_ = video_.front().pts_us;
         wall_clock_.restart();
         clock = wall_pts_;
+    }
+    if (presentation_rate_ && !finished_before_take && clock != no_media_timestamp)
+    {
+        auto frontier = video_.empty() ? shown_end_pts_ : no_media_timestamp;
+        for (const auto& frame : video_)
+        {
+            if (frame.pts_us == no_media_timestamp || (frontier != no_media_timestamp && std::abs(frame.pts_us - frontier) > 1'000'000))
+            {
+                break;
+            }
+            frontier = frame.pts_us + (frame.duration_us > 0 ? frame.duration_us : 40'000);
+        }
+        if (!adopted_audio_clock && frontier != no_media_timestamp && clock > frontier)
+        {
+            clock = frontier;
+            wall_pts_ = clock;
+            wall_clock_.restart();
+        }
+        if (frontier != no_media_timestamp && std::abs(frontier - clock) < 1'000'000)
+        {
+            const auto audio_lead = adopted_audio_clock && !audio_spans_.empty() ? std::max(qint64(0), audio_spans_.back().last_pts - clock) : 0;
+            const auto buffered = (frontier - clock - audio_lead) / 1'000'000.0;
+            // 既有16帧GUI队列内留出小幅积压；不以请求值或204猜测输入倍率。
+            const auto rate = std::clamp(1 + 16 * (buffered - 0.12), 0.25, 4.0);
+            wall_pts_ = clock;
+            wall_clock_.restart();
+            presentation_rate_ = rate;
+        }
     }
     while (!video_.empty())
     {
@@ -719,13 +977,14 @@ void playback_view::update_media()
         {
             // 视频尾帧已显示完；两轨 epoch 不同时，将余下的真实音频及后端 period 交给音频时钟。
             shown_end_pts_ = no_media_timestamp;
-            clock = audio_end_pts_ - (SDL_GetQueuedAudioSize(audio_id_) + 2LL * audio_period_bytes_) * 1'000'000 / 192'000;
+            clock = audio_clock();
             wall_pts_ = clock;
             wall_clock_.restart();
         }
         if (finite && stats.error.isEmpty() &&
             (!finite_tail_taken || !video_.empty() || !pcm_.empty() || (shown_end_pts_ != no_media_timestamp && clock < shown_end_pts_) ||
-             (audible() && (SDL_GetQueuedAudioSize(audio_id_) != 0 || (audio_end_pts_ != no_media_timestamp && clock < audio_end_pts_)))))
+             (audible() && (SDL_GetQueuedAudioSize(audio_id_) != 0 || audio_clock_frames_ < audio_output_frames_ ||
+                            (audio_end_pts_ != no_media_timestamp && clock < audio_end_pts_)))))
         {
             return;
         }
