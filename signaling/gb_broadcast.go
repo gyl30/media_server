@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"mime"
+	"net/http"
 	"net/netip"
 	"strings"
 
@@ -19,7 +20,7 @@ var (
 	errBroadcastRemoteBye = errors.New("device ended broadcast")
 )
 
-// 控制 owner 不持有媒体 socket；调用方须先绑定端口，并在整个媒体寿命内持有 ctx。
+// SIP owner 不持有媒体 socket，端口由媒体服务器预先绑定。
 type broadcastEndpoint struct {
 	rtp  netip.AddrPort
 	rtcp netip.AddrPort
@@ -31,10 +32,12 @@ type broadcastPeer struct {
 }
 
 type broadcastResult struct {
-	sourceID string
-	peer     broadcastPeer
-	ctx      context.Context // 媒体 owner 必须监听 Done；远端 BYE/下线不会取消调用方的父 ctx。
-	err      error
+	sourceID    string
+	mediaID     string
+	uploadToken string
+	peer        broadcastPeer
+	ctx         context.Context // 媒体 owner 必须监听 Done；远端 BYE/下线不会取消调用方的父 ctx。
+	err         error
 }
 
 type broadcastDialog struct {
@@ -50,6 +53,7 @@ type broadcastDialog struct {
 type broadcastSession struct {
 	deviceID   string
 	sourceID   string
+	mediaID    string
 	sn         int
 	local      broadcastEndpoint
 	ctx        context.Context
@@ -62,10 +66,10 @@ type broadcastSession struct {
 	cleanupErr error
 }
 
-func (s *liveService) startBroadcast(ctx context.Context, deviceID string, local broadcastEndpoint) (broadcastResult, error) {
-	if !local.rtp.IsValid() || !local.rtp.Addr().Is4() || local.rtp.Addr().IsUnspecified() || local.rtp.Addr().IsMulticast() ||
-		local.rtp.Port() == 0 || local.rtcp.Addr() != local.rtp.Addr() || local.rtcp.Port() == 0 || local.rtcp.Port() == local.rtp.Port() {
-		return broadcastResult{}, fmt.Errorf("invalid broadcast media endpoint")
+func (s *liveService) startBroadcast(ctx context.Context, deviceID string) (broadcastResult, error) {
+	address, err := netip.ParseAddr(s.media.server.mediaIP)
+	if err != nil || !address.Is4() || address.IsUnspecified() || address.IsMulticast() {
+		return broadcastResult{}, fmt.Errorf("broadcast requires an IPv4 media address")
 	}
 	s.mu.Lock()
 	if err := ctx.Err(); err != nil {
@@ -94,35 +98,79 @@ func (s *liveService) startBroadcast(ctx context.Context, deviceID string, local
 		s.mu.Unlock()
 		return broadcastResult{}, err
 	}
-	operation, cancel := context.WithCancelCause(ctx)
+	mediaID, err := newStreamToken()
+	if err != nil {
+		s.mu.Unlock()
+		return broadcastResult{}, err
+	}
+	// HTTP 请求只拥有启动阶段；成功交付后由设备、媒体和平台关闭入口管理寿命。
+	operation, cancel := context.WithCancelCause(context.Background())
 	session := &broadcastSession{
-		deviceID: deviceID, sourceID: sourceID, sn: int(s.sip.messageSN.Add(1)), local: local,
+		deviceID: deviceID, sourceID: sourceID, mediaID: mediaID, sn: int(s.sip.messageSN.Add(1)),
 		ctx: operation, cancel: cancel, business: make(chan error, 1), invited: make(chan *broadcastDialog, 1),
 		result: make(chan broadcastResult, 1), done: make(chan struct{}),
 	}
 	s.broadcasts[deviceID] = session
 	s.mu.Unlock()
-	go s.runBroadcast(session, device)
+	go s.runBroadcast(session, device, address)
 	select {
 	case result := <-session.result:
 		if result.err == nil && ctx.Err() == nil && session.ctx.Err() == nil {
 			return result, nil
 		}
+		session.cancel(errors.Join(result.err, ctx.Err(), context.Cause(session.ctx)))
 		<-session.done
 		return broadcastResult{}, errors.Join(result.err, context.Cause(session.ctx), session.cleanupErr)
 	case <-ctx.Done():
+		session.cancel(ctx.Err())
 		<-session.done
 		return broadcastResult{}, errors.Join(ctx.Err(), session.cleanupErr)
 	}
 }
 
-func (s *liveService) runBroadcast(session *broadcastSession, device registeredDevice) {
-	peer, err := s.prepareBroadcast(session, device)
+func (s *liveService) runBroadcast(session *broadcastSession, device registeredDevice, address netip.Addr) {
+	setup, cancel := context.WithTimeout(session.ctx, s.inviteTimeout)
+	request := map[string]string{"session_id": session.mediaID}
+	var bound struct {
+		RTPPort uint16 `json:"rtp_port"`
+	}
+	createErr := s.media.post(setup, s.media.server.controlURL+"/gb28181/audio/create", request, http.StatusCreated, &bound)
+	err := createErr
+	var peer broadcastPeer
+	var token string
+	if err == nil && (bound.RTPPort == 0 || bound.RTPPort%2 != 0) {
+		err = fmt.Errorf("invalid audio create port")
+	}
+	if err == nil {
+		s.mu.Lock()
+		session.local = broadcastEndpoint{rtp: netip.AddrPortFrom(address, bound.RTPPort), rtcp: netip.AddrPortFrom(address, bound.RTPPort+1)}
+		s.mu.Unlock()
+		peer, err = s.prepareBroadcast(setup, session, device)
+	}
+	if err == nil {
+		token, err = newStreamToken()
+	}
+	if err == nil {
+		err = s.media.post(setup, s.media.server.controlURL+"/gb28181/audio/configure", map[string]any{
+			"session_id": session.mediaID, "upload_token": token, "remote_address": peer.endpoint.rtp.Addr().String(),
+			"rtp_port": peer.endpoint.rtp.Port(), "rtcp_port": peer.endpoint.rtcp.Port(), "ssrc": peer.ssrc,
+		}, http.StatusNoContent, nil)
+	}
+	cancel()
 	if err != nil {
 		session.cancel(err)
 	}
-	session.result <- broadcastResult{sourceID: session.sourceID, peer: peer, ctx: session.ctx, err: err}
+	session.result <- broadcastResult{sourceID: session.sourceID, mediaID: session.mediaID, uploadToken: token, peer: peer, ctx: session.ctx, err: err}
 	<-session.ctx.Done()
+	// 明确拒绝 create 时没有取得媒体所有权；响应不确定则以本次唯一 ID 补偿删除。
+	var rejection *mediaServerHTTPRejection
+	if !errors.As(createErr, &rejection) {
+		cleanup, cancel := s.media.timeoutContext()
+		if err := s.media.post(cleanup, s.media.server.controlURL+"/gb28181/audio/delete", request, http.StatusNoContent, nil); err != nil && !isMediaServerNotFound(err) {
+			session.cleanupErr = err
+		}
+		cancel()
+	}
 	s.mu.Lock()
 	dialog := session.dialog
 	s.mu.Unlock()
@@ -134,7 +182,7 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 		<-dialog.answerDone
 		if context.Cause(session.ctx) != errBroadcastRemoteBye && dialog.session.InviteResponse != nil && dialog.session.InviteResponse.IsSuccess() {
 			byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
-			session.cleanupErr = dialog.session.Bye(byeContext)
+			session.cleanupErr = errors.Join(session.cleanupErr, dialog.session.Bye(byeContext))
 			cancel()
 		}
 		dialog.tx.Terminate()
@@ -149,9 +197,7 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 	s.mu.Unlock()
 }
 
-func (s *liveService) prepareBroadcast(session *broadcastSession, device registeredDevice) (broadcastPeer, error) {
-	ctx, cancel := context.WithTimeout(session.ctx, s.inviteTimeout)
-	defer cancel()
+func (s *liveService) prepareBroadcast(ctx context.Context, session *broadcastSession, device registeredDevice) (broadcastPeer, error) {
 	body := []byte(fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\r\n<Notify><CmdType>Broadcast</CmdType><SN>%d</SN><SourceID>%s</SourceID><TargetID>%s</TargetID></Notify>\r\n", session.sn, session.sourceID, session.deviceID))
 	if err := s.sip.sendMANSCDP(ctx, device, body); err != nil {
 		return broadcastPeer{}, err
@@ -183,22 +229,15 @@ func (s *liveService) prepareBroadcast(session *broadcastSession, device registe
 	return dialog.peer, nil
 }
 
-func (s *liveService) stopBroadcast(ctx context.Context, sourceID string) error {
+func (s *liveService) stopBroadcast(ctx context.Context, deviceID, mediaID string) error {
 	s.mu.Lock()
-	var session *broadcastSession
-	for _, candidate := range s.broadcasts {
-		if candidate.sourceID == sourceID {
-			session = candidate
-			break
-		}
-	}
-	if session != nil {
-		session.cancel(context.Canceled)
-	}
-	s.mu.Unlock()
-	if session == nil {
+	session := s.broadcasts[deviceID]
+	if session == nil || session.mediaID != mediaID {
+		s.mu.Unlock()
 		return errBroadcastNotFound
 	}
+	session.cancel(context.Canceled)
+	s.mu.Unlock()
 	select {
 	case <-session.done:
 		return session.cleanupErr

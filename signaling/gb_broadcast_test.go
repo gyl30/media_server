@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
 	"net"
-	"net/netip"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -70,17 +72,24 @@ func TestBroadcastIDPersistence(t *testing.T) {
 }
 
 type broadcastWire struct {
-	s        *infrastructureServer
-	peer     net.PacketConn
-	platform net.Addr
-	target   sip.Uri
-	sequence int
+	s          *infrastructureServer
+	peer       net.PacketConn
+	platform   net.Addr
+	target     sip.Uri
+	sequence   int
+	mediaCalls chan talkMediaCall
+}
+
+type talkMediaCall struct {
+	path string
+	body map[string]any
 }
 
 type broadcastAttempt struct {
 	cancel   context.CancelFunc
 	results  chan broadcastResult
 	sourceID string
+	mediaID  string
 	sn       int
 	notify   *sip.Request
 }
@@ -91,7 +100,7 @@ func (w *broadcastWire) start(t *testing.T) broadcastAttempt {
 	t.Cleanup(cancel)
 	results := make(chan broadcastResult, 1)
 	go func() {
-		result, err := w.s.live.startBroadcast(ctx, queryTestDeviceID, broadcastEndpoint{rtp: netip.MustParseAddrPort("127.0.0.1:30000"), rtcp: netip.MustParseAddrPort("127.0.0.1:30001")})
+		result, err := w.s.live.startBroadcast(ctx, queryTestDeviceID)
 		result.err = err
 		results <- result
 	}()
@@ -107,7 +116,10 @@ func (w *broadcastWire) start(t *testing.T) broadcastAttempt {
 	if xml.Unmarshal(notify.Body(), &body) != nil || !validDigits(body.SourceID, 20) || body.TargetID != queryTestDeviceID {
 		t.Fatalf("invalid Notify: %s", notify.Body())
 	}
-	return broadcastAttempt{cancel: cancel, results: results, sourceID: body.SourceID, sn: body.SN, notify: notify}
+	w.s.live.mu.Lock()
+	mediaID := w.s.live.broadcasts[queryTestDeviceID].mediaID
+	w.s.live.mu.Unlock()
+	return broadcastAttempt{cancel: cancel, results: results, sourceID: body.SourceID, mediaID: mediaID, sn: body.SN, notify: notify}
 }
 
 func newBroadcastWire(t *testing.T) *broadcastWire {
@@ -130,7 +142,33 @@ func newBroadcastWire(t *testing.T) *broadcastWire {
 	}
 	host, portText, _ := net.SplitHostPort(peer.LocalAddr().String())
 	port, _ := strconv.Atoi(portText)
-	w := &broadcastWire{s: s, peer: peer, platform: platform.LocalAddr(), target: sip.Uri{Scheme: "sip", User: queryTestDeviceID, Host: host, Port: port}}
+	w := &broadcastWire{s: s, peer: peer, platform: platform.LocalAddr(), target: sip.Uri{Scheme: "sip", User: queryTestDeviceID, Host: host, Port: port}, mediaCalls: make(chan talkMediaCall, 64)}
+	media := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer controlled-talk-media" {
+			t.Error("missing media control credential")
+			writeHTTPError(writer, http.StatusForbidden, "forbidden")
+			return
+		}
+		if request.URL.Path == "/receivers" {
+			writeJSON(writer, http.StatusOK, map[string]any{"receivers": []mediaReceiver{}})
+			return
+		}
+		var body map[string]any
+		if request.Method != http.MethodPost || json.NewDecoder(request.Body).Decode(&body) != nil {
+			t.Error("invalid audio control request")
+			writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
+			return
+		}
+		w.mediaCalls <- talkMediaCall{path: request.URL.Path, body: body}
+		if request.URL.Path == "/gb28181/audio/create" {
+			writeJSON(writer, http.StatusCreated, map[string]int{"rtp_port": 30000})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(media.Close)
+	s.media.server.controlURL = media.URL
+	s.media.server.controlToken = "controlled-talk-media"
 	if err := s.live.sip.deviceStore.create(t.Context(), gbDevice{deviceID: queryTestDeviceID, name: "broadcast controlled peer"}); err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +274,7 @@ func TestBroadcastWireOrderingAndACK(t *testing.T) {
 				defer cancel()
 				results := make(chan broadcastResult, 1)
 				go func() {
-					result, err := w.s.live.startBroadcast(ctx, queryTestDeviceID, broadcastEndpoint{rtp: netip.MustParseAddrPort("127.0.0.1:30000"), rtcp: netip.MustParseAddrPort("127.0.0.1:30001")})
+					result, err := w.s.live.startBroadcast(ctx, queryTestDeviceID)
 					result.err = err
 					results <- result
 				}()
@@ -273,19 +311,21 @@ func TestBroadcastWireOrderingAndACK(t *testing.T) {
 					}
 					w.business(t, body.SN, 200)
 				}
+				var mediaID string
 				select {
 				case result := <-results:
 					if result.err != nil || result.sourceID != body.SourceID || result.peer.ssrc != 123456789 || result.peer.endpoint.rtcp.Port() != 20001 {
 						t.Fatalf("broadcast result: %+v", result)
 					}
+					mediaID = result.mediaID
 				case <-time.After(3 * time.Second):
 					t.Fatal("matching ACK and business OK did not authorize")
 				}
-				if _, err := w.s.live.startBroadcast(ctx, queryTestDeviceID, broadcastEndpoint{rtp: netip.MustParseAddrPort("127.0.0.1:30002"), rtcp: netip.MustParseAddrPort("127.0.0.1:30003")}); !errors.Is(err, errBroadcastBusy) {
+				if _, err := w.s.live.startBroadcast(ctx, queryTestDeviceID); !errors.Is(err, errBroadcastBusy) {
 					t.Fatalf("concurrent broadcast: %v", err)
 				}
 				stopped := make(chan error, 1)
-				go func() { stopped <- w.s.live.stopBroadcast(t.Context(), body.SourceID) }()
+				go func() { stopped <- w.s.live.stopBroadcast(t.Context(), queryTestDeviceID, mediaID) }()
 				bye, ok := w.read(t).(*sip.Request)
 				if !ok || bye.Method != sip.BYE {
 					t.Fatalf("missing local BYE: %v", bye)
@@ -455,15 +495,21 @@ func TestBroadcastGenerationAndNotifyGate(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Notify 2xx did not finish startup")
 	}
-	if err := w.s.live.stopBroadcast(t.Context(), old.sourceID); !errors.Is(err, errBroadcastNotFound) {
+	if err := w.s.live.stopBroadcast(t.Context(), queryTestDeviceID, old.mediaID); !errors.Is(err, errBroadcastNotFound) {
 		t.Fatalf("old stop selected a new owner: %v", err)
 	}
 	current.cancel()
+	apiRequest(t, w.s.handler(), "GET", "/api/devices/"+queryTestDeviceID+"/talk", "", http.StatusOK)
+	stopped := make(chan error, 1)
+	go func() { stopped <- w.s.live.stopBroadcast(t.Context(), queryTestDeviceID, current.mediaID) }()
 	bye, ok := w.read(t).(*sip.Request)
 	if !ok || bye.Method != sip.BYE {
 		t.Fatalf("current owner not retained: %v", bye)
 	}
 	w.send(t, sip.NewResponseFromRequest(bye, 200, "OK", nil))
+	if err := <-stopped; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBroadcastDeleteCancelKeepsFence(t *testing.T) {
@@ -555,12 +601,16 @@ func TestBroadcastRejectAndWrongDialog(t *testing.T) {
 			if response, ok := w.read(t).(*sip.Response); !ok || response.StatusCode != 481 {
 				t.Fatalf("wrong dialog BYE accepted: %v", response)
 			}
-			attempt.cancel()
+			stopped := make(chan error, 1)
+			go func() { stopped <- w.s.live.stopBroadcast(t.Context(), queryTestDeviceID, attempt.mediaID) }()
 			localBye, ok := w.read(t).(*sip.Request)
 			if !ok || localBye.Method != sip.BYE {
 				t.Fatalf("wrong BYE removed owner: %v", localBye)
 			}
 			w.send(t, sip.NewResponseFromRequest(localBye, 200, "OK", nil))
+			if err := <-stopped; err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }

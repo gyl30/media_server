@@ -42,7 +42,7 @@
 
 ## 当前检查点（2026-10-16）
 
-2026-10-17 音频上传增量：在 PCMA sender 之上新增一次性 WebSocket 上传 owner、可信控制面配置及互相独立的控制租约/有效音频 idle；复用 sender registry，不混入实时 receiver 对账。协议契约、生命周期与真实环回验证见[音频上传增量](qt_monitor_client_stage6_audio_upload.md)。尚无 Go 公共对讲入口、Qt/Web 采集或真实双向音频验收，整个阶段六仍未 GO。
+2026-10-17 音频上传增量：在 PCMA sender 之上新增一次性 WebSocket 上传 owner、可信控制面配置及互相独立的控制租约/有效音频 idle；复用 sender registry，不混入实时 receiver 对账。协议契约、生命周期与真实环回验证见[音频上传增量](qt_monitor_client_stage6_audio_upload.md)。后续 Go 公共对讲创建/查询/精确停止、SIP 与媒体清理及既有对账续租已经接通，见[对讲控制闭环](qt_monitor_client_stage6_talk_control.md)；Qt/Web 采集与真实双向音频尚未验收，整个阶段六仍未 GO。
 
 阶段一完成开发与定向验收：已验证真实 GB 模拟设备的冷点播、H.264/PCMA、AAC/无音频、请求/解码取消和新旧回调隔离；GB 冷首开旧 RED 保留，新增派生 `live.media_ready` 后不重签票即可正常播放。最终 shared SDK 正常和 ASan+UBSan 桌面 CTest 均4/4通过（39.01/39.14秒），Go 全量 test/race/vet 通过；后续修改须重新验证，不能继承本次结论。
 

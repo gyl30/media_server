@@ -20,6 +20,28 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 		}
 		return false
 	})
+	// 音频不在 receiver 清单中。先续其控制租约，避免视频查询失败阻断 SIP owner 的清理。
+	s.live.mu.Lock()
+	var broadcasts []*broadcastSession
+	for _, session := range s.live.broadcasts {
+		if session.local.rtp.Port() != 0 && session.ctx.Err() == nil {
+			broadcasts = append(broadcasts, session)
+		}
+	}
+	s.live.mu.Unlock()
+	for _, session := range broadcasts {
+		err := s.media.post(ctx, s.media.server.controlURL+"/gb28181/audio/status", map[string]string{"session_id": session.mediaID}, 204, nil)
+		if err == nil {
+			continue
+		}
+		s.live.mu.Lock()
+		if s.live.broadcasts[session.deviceID] == session {
+			session.cancel(err)
+		}
+		s.live.mu.Unlock()
+		// 无法维持租约也结束本次对讲，但不把网络未知误报为设备离线或媒体已不存在。
+		s.logger.Warn("talk control lease failed", "talk_id", session.mediaID, "error", err)
+	}
 	now := s.live.sip.now()
 	// 先快照再查询：快照中的会话在查询前已在媒体侧创建，查询结果缺失即表示已结束。
 	lives := s.live.streamingSessions()
