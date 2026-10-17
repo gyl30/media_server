@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const port = Number(process.env.WEB_CONSOLE_CDP_PORT || 9333);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid WEB_CONSOLE_CDP_PORT");
+const port = Number(process.env.WEB_CONSOLE_CDP_PORT || 0);
+if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("invalid WEB_CONSOLE_CDP_PORT");
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let chrome;
 let browser;
@@ -22,16 +22,24 @@ const profile = mkdtempSync(join(tmpdir(), "msc-chrome-"));
 try {
 let startError;
 chrome = spawn("google-chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", ...audioArgs, "about:blank"], { stdio: "ignore" });
+  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", ...audioArgs, "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
 chrome.on("error", error => { startError = error; });
-let version;
-for (let attempt = 0; attempt < 50 && !version; attempt++) {
+// 只接受本次 spawn 的 Chrome 输出；端口上已有其他 Chrome 不能成为本轮目标。
+let endpoint, diagnostic = "";
+chrome.stderr.setEncoding("utf8");
+chrome.stderr.on("data", data => {
+  diagnostic = (diagnostic + data).slice(-8192);
+  const match = diagnostic.match(/DevTools listening on (ws:\/\/[^\s]+)\r?\n/);
+  if (match && !endpoint) endpoint = match[1];
+});
+for (let attempt = 0; attempt < 50 && !endpoint; attempt++) {
   if (startError) throw startError;
   if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error("owned Chrome exited during startup");
-  try { version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); } catch { await sleep(200); }
+  await sleep(200);
 }
-if (!version?.webSocketDebuggerUrl) throw new Error("owned Chrome DevTools startup timed out");
-browser = new WebSocket(version.webSocketDebuggerUrl);
+if (!endpoint) throw new Error("owned Chrome DevTools startup timed out");
+if (chrome.exitCode !== null || chrome.signalCode !== null) throw new Error("owned Chrome exited during startup");
+browser = new WebSocket(endpoint);
 await new Promise((resolve, reject) => {
   browser.addEventListener("open", resolve, { once: true });
   browser.addEventListener("error", () => reject(new Error("Chrome DevTools connection failed")), { once: true });

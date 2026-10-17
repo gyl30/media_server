@@ -88,7 +88,9 @@ node tests/web_console/cdp.mjs tests/web_console/<脚本>.mjs
 
 前置条件：GB28181 模拟器注册设备 `34020000001320000101`（通道 `34020000001310000001`，可带 PCMA 音频），一台推流设备正在用 ffmpeg 推 RTMP（H.264 + AAC）。截图写入 `tests/web_console/shots/`（不纳入版本库）。
 
-CDP 驱动仅清理自己启动的 Chrome；启动失败也执行清理。需要自行隔离媒体服务、数据库、端口和浏览器调试端口。原始日志 / URL 可能含凭据，不公开提交。七输入验收还需独立上游及真实 RTMP / RTSP / WHIP 发布者，不能仅用单路 fixture 的结果代替全部协议通过。
+CDP 驱动仅连接本次启动的 Chrome 在 stderr 输出的 DevTools 地址，不查询既存端口来发现浏览器。默认使用系统分配的调试端口（`WEB_CONSOLE_CDP_PORT=0`），也可像示例一样显式指定独立端口；端口冲突不能接管已有浏览器。驱动仅清理自己启动的 Chrome；启动失败也执行清理。需要自行隔离媒体服务、数据库和端口。原始日志 / URL 可能含凭据，不公开提交。七输入验收还需独立上游及真实 RTMP / RTSP / WHIP 发布者，不能仅用单路 fixture 的结果代替全部协议通过。
+
+不需要媒体服务的归属回归：`node tests/web_console/cdp_ownership_test.mjs`。它只启动自有假 Chrome 和 HTTP/CDP 哨兵，验证已有端口不会被访问，不代表浏览器媒体功能通过。
 
 ## 已知问题
 
