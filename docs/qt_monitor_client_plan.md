@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 补齐[倍率中临时断供与恢复](qt_monitor_client_stage4_scale_stall.md)：仅新增测试行，实际2×后停止夹具四秒而不暂停或断开原socket；固定25–26秒非空窗口确认Paint/输入/估算游标平台、SDL软件队列零且PLAYING，恢复仍在原GET/owner/decoder以实际2×完整呈现。Normal及ASan定向各3项QTest零失败/跳过通过；完整ASan+UBSan+LSan Scale组1/1、13项QTest零失败/跳过、563.50秒通过，不将数字gate当作所有内部缓存耗尽或物理声学证明，也不冒称整个桌面全套。无生产状态、接口或线程新增，后续转入第二机16路与实际产品对讲边界，七阶段未GO；本阶段不删除证据。
+
 2026-10-18 补齐[倍率后暂停/继续组合](qt_monitor_client_stage4_scale_pause.md)：仅扩展测试，实际2×输入在22秒暂停两秒，画面冻结、采样SDL_PAUSED，继续后原GET/owner/decoder恢复2×并完整呈现1600视频帧，核对全部音频源样本/解码PCM，最终自然EOF及释放。Normal/ASan定向各4项QTest通过，ASan+UBSan+LSan完整Scale组1/1、12项QTest零失败/跳过、522.84秒通过；不是整个桌面全套或真实相机组合验收。旧八行窗口/阈值/期限不改，无生产状态新增，断供恢复和物理声画仍待验，七阶段未GO。本阶段不删除证据，不操作非自有目录。
 
 2026-10-18 补齐[真实Qt→大华同会话Scale2→1观察](qt_monitor_client_dahua_qt_scale.md)：Normal与ASan+UBSan+LSan各25/25局部门禁、退出0，预设基线/改速/恢复窗口均有真实视频Paint与音频PCM进展，固定原owner/decoder并最终释放。独立冻结TCP/RTP/PS与SIP/API核对同一GET/dialog，改速输入音视频约1.931/1.972×、恢复约1×，Qt分别约48.00/49.76fps及25.00/25.13fps，不把204或请求值当实际速度。保留INFO/BYE同事务重传和主动停止截尾，不冒称自然EOF、全部倍率或物理声画验收；仅为实际63秒库存范围内的观察，无生产改动，七阶段未GO。只清理我们本轮确认逐项SHA相同且无活动引用的DEV重复运行包，原始证据和TEST副本保留。
