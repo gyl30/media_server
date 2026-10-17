@@ -97,3 +97,5 @@ PTZ 错误身份增量：START 超时/取消且独立 STOP 成功现返回 `ptz_
 同会话回放控制取证：生产 SIP/dialog 加私有 TCP collector 实测向前/向后定位及 2×/1×四次 INFO，真实 PTS 跳变、SPS/PPS/IDR 和发送节奏变化已有证据，RTP 序号保持连续，但设备未返回 RTP-Info；新位置媒体的应用层记录还早于控制完成。跨定位原始 PS 直接拼接存在解码诊断，不能把 INFO 200 或工具退出0当作 Qt seek/倍速通过。本项未修改生产代码，相机配置未改，owner/SSRC/端口清理通过；客户端同会话 seek/倍速仍未实现，详见[大华回放控制取证](qt_monitor_client_dahua_playback_controls.md)。
 
 2026-10-17接续完成广播内部SIP控制owner：SQLite高水位SourceID、Notify/独立Response/反向INVITE与双ACK路由、单设备占用、会话结束通知及统一清理。删除HTTP取消提前撤设备fence有真实RED/GREEN。最终Go全量test/race/vet通过；修正后真实大华在单一SIP进程连续完成尾号4/5两次控制并归零，沿用原DB，不发送音频或SET配置。DEV Claude最终只读复审无P0/P1。此增量尚无公开HTTP、租约、Qt采集或广播UI，未采纳直送/中继路线，也不改变旧广播INCOMPLETE/INCONCLUSIVE和平台未GO结论。边界、SHA及证据见[广播内部控制owner](qt_monitor_client_stage6_broadcast_control.md)。
+
+第二机实际播放补验：clean基线347decb的真实Qt窗口探针在TEST通过大华单路12秒及同源四路30秒，75/574项断言零失败；四路停三留一继续呈现，全部进程正常回收。私有Pulse记录到归属于Qt PID的非零PCM，认证SSH/Xvfb截图确认实际相机画面；它们是数字音频和虚拟屏幕，非物理听音/显示或安装版程序外部播放操作。原scp遇UNIX socket的外层INCOMPLETE记录保留，另行补收普通文件与SHA。未改生产实现或重跑全套回归，公开分发和完整平台仍未GO，详见[第二机播放补验](qt_monitor_client_stage7_second_play.md)。
