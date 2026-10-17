@@ -10,6 +10,8 @@
 
 开发分支 `feature/qt-monitor-client`，独立工作区 `/home/gyl/example/media_server_qt`，开始基线 `ba803c2a8c0d2a82298dd9a9f68404cc0f57f320`。不改 main、其他 Agent、原型或第三方；每阶段真实测试后，与 DEV Claude Code 只读复审，解决阻断后中文提交并推送该开发分支，不自动合并。
 
+2026-10-17 用户因 Claude 额度阻塞明确改为由当前开发代理自行完成开发、审查与验证，不再等待 Claude 作为提交门槛；保留阶段性测试、自审、独立中文提交和仅推送开发分支的要求，仍不自动合并 main。
+
 ## 七阶段
 
 2026-10-17 用户再次收口后续范围：取消独立广播产品/UI，保留双向对讲所需的内部 Broadcast SIP 控制；Qt/Web 采集音频直接上送媒体服务器，由媒体侧发送设备侧 RTP，Go 不转发音频。回传音频必须另行实际验证。录像只来自 GB 设备，设备决定倍速与定位精度；媒体侧转发，Qt 必要呈现适配不能再次限速或把 HTTP 受理当成精确到位。不新增中心录像/VOD，不影响已有 Qt 本地录制。后续按音频后端、Qt/Web 对讲、设备录像倍速、同会话定位、综合回归推进；[音频发送后端增量](qt_monitor_client_stage6_audio_transport.md)不等同完整对讲验收。
@@ -39,6 +41,8 @@
 - 每阶段保留 RED/GREEN 和原始证据；清理只针对本轮已核对身份的进程/可再生中间产物，不清理他人资产或历史原始数据。
 
 ## 当前检查点（2026-10-16）
+
+2026-10-17 音频上传增量：在 PCMA sender 之上新增一次性 WebSocket 上传 owner、可信控制面配置及互相独立的控制租约/有效音频 idle；复用 sender registry，不混入实时 receiver 对账。协议契约、生命周期与真实环回验证见[音频上传增量](qt_monitor_client_stage6_audio_upload.md)。尚无 Go 公共对讲入口、Qt/Web 采集或真实双向音频验收，整个阶段六仍未 GO。
 
 阶段一完成开发与定向验收：已验证真实 GB 模拟设备的冷点播、H.264/PCMA、AAC/无音频、请求/解码取消和新旧回调隔离；GB 冷首开旧 RED 保留，新增派生 `live.media_ready` 后不重签票即可正常播放。最终 shared SDK 正常和 ASan+UBSan 桌面 CTest 均4/4通过（39.01/39.14秒），Go 全量 test/race/vet 通过；后续修改须重新验证，不能继承本次结论。
 

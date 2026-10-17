@@ -232,6 +232,8 @@ add_library(media_core STATIC
     media/core/media_stream.cpp
     media/core/stream_registry.cpp
     media/core/session_registry.cpp
+    media/gb28181/gb28181_audio_session.cpp
+    media/http/gb28181_audio_http.cpp
     media/ps/mpeg_ps_output.cpp
     media/codec/audio_transcoder.cpp
     media/codec/codec_utils.cpp
@@ -352,6 +354,11 @@ if(BUILD_TESTING)
     target_link_libraries(gb_audio_sender_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb_audio_sender COMMAND gb_audio_sender_tests)
     set_tests_properties(gb_audio_sender PROPERTIES TIMEOUT 30)
+
+    add_executable(gb_audio_upload_tests tests/gb_audio_upload.cpp)
+    target_link_libraries(gb_audio_upload_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb_audio_upload COMMAND gb_audio_upload_tests)
+    set_tests_properties(gb_audio_upload PROPERTIES TIMEOUT 90)
 
     add_executable(gb_playback_lifecycle_tests tests/gb_playback_lifecycle.cpp)
     target_link_libraries(gb_playback_lifecycle_tests PRIVATE media_core media_server_link_options)

@@ -31,6 +31,7 @@ class session_registry final
     [[nodiscard]] std::shared_ptr<session> find_receiver_session(std::string_view stream_id) const;
 
     bool add_sender_session(std::string stream_id, std::string sender_id, std::shared_ptr<session> session);
+    [[nodiscard]] std::shared_ptr<session> find_sender_session(std::string_view stream_id, std::string_view sender_id) const;
     [[nodiscard]] std::shared_ptr<session> take_sender_session(std::string_view stream_id, std::string_view sender_id);
     void remove_sender_session(std::string_view stream_id, std::string_view sender_id, const session& expected);
     void shutdown_all();

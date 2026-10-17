@@ -116,6 +116,18 @@ std::shared_ptr<session> session_registry::take_sender_session(std::string_view 
     return value;
 }
 
+std::shared_ptr<session> session_registry::find_sender_session(std::string_view stream_id, std::string_view sender_id) const
+{
+    std::scoped_lock lock(mutex_);
+    const auto stream = sessions_.find(stream_id);
+    if (stream == sessions_.end())
+    {
+        return {};
+    }
+    const auto sender = stream->second.sender_sessions.find(sender_id);
+    return sender == stream->second.sender_sessions.end() ? nullptr : sender->second;
+}
+
 void session_registry::remove_sender_session(std::string_view stream_id, std::string_view sender_id, const session& expected)
 {
     std::scoped_lock lock(mutex_);

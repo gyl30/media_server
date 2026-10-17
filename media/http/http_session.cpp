@@ -20,6 +20,8 @@
 #include "media/http/hls_http_session.h"
 #include "media/http/http_flv_session.h"
 #include "media/http/signaling_verify.h"
+#include "media/http/gb28181_audio_http.h"
+#include "media/gb28181/gb28181_audio_session.h"
 #include "media/gb28181/gb28181_playback_session.h"
 
 namespace media_server
@@ -49,7 +51,8 @@ boost::beast::http::response<boost::beast::http::string_body> make_receiver_list
 bool is_control_path(std::string_view path)
 {
     return path == "/receivers" || path.starts_with("/receivers/") || path == "/gb28181/receiver" || path.starts_with("/gb28181/receiver/") ||
-           path == "/gb28181/sender" || path.starts_with("/gb28181/sender/") || path == "/pull" || path.starts_with("/pull/");
+           path == "/gb28181/sender" || path.starts_with("/gb28181/sender/") || path == "/gb28181/audio" || path.starts_with("/gb28181/audio/") ||
+           path == "/pull" || path.starts_with("/pull/");
 }
 
 }    // namespace
@@ -133,6 +136,37 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
             request,
             media_server::handle_gb28181_receiver_request(request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address)),
             yield);
+        return;
+    }
+    if (path == "/gb28181/audio" || path.starts_with("/gb28181/audio/"))
+    {
+        write_string_response(
+            request,
+            media_server::handle_gb28181_audio_request(request, worker_, *parsed, boost::asio::ip::make_address(config_.bind_address), yield),
+            yield);
+        return;
+    }
+    if (path == "/publish/gb28181/audio" || path.starts_with("/publish/gb28181/audio/"))
+    {
+        constexpr std::string_view prefix = "/publish/gb28181/audio/";
+        const auto identity = path.starts_with(prefix) ? path.substr(prefix.size()) : std::string_view{};
+        const auto separator = identity.find('/');
+        const auto id = identity.substr(0, separator);
+        const auto token = separator == std::string_view::npos ? std::string_view{} : identity.substr(separator + 1);
+        if (parsed->has_search() || request.version() != 11 || trailing_bytes || !request.body().empty() ||
+            !boost::beast::websocket::is_upgrade(request) || !valid_stream_token(id) || !valid_stream_token(token))
+        {
+            send_text_response(request, boost::beast::http::status::bad_request, "invalid audio upload\n", yield);
+            return;
+        }
+        const auto session = std::dynamic_pointer_cast<gb28181_audio_session>(session_registry::instance().find_sender_session(id, id));
+        if (!session)
+        {
+            send_text_response(request, boost::beast::http::status::not_found, "not found\n", yield);
+            return;
+        }
+        stream_.expires_never();
+        session->attach(std::move(stream_.socket()), std::move(request), std::string(token));
         return;
     }
     if (path == "/gb28181/sender" || path.starts_with("/gb28181/sender/"))
@@ -305,6 +339,14 @@ void http_session::write_string_response(boost::beast::http::request<boost::beas
         else if (location.starts_with("/publish/whip/session/"))
         {
             static_cast<void>(whip::remove(location.substr(std::string_view("/publish/whip/session/").size())));
+        }
+        else if (location.starts_with("/gb28181/audio/session/"))
+        {
+            const auto id = location.substr(std::string_view("/gb28181/audio/session/").size());
+            if (const auto session = session_registry::instance().take_sender_session(id, id))
+            {
+                session->shutdown();
+            }
         }
     }
     shutdown();
