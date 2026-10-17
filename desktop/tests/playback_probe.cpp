@@ -2,6 +2,7 @@
 #include <memory>
 #include <cstring>
 
+#include <QSet>
 #include <QFile>
 #include <SDL.h>
 #include <QTimer>
@@ -107,7 +108,9 @@ int main(int argc, char** argv)
     const QCommandLineOption platform_option(
         QStringLiteral("platform"), QStringLiteral("Platform HTTP(S) base URL, including an optional gateway prefix."), QStringLiteral("URL"));
     const QCommandLineOption push_option(
-        QStringLiteral("push-device"), QStringLiteral("Existing ready push-device ID (not a publish/play token)."), QStringLiteral("ID"));
+        QStringLiteral("push-device"),
+        QStringLiteral("Existing ready push-device ID, not a token. Supply once for all views or repeat once per view in slot order."),
+        QStringLiteral("ID"));
     const QCommandLineOption source_option(QStringLiteral("source-id"), QStringLiteral("Configured active source ID."), QStringLiteral("ID"));
     const QCommandLineOption gb_device_option(
         QStringLiteral("device"), QStringLiteral("Registered GB28181 device ID; requires --channel."), QStringLiteral("ID"));
@@ -150,11 +153,13 @@ int main(int argc, char** argv)
     const int view_count = parser.value(views_option).toInt(&views_valid);
     const int seconds = parser.value(seconds_option).toInt(&seconds_valid);
     const QUrl platform_url(parser.value(platform_option), QUrl::StrictMode);
-    const bool push_target = !parser.value(push_option).isEmpty();
+    const auto push_ids = parser.values(push_option);
+    const bool push_target = !push_ids.isEmpty();
     const bool source_target = !parser.value(source_option).isEmpty();
     const bool gb_target = !parser.value(gb_device_option).isEmpty();
     const bool monitor_mode = parser.isSet(monitor_option);
     if (!parser.positionalArguments().isEmpty() || !platform_client::valid_base_url(platform_url) || push_target + source_target + gb_target != 1 ||
+        (push_target && (push_ids.contains(QString{}) || (push_ids.size() != 1 && push_ids.size() != view_count))) ||
         gb_target != !parser.value(gb_channel_option).isEmpty() || (parser.isSet(toggle_audio_option) && !parser.isSet(audible_option)) ||
         parser.value(output_option).isEmpty() || !views_valid || view_count < 1 || view_count > 16 || !seconds_valid || seconds < 1 ||
         seconds > 3600 || (monitor_mode && view_count != 1 && view_count != 4 && view_count != 9 && view_count != 16) ||
@@ -351,7 +356,7 @@ int main(int argc, char** argv)
         }
         play_target target;
         target.type = gb_target ? play_target::kind::gb_channel : source_target ? play_target::kind::source : play_target::kind::push_device;
-        target.id = parser.value(gb_target ? gb_device_option : source_target ? source_option : push_option);
+        target.id = push_target ? push_ids[push_ids.size() == 1 ? 0 : index] : parser.value(gb_target ? gb_device_option : source_option);
         target.channel_id = parser.value(gb_channel_option);
         target.name = QStringLiteral("probe %1").arg(index);
         views[index]->play(client, target);
@@ -460,6 +465,7 @@ int main(int argc, char** argv)
                         {"qpa_platform", QGuiApplication::platformName()},
                         {"first_frame_ms", first_frames},
                         {"views", view_count},
+                        {"distinct_target_count", push_target ? QSet<QString>(push_ids.begin(), push_ids.end()).size() : 1},
                         {"monitor_window", monitor_mode},
                         {"input_evidence",
                          monitor_mode
@@ -527,13 +533,15 @@ int main(int argc, char** argv)
             if (monitor_mode && started_views == 0)
             {
                 auto* tree = window->findChild<QTreeWidget*>(QStringLiteral("device_tree"));
-                QTreeWidgetItem* target = nullptr;
+                QList<QTreeWidgetItem*> targets;
                 const auto wanted_kind = gb_target       ? QStringLiteral("gb_channel")
                                          : source_target ? QStringLiteral("source")
                                                          : QStringLiteral("push_device");
-                const auto wanted_id = parser.value(gb_target ? gb_device_option : source_target ? source_option : push_option);
-                if (tree)
+                for (int index = 0; tree && index < view_count; ++index)
                 {
+                    QTreeWidgetItem* target = nullptr;
+                    const auto wanted_id =
+                        push_target ? push_ids[push_ids.size() == 1 ? 0 : index] : parser.value(gb_target ? gb_device_option : source_option);
                     for (QTreeWidgetItemIterator item(tree); *item; ++item)
                     {
                         const auto data = (*item)->data(0, Qt::UserRole).toMap();
@@ -555,8 +563,13 @@ int main(int argc, char** argv)
                             break;
                         }
                     }
+                    if (!target)
+                    {
+                        break;
+                    }
+                    targets.append(target);
                 }
-                if (!target)
+                if (targets.size() != view_count)
                 {
                     if (now >= 15'000)
                     {
@@ -571,10 +584,10 @@ int main(int argc, char** argv)
                     stop_all();
                     return;
                 }
-                for (auto* view : views)
+                for (int index = 0; index < view_count; ++index)
                 {
-                    select_view(view);
-                    tree->itemDoubleClicked(target, 0);
+                    select_view(views[index]);
+                    tree->itemDoubleClicked(targets[index], 0);
                     ++started_views;
                 }
                 if (parser.isSet(audible_option))

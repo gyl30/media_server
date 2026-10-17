@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-17 补齐 [16 个独立源观看](qt_monitor_client_stage7_multisource.md)：仅扩展既有探针逐格指定不同 push 设备，生产播放器不变。DEV H.264 1080p25、8 AAC/4 PCMA/4 无音轨在共同30秒内每格解码及呈现749–750帧；有限发布源自然EOF、20个进程退出0及receiver归零通过。首轮无限FFmpeg发布者TERM清理FAIL和私有监督器解包错误均保留；后续有限源PASS不替代TERM故障，也不代表第二机16路、物理声音或完整阶段七GO。
+
 2026-10-17 接续完成 [Web 麦克风与可信 HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)：详情按钮、AudioWorklet PCMA、单消息credit与取消/迟到201清理；统一公开媒体HTTP origin避免安全页面混合内容。Chrome实际音频/SIP/C++ RTP、路由和隐藏停止、HTTPS双轨WHEP及Go全量test/race/vet通过。Firefox142.0补验确认在采集源连接8kHz上下文时因不同采样率抛NotSupportedError，当前上传BLOCKED；生产TalkCapture拒绝与清理通过、零对讲POST，不等于采集或整链通过。真实相机双向声学和完整阶段六仍未完成。
 
 2026-10-17 用户再次收口后续范围：取消独立广播产品/UI，保留双向对讲所需的内部 Broadcast SIP 控制；Qt/Web 采集音频直接上送媒体服务器，由媒体侧发送设备侧 RTP，Go 不转发音频。回传音频必须另行实际验证。录像只来自 GB 设备，设备决定倍速与定位精度；媒体侧转发，Qt 必要呈现适配不能再次限速或把 HTTP 受理当成精确到位。不新增中心录像/VOD，不影响已有 Qt 本地录制。后续按音频后端、Qt/Web 对讲、设备录像倍速、同会话定位、综合回归推进；[音频发送后端增量](qt_monitor_client_stage6_audio_transport.md)不等同完整对讲验收。
