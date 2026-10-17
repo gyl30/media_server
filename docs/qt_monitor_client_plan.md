@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-17 接续 Qt 同会话定位：原范围秒数输入与显式确认接上已有 seek API；控制仍固定原 owner，暂停/EOF/在途禁用，204仅设备受理。真实 PTS 大跳变按现有本地时钟重锚，音视频先后跳变不互相拖回，不重开媒体或flush codec。受控HTTP下真实PS前后跳变建立四组RED/GREEN；独立复审发现并修正单轨回跳后的EOF跨时间轴长等，保留原失败。最终桌面Normal与ASan+UBSan+LSan各9/9、各449项QTest结果通过且无跳过，原连续录像完整性与失败/迟到隔离分别验证；新Qt→真实相机端到端和Scale仍未完成，详见[Qt定位增量](qt_monitor_client_stage4_seek.md)。
+
 2026-10-17 接续同会话 Range/Scale 信令：`/api/playbacks/{id}/seek` 接受原范围内相对秒数，`/scale` 接受基本五种倍率；复用原 dialog/CSeq、控制与 BYE 串行、5秒总期限及原 owner 预算。仅新增不可变录像范围，旧暂停/恢复与下载行为不变；HTTP 204只确认协议受理，不代表精确到位或实际倍率。真实 UDP 对端 RED/GREEN与race已通过，Qt 尚未接入，不能标记完整 seek/倍速通过，见[历史信令增量](qt_monitor_client_stage4_playback_owner.md)。
 
 2026-10-17 [旧大华定位样本离线补证](qt_monitor_client_dahua_playback_controls.md#8-离线补证宏块错误归因与倍速音频2026-10-17)：当前Qt实际shared SDK的四组对照把宏块错误归因到主动采集截尾，未得到codec flush收益，原始诊断保留；两处定位新旧PES字节匹配，不能再将缺少RTP-Info当作best-effort呈现的绝对阻断。2×短窗PCMA同样加速，Qt固定1×音频会反压，后续仍须实际呈现适配，不能静默丢音或宣称精确到位。只清理本轮自有旧静态探针约63MiB，未删源码、日志或原媒体。

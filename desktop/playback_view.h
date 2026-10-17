@@ -49,12 +49,16 @@ class playback_view final : public QWidget
     void play(platform_client& client, const play_target& target);
     void play_record(platform_client& client, const play_target& target, qint64 start_time, qint64 end_time);
     void set_record_paused(bool paused);
+    void seek_record(double position);
     void start_recording(platform_client& client, const QString& directory);
     void stop_recording();
     bool recording() const;
     bool recording_ready() const;
     bool record_paused() const;
     bool record_control_ready() const;
+    bool record_seek_ready() const;
+    qint64 record_start() const;
+    qint64 record_end() const;
     void stop();
     void set_audible(quint32 audio_id, int period_bytes);
     bool audible() const;
@@ -99,6 +103,8 @@ class playback_view final : public QWidget
     QObject* record_session_{};
     QPointer<record_thread> recorder_;
     QString record_id_;
+    qint64 record_start_{};
+    qint64 record_end_{};
     bool record_paused_{};
     quint32 audio_id_{};
     int audio_period_bytes_{};

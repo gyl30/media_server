@@ -79,6 +79,10 @@ HTTP 204 **仅表示设备 SIP/MANSRTSP 受理**，不证明已经定位、精�
 
 本增量没有C++/Qt修改，未重跑C++ CTest、ASan、浏览器或真实媒体；不把Go race称作解码器内存插桩，也不把旧大华取证当作这两个新HTTP入口的实机验收。
 
+## Qt 同会话定位接续
+
+上述“Qt尚未接入”描述属于信令增量时的历史边界。后续 Qt 已接入原 owner 的 seek 请求、原范围输入及显式确认，并按实际音视频 PTS 跳变进行有限时钟重锚；不因 HTTP 204 清空媒体或重开会话。控制负测与合成真实 PS 时间轴测试分别验收，不当作新 Qt 到实际大华的定位集成；Scale 双轨适配仍未完成。具体实现、原始失败和本轮测试结果见 [Qt 同会话定位增量](qt_monitor_client_stage4_seek.md)。
+
 ## 证据与验证边界
 
 定向基础证据：DEV `/var/tmp/media-server-qt-history-foundation-1g5AaGey/`。结束交错测试使用真实 UDP SIP 与受控媒体 HTTP 边界，不是实际 PS 解码。

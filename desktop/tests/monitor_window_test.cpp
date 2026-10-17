@@ -3,7 +3,9 @@
 #include <algorithm>
 
 #include <QMap>
+#include <QDir>
 #include <QTest>
+#include <QFile>
 #include <QList>
 #include <QLabel>
 #include <QTimer>
@@ -16,6 +18,7 @@
 #include <QMimeData>
 #include <QSettings>
 #include <QIODevice>
+#include <QDateTime>
 #include <QByteArray>
 #include <QJsonArray>
 #include <QJsonValue>
@@ -36,6 +39,7 @@
 #include <QJsonDocument>
 #include <QNetworkReply>
 #include <QTemporaryDir>
+#include <QDoubleSpinBox>
 #include <QPlainTextEdit>
 #include <QAbstractButton>
 #include <QAbstractSocket>
@@ -115,6 +119,17 @@ class platform_fixture final : public QObject
                             }
                             socket->setProperty("answered", true);
                             const auto path = bytes.split(' ').value(1);
+                            if (path.startsWith("/api/playbacks/") && (path.endsWith("/seek") || path.endsWith("/pause") || path.endsWith("/resume")))
+                            {
+                                playback_controls.append(
+                                    {socket, bytes.left(bytes.indexOf("\r\n")), path, QJsonDocument::fromJson(bytes.mid(end + 4, length)).object()});
+                                return;
+                            }
+                            if (path.startsWith("/play/gb28181/") && path.endsWith(".ps"))
+                            {
+                                media.append({socket, bytes.left(bytes.indexOf("\r\n")), path, {}});
+                                return;
+                            }
                             if (path.endsWith("/query") || path.endsWith("/ptz"))
                             {
                                 queries.append(
@@ -180,6 +195,8 @@ class platform_fixture final : public QObject
     QList<pending_play> plays;
     QList<pending_query> queries;
     QList<pending_query> record_plays;
+    QList<pending_query> playback_controls;
+    QList<pending_query> media;
     QList<pending_query> gb_plays;
     QList<pending_query> alarm_polls;
 };
@@ -371,6 +388,164 @@ class monitor_window_test final : public QObject
     Q_OBJECT
 
    private slots:
+    void record_seek_range_and_pending_controls()
+    {
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(api.server.serverPort()))));
+        monitor_window window;
+        window.show();
+        auto* layout = window.findChild<QComboBox*>(QStringLiteral("view_layout"));
+        auto* position = window.findChild<QDoubleSpinBox*>(QStringLiteral("record_position"));
+        auto* seek = window.findChild<QPushButton*>(QStringLiteral("record_seek"));
+        auto* range = window.findChild<QLabel*>(QStringLiteral("record_range"));
+        QVERIFY(layout && position && seek && range);
+        layout->setCurrentIndex(layout->findData(4));
+        auto* first = slot_view(window, 1);
+        auto* second = slot_view(window, 2);
+        QVERIFY(first && second);
+        QVERIFY(select_gb_channel(window));    // 首次异步连接会 stop_all，须先等真实列表/通道响应完成。
+        QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QCOMPARE(position->maximum(), 0.0);
+        const play_target target{play_target::kind::gb_channel, QStringLiteral("device"), QStringLiteral("channel"), QStringLiteral("录像")};
+        first->play_record(client, target, 1700000000, 1700000005);
+        second->play_record(client, target, 1700000010, 1700000020);
+        QTRY_COMPARE_WITH_TIMEOUT(api.record_plays.size(), 2, 2000);
+        QTest::mouseClick(first, Qt::LeftButton);
+        QCOMPARE(position->maximum(), 5.0);
+        QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:20")));
+        QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:25")));
+        QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        position->setValue(2.125);
+        seek->click();
+        QCOMPARE(api.playback_controls.size(), 0);
+        QTest::mouseClick(second, Qt::LeftButton);
+        QCOMPARE(position->maximum(), 10.0);
+        QCOMPARE(position->value(), 0.0);
+        QVERIFY(range->text().contains(QStringLiteral("2023-11-14 22:13:30")));
+        QVERIFY(!seek->isEnabled());
+        window.findChild<QPushButton*>(QStringLiteral("stop_preview"))->click();
+        QCOMPARE(position->maximum(), 0.0);
+        QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QCOMPARE(first->record_start(), qint64(1700000000));
+        QCOMPARE(first->record_end(), qint64(1700000005));
+        window.close();
+    }
+
+    // 真实 PS 仅证明 UI 控制绑定，不模拟设备定位结果或声称精确边界已闭合。
+    void record_seek_selected_view_with_media()
+    {
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材；默认CTest不代表录像定位UI的真实媒体启用验收");
+        }
+        QFile file(QDir(folder).filePath(QStringLiteral("pcma-long-noend.ps")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto payload = file.readAll();
+        QVERIFY(!payload.isEmpty());
+        platform_fixture api(true);
+        QVERIFY(api.start());
+        platform_client client;
+        const auto base = QUrl(QStringLiteral("http://127.0.0.1:%1").arg(api.server.serverPort()));
+        QVERIFY(client.set_base_url(base));
+        monitor_window window;
+        const auto cleanup = qScopeGuard(
+            [&]()
+            {
+                for (auto* view : window.findChildren<playback_view*>())
+                {
+                    view->stop();
+                }
+                for (auto* thread : QCoreApplication::instance()->findChildren<decode_thread*>())
+                {
+                    thread->requestInterruption();
+                    if (!thread->wait(4000))
+                    {
+                        qFatal("定位UI用例停止后解码线程未退出");
+                    }
+                }
+            });
+        window.show();
+        auto* layout = window.findChild<QComboBox*>(QStringLiteral("view_layout"));
+        auto* position = window.findChild<QDoubleSpinBox*>(QStringLiteral("record_position"));
+        auto* seek = window.findChild<QPushButton*>(QStringLiteral("record_seek"));
+        auto* pause = window.findChild<QPushButton*>(QStringLiteral("record_pause"));
+        QVERIFY(layout && position && seek && pause);
+        layout->setCurrentIndex(layout->findData(4));
+        auto* first = slot_view(window, 1);
+        auto* second = slot_view(window, 2);
+        QVERIFY(first && second);
+        QVERIFY(select_gb_channel(window));
+        const play_target target{play_target::kind::gb_channel, QStringLiteral("device"), QStringLiteral("channel"), QStringLiteral("录像")};
+        first->play_record(client, target, 1700000000, 1700000005);
+        QTRY_COMPARE_WITH_TIMEOUT(api.record_plays.size(), 1, 2000);
+        second->play_record(client, target, 1700000010, 1700000020);
+        QTRY_COMPARE_WITH_TIMEOUT(api.record_plays.size(), 2, 2000);
+        const QStringList ids{QStringLiteral("11111111-1111-4111-8111-111111111111"), QStringLiteral("22222222-2222-4222-8222-222222222222")};
+        for (int index = 0; index < 2; ++index)
+        {
+            auto url = base;
+            url.setPath(QStringLiteral("/play/gb28181/%1/fixture-token.ps").arg(ids[index]));
+            respond(api.record_plays[index].socket,
+                    201,
+                    QJsonDocument(QJsonObject{{"playback_id", ids[index]},
+                                              {"ps_url", url.toString()},
+                                              {"deadline", QDateTime::currentDateTimeUtc().addSecs(120).toString(Qt::ISODateWithMs)}})
+                        .toJson(QJsonDocument::Compact));
+            QTRY_COMPARE_WITH_TIMEOUT(api.media.size(), index + 1, 2000);
+            QVERIFY(api.media[index].path.contains(ids[index].toUtf8()));
+            QVERIFY(api.media[index].socket);
+            api.media[index].socket->write("HTTP/1.1 200 OK\r\nContent-Type: video/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" +
+                                           QByteArray::number(payload.size(), 16) + "\r\n" + payload + "\r\n");
+        }
+        QTRY_VERIFY_WITH_TIMEOUT(first->record_seek_ready() && second->record_seek_ready(), 8000);
+        QTest::mouseClick(first, Qt::LeftButton);
+        QTRY_VERIFY_WITH_TIMEOUT(seek->isEnabled(), 1000);
+        position->setValue(2.125);
+        QCoreApplication::processEvents();
+        QCOMPARE(position->value(), 2.125);
+        QCOMPARE(api.playback_controls.size(), 0);    // 改数值不发送，必须显式确认。
+        QTest::mouseClick(second, Qt::LeftButton);
+        QCOMPARE(position->maximum(), 10.0);
+        QCOMPARE(position->value(), 0.0);
+        position->setValue(7.5);
+        seek->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 1, 2000);
+        QCOMPARE(api.playback_controls[0].path, QStringLiteral("/api/playbacks/%1/seek").arg(ids[1]).toUtf8());
+        QCOMPARE(api.playback_controls[0].body, (QJsonObject{{"position", 7.5}}));
+        QVERIFY(!position->isEnabled() && !seek->isEnabled() && !pause->isEnabled());
+        seek->click();
+        QCOMPARE(api.playback_controls.size(), 1);
+        QTest::mouseClick(first, Qt::LeftButton);
+        QVERIFY(seek->isEnabled());
+        QCOMPARE(position->maximum(), 5.0);
+        position->setValue(1.25);
+        respond(api.playback_controls[0].socket, 204, {});
+        QTRY_VERIFY_WITH_TIMEOUT(second->record_seek_ready(), 2000);
+        QCOMPARE(position->value(), 1.25);    // 非选中格的迟到受理不覆盖当前输入。
+        pause->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 2, 2000);
+        QCOMPARE(api.playback_controls[1].path, QStringLiteral("/api/playbacks/%1/pause").arg(ids[0]).toUtf8());
+        respond(api.playback_controls[1].socket, 204, {});
+        QTRY_VERIFY_WITH_TIMEOUT(first->record_paused(), 2000);
+        QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        seek->click();
+        QCOMPARE(api.playback_controls.size(), 2);
+        pause->click();
+        QTRY_COMPARE_WITH_TIMEOUT(api.playback_controls.size(), 3, 2000);
+        respond(api.playback_controls[2].socket, 204, {});
+        QTRY_VERIFY_WITH_TIMEOUT(first->record_seek_ready() && seek->isEnabled(), 2000);
+        QCOMPARE(position->value(), 1.25);
+        window.findChild<QPushButton*>(QStringLiteral("stop_preview"))->click();
+        QVERIFY(!position->isEnabled() && !seek->isEnabled());
+        QVERIFY(second->record_seek_ready());
+        QCOMPARE(api.record_plays.size(), 2);
+        QCOMPARE(api.media.size(), 2);
+        window.close();
+    }
+
     void record_playback_queued_reload_data()
     {
         QTest::addColumn<QString>("action");

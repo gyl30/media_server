@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdlib>
 #include <utility>
 #include <algorithm>
@@ -110,6 +111,8 @@ void playback_view::play_record(platform_client& client, const play_target& targ
         return;
     }
     session_ = new QObject(this);
+    record_start_ = start_time;
+    record_end_ = end_time;
     const auto path =
         QStringLiteral("/api/devices/%1/channels/%2/playback")
             .arg(QString::fromLatin1(QUrl::toPercentEncoding(target.id)), QString::fromLatin1(QUrl::toPercentEncoding(target.channel_id)));
@@ -188,6 +191,47 @@ bool playback_view::record_paused() const { return record_paused_; }
 
 // 解码线程结束后尾部仍在呈现，仍可暂停或继续；呈现结束会清空 decoder_。
 bool playback_view::record_control_ready() const { return record_owner_ && decoder_ && !request_; }
+
+bool playback_view::record_seek_ready() const
+{
+    return record_control_ready() && !record_paused_ && !decoder_->isFinished() && rendered_frames_ != 0;
+}
+
+qint64 playback_view::record_start() const { return record_start_; }
+qint64 playback_view::record_end() const { return record_end_; }
+
+void playback_view::seek_record(double position)
+{
+    if (!record_seek_ready() || !std::isfinite(position) || position < 0 || position > static_cast<double>(record_end_ - record_start_))
+    {
+        return;
+    }
+    request_ = record_owner_->request(
+        "POST",
+        QStringLiteral("/api/playbacks/%1/seek").arg(QString::fromLatin1(QUrl::toPercentEncoding(record_id_))),
+        {{QStringLiteral("position"), position}},
+        session_,
+        [this](platform_response response)
+        {
+            request_.clear();
+            if (!response.ok())
+            {
+                if (response.status == 404 || response.document.object().value(QStringLiteral("error")) == QStringLiteral("playback_not_streaming"))
+                {
+                    stop();
+                    set_status(QStringLiteral("录像实例已结束或到期，已停止本次回放"));
+                    return;
+                }
+                set_status(QStringLiteral("定位未确认：%1；不自动重试，请观察画面或停止").arg(response.error));
+                emit playback_error(status_);
+                return;
+            }
+            // 受理不等于媒体已经切换；保留有界积压，按实际收到的时间戳呈现。
+            set_status(QStringLiteral("设备已受理定位请求，实际精度由设备决定"));
+        },
+        8'000);
+    set_status(QStringLiteral("正在请求录像定位"));
+}
 
 void playback_view::wait_for_gb_media(
     platform_client& client, const play_target& target, const QString& stream_id, const QUrl& url, QDeadlineTimer deadline)
@@ -398,6 +442,8 @@ void playback_view::stop()
     }
     record_owner_.clear();
     record_id_.clear();
+    record_start_ = 0;
+    record_end_ = 0;
     record_paused_ = false;
     timer_.stop();
     reset_audio();
@@ -521,8 +567,7 @@ void playback_view::update_media()
         while (audio_id_ != 0 && !pcm_.empty() && SDL_GetQueuedAudioSize(audio_id_) < 19'200)
         {
             auto& block = pcm_.front();
-            if (!finite && audio_end_pts_ != no_media_timestamp && block.pts_us != no_media_timestamp &&
-                std::abs(block.pts_us - audio_end_pts_) > 100'000)
+            if (audio_end_pts_ != no_media_timestamp && block.pts_us != no_media_timestamp && std::abs(block.pts_us - audio_end_pts_) > 100'000)
             {
                 SDL_ClearQueuedAudio(audio_id_);
             }
@@ -563,13 +608,29 @@ void playback_view::update_media()
         return;
     }
     qint64 clock = no_media_timestamp;
+    // 有限回放在实际视频时间轴跳变时重锚，不以控制响应或请求位置推断首帧。
+    if (finite && !video_.empty() && video_.front().pts_us != no_media_timestamp && shown_end_pts_ != no_media_timestamp &&
+        std::abs(video_.front().pts_us - shown_end_pts_) > 1'000'000)
+    {
+        wall_pts_ = video_.front().pts_us;
+        wall_clock_.restart();
+    }
+    const auto video_clock = wall_pts_ == no_media_timestamp ? no_media_timestamp : wall_pts_ + wall_clock_.nsecsElapsed() / 1000;
     if (audio_id_ != 0 && audio_end_pts_ != no_media_timestamp && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PLAYING &&
         SDL_GetQueuedAudioSize(audio_id_) != 0)
     {
         // SDL 队列不包含已交给后端的 period，按双 period 估算；同步偏差另用数字回环验证。
         clock = audio_end_pts_ - (SDL_GetQueuedAudioSize(audio_id_) + 2LL * audio_period_bytes_) * 1'000'000 / 192'000;
-        wall_pts_ = clock;
-        wall_clock_.restart();
+        if (finite && shown_end_pts_ != no_media_timestamp && video_clock != no_media_timestamp && std::abs(clock - video_clock) > 1'000'000)
+        {
+            // 音视频先后进入新段；旧轨不得把另一轨拖回相差数秒的时钟。
+            clock = video_clock;
+        }
+        else
+        {
+            wall_pts_ = clock;
+            wall_clock_.restart();
+        }
     }
     else if (wall_pts_ != no_media_timestamp)
     {
@@ -619,6 +680,15 @@ void playback_view::update_media()
     if (decoder_->isFinished())
     {
         const auto stats = decoder_->snapshot();
+        if (finite && stats.error.isEmpty() && finite_tail_taken && video_.empty() && pcm_.empty() && shown_end_pts_ != no_media_timestamp &&
+            clock >= shown_end_pts_ && audible() && audio_end_pts_ != no_media_timestamp && std::abs(audio_end_pts_ - clock) > 1'000'000)
+        {
+            // 视频尾帧已显示完；两轨 epoch 不同时，将余下的真实音频及后端 period 交给音频时钟。
+            shown_end_pts_ = no_media_timestamp;
+            clock = audio_end_pts_ - (SDL_GetQueuedAudioSize(audio_id_) + 2LL * audio_period_bytes_) * 1'000'000 / 192'000;
+            wall_pts_ = clock;
+            wall_clock_.restart();
+        }
         if (finite && stats.error.isEmpty() &&
             (!finite_tail_taken || !video_.empty() || !pcm_.empty() || (shown_end_pts_ != no_media_timestamp && clock < shown_end_pts_) ||
              (audible() && (SDL_GetQueuedAudioSize(audio_id_) != 0 || (audio_end_pts_ != no_media_timestamp && clock < audio_end_pts_)))))

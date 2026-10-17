@@ -1,4 +1,6 @@
 #include <memory>
+#include <limits>
+#include <algorithm>
 
 #include <QDir>
 #include <QUrl>
@@ -171,6 +173,47 @@ QByteArray chunk(const QByteArray& payload) { return QByteArray::number(static_c
 
 const QByteArray stream_header("HTTP/1.1 200 OK\r\nContent-Type: video/mpeg\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n");
 
+// 保留真实 H.264/PCMA 负载，只平移 PES 的 PTS/DTS；SCR 不参与本测试的呈现时钟。
+QByteArray shifted_pes_timestamps(QByteArray bytes, qint64 offset, bool shift_video = true, bool shift_audio = true)
+{
+    qsizetype position = 0;
+    const QByteArray prefix("\0\0\1", 3);
+    while ((position = bytes.indexOf(prefix, position)) >= 0)
+    {
+        if (position + 9 >= bytes.size())
+        {
+            break;
+        }
+        const auto id = static_cast<unsigned char>(bytes[position + 3]);
+        if ((id >= 0xc0 && id <= 0xef) || id == 0xbd)
+        {
+            const auto flags = static_cast<unsigned char>(bytes[position + 7]) & 0xc0;
+            if (position + 9 + (flags == 0xc0 ? 10 : flags == 0x80 ? 5 : 0) > bytes.size())
+            {
+                return {};
+            }
+            const bool shift = id >= 0xe0 ? shift_video : shift_audio;
+            for (int index = 0; shift && index < (flags == 0xc0 ? 2 : flags == 0x80 ? 1 : 0); ++index)
+            {
+                auto* p = reinterpret_cast<unsigned char*>(bytes.data() + position + 9 + index * 5);
+                const quint64 timestamp =
+                    (quint64(p[0] & 0x0e) << 29) | (quint64(p[1]) << 22) | (quint64(p[2] & 0xfe) << 14) | (quint64(p[3]) << 7) | (p[4] >> 1);
+                const quint64 shifted = timestamp + offset;
+                p[0] = (p[0] & 0xf1) | ((shifted >> 29) & 0x0e);
+                p[1] = (shifted >> 22) & 0xff;
+                p[2] = ((shifted >> 14) & 0xfe) | 1;
+                p[3] = (shifted >> 7) & 0xff;
+                p[4] = ((shifted << 1) & 0xfe) | 1;
+            }
+            const auto length = (static_cast<unsigned char>(bytes[position + 4]) << 8) | static_cast<unsigned char>(bytes[position + 5]);
+            position += length > 0 ? length + 6 : 4;
+            continue;
+        }
+        position += 4;
+    }
+    return bytes;
+}
+
 // platform_client 未声明 Q_OBJECT；不能用继承来的 QObject 元对象匹配其真实子类类型。
 QList<QPointer<platform_client>> operation_clients(platform_client& client)
 {
@@ -253,9 +296,10 @@ class finite_playback_view_test final : public QObject
             {
                 qFatal("有限回放测试失败回收时 decoder 未退出");
             }
+            decoder->deleteLater();
         }
         QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
-        QVERIFY(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(QCoreApplication::instance()->findChildren<decode_thread*>().isEmpty(), 3000);
     }
 
     void cancel_pending_data()
@@ -850,6 +894,383 @@ class finite_playback_view_test final : public QObject
         QVERIFY(!view.record_control_ready());
         QVERIFY(!api.parse_error && !media.parse_error);
         qInfo() << "控制失败: 502保持播放 409busy保持暂停 404结束并DELETE=1";
+    }
+
+    void seek_control_data()
+    {
+        QTest::addColumn<int>("status");
+        QTest::newRow("accepted-but-media-unchanged") << 204;
+        QTest::newRow("busy") << 409;
+        QTest::newRow("rejected") << 502;
+        QTest::newRow("expired") << 404;
+        QTest::newRow("timeout") << 0;
+    }
+
+    void seek_control()
+    {
+        QFETCH(int, status);
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材");
+        }
+        const auto path = QDir(folder).filePath(QStringLiteral("pcma-long-noend.ps"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto payload = file.readAll();
+        http_fixture api, media;
+        QVERIFY(api.start());
+        QVERIFY(media.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(api.url()));
+        playback_view view;
+        view.resize(320, 240);
+        view.show();
+        painted_frames painted(view);
+        QSignalSpy errors(&view, &playback_view::playback_error);
+        QSignalSpy statuses(&view, &playback_view::status_changed);
+        view.seek_record(1);
+        QCOMPARE(api.requests.size(), qsizetype(0));
+        view.play_record(client, historical_target(), 1760000000, 1760000008);
+        QCOMPARE(view.record_start(), qint64(1760000000));
+        QCOMPARE(view.record_end(), qint64(1760000008));
+        QVERIFY(!view.record_seek_ready());
+        view.seek_record(1);
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
+        QVERIFY(api.respond(0, 201, ticket(media)));
+        QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
+        QPointer<decode_thread> decoder = QCoreApplication::instance()->findChildren<decode_thread*>().front();
+        QVERIFY(media.send(0, stream_header + chunk(payload)));
+        QTRY_VERIFY_WITH_TIMEOUT(view.rendered_frames() >= 3 && view.record_seek_ready(), 4000);
+        for (const auto value : {-1.0, 8.001, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN()})
+        {
+            view.seek_record(value);
+        }
+        QCOMPARE(api.requests.size(), qsizetype(1));
+        view.seek_record(1.25);
+        QVERIFY(!view.record_seek_ready());
+        view.seek_record(2);
+        view.set_record_paused(true);
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api.requests[1].line, control_line("seek"));
+        QCOMPARE(QJsonDocument::fromJson(api.requests[1].body).object(), (QJsonObject{{"position", 1.25}}));
+        if (status != 0)
+        {
+            QVERIFY(api.respond(1, status, status == 204 ? QJsonObject{} : QJsonObject{{"error", "device_rejected"}}));
+        }
+        if (status == 404)
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 3000);
+            QVERIFY(!view.record_control_ready());
+        }
+        else
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(view.record_control_ready(), status == 0 ? 11000 : 2000);
+            QVERIFY(!view.record_paused());
+            QCOMPARE(QCoreApplication::instance()->findChildren<decode_thread*>().front(), decoder.data());
+            if (status == 204)
+            {
+                QVERIFY(std::any_of(statuses.cbegin(),
+                                    statuses.cend(),
+                                    [](const auto& values) { return values.front().toString().contains(QStringLiteral("设备已受理定位请求")); }));
+                for (const double value : {0.0, 8.0})
+                {
+                    const auto index = api.requests.size();
+                    view.seek_record(value);
+                    QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), index + 1, 2000);
+                    QCOMPARE(QJsonDocument::fromJson(api.requests[index].body).object(), (QJsonObject{{"position", value}}));
+                    QVERIFY(api.respond(index, 204));
+                    QTRY_VERIFY_WITH_TIMEOUT(view.record_control_ready(), 2000);
+                }
+                QVERIFY(media.send(0, "0\r\n\r\n"));
+                QTRY_VERIFY_WITH_TIMEOUT(view.snapshot().ended && !view.record_control_ready(), 11000);
+                QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 2000);
+                QCOMPARE(view.rendered_frames(), quint64(200));
+                QList<QByteArray> expected;
+                qsizetype pcm = 0;
+                decode_reference(path, 200, expected, pcm);
+                QVERIFY(!QTest::currentTestFailed());
+                QCOMPARE(painted.hashes, expected);
+                QCOMPARE(view.snapshot().pcm_samples, quint64(pcm / 4));
+                QCOMPARE(view.snapshot().video_dropped, quint64(0));
+                QCOMPARE(errors.size(), qsizetype(0));
+            }
+            else
+            {
+                QCOMPARE(errors.size(), qsizetype(1));
+                QVERIFY(errors.front().front().toString().startsWith(QStringLiteral("定位未确认")));
+                view.stop();
+            }
+        }
+        const auto expected_requests = status == 204 ? qsizetype(5) : qsizetype(3);
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), expected_requests, 2000);
+        QCOMPARE(api.requests.back().line, delete_line());
+        QVERIFY(api.respond(api.requests.size() - 1, 204));
+        QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 3000);
+        QCOMPARE(media.requests.size(), qsizetype(1));
+        QVERIFY(!api.parse_error && !media.parse_error);
+        qInfo() << "定位控制 status=" << status << "create=1 GET=1 DELETE=1";
+    }
+
+    void seek_stop_replacement_keeps_owner()
+    {
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材");
+        }
+        QFile file(QDir(folder).filePath(QStringLiteral("pcma-long-noend.ps")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto payload = file.readAll();
+        http_fixture api_a, api_b, media;
+        QVERIFY(api_a.start());
+        QVERIFY(api_b.start());
+        QVERIFY(media.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(api_a.url()));
+        playback_view view;
+        view.play_record(client, historical_target(), 1760000000, 1760000008);
+        const auto operations = operation_clients(client);
+        QCOMPARE(operations.size(), qsizetype(1));
+        QTRY_COMPARE_WITH_TIMEOUT(api_a.requests.size(), qsizetype(1), 2000);
+        QVERIFY(api_a.respond(0, 201, ticket(media)));
+        QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
+        QVERIFY(media.send(0, stream_header + chunk(payload)));
+        QTRY_VERIFY_WITH_TIMEOUT(view.record_seek_ready(), 4000);
+        QPointer<decode_thread> old_decoder = QCoreApplication::instance()->findChildren<decode_thread*>().front();
+        QVERIFY(client.set_base_url(api_b.url()));
+        view.seek_record(3);
+        QTRY_COMPARE_WITH_TIMEOUT(api_a.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api_a.requests[1].line, control_line("seek"));
+        QCOMPARE(api_b.requests.size(), qsizetype(0));
+        view.play_record(client, historical_target(), 1760000010, 1760000012);
+        const auto status = view.status();
+        // 响应与 stop 竞态：不要求已取消的客户端真实收到该 204。
+        if (api_a.requests[1].socket)
+        {
+            api_a.respond(1, 204);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(api_a.requests.size(), qsizetype(3), 2000);
+        QCOMPARE(api_a.requests[2].line, delete_line());
+        QVERIFY(api_a.respond(2, 204));
+        QTRY_COMPARE_WITH_TIMEOUT(api_b.requests.size(), qsizetype(1), 2000);
+        QCOMPARE(view.status(), status);
+        QVERIFY(!view.record_paused());
+        QVERIFY(!view.record_seek_ready());
+        QCOMPARE(view.record_start(), qint64(1760000010));
+        QTRY_VERIFY_WITH_TIMEOUT(old_decoder.isNull() && operations.front().isNull(), 3000);
+        const auto second_id = QStringLiteral("22222222-2222-4222-8222-222222222222");
+        QVERIFY(api_b.respond(0, 201, ticket(media, second_id)));
+        QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(2), 2000);
+        file.close();
+        file.setFileName(QDir(folder).filePath(QStringLiteral("pcma-video-first-noend.ps")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(media.stream(1, file.readAll()));
+        QTRY_VERIFY_WITH_TIMEOUT(view.rendered_frames() == 50 && !view.record_control_ready(), 6000);
+        QTRY_COMPARE_WITH_TIMEOUT(api_b.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api_b.requests[1].line, delete_line(second_id));
+        QVERIFY(api_b.respond(1, 204));
+        QCOMPARE(api_a.requests.size(), qsizetype(3));
+        QCOMPARE(media.requests.size(), qsizetype(2));
+        qInfo() << "定位pending平台切换：控制/DELETE固定A，late响应不改变B，B独立GET/DELETE";
+    }
+
+    void timestamp_jumps_data()
+    {
+        QTest::addColumn<QString>("order");
+        QTest::addColumn<bool>("audible");
+        QTest::newRow("video-first-muted") << QStringLiteral("video") << false;
+        QTest::newRow("audio-first-muted") << QStringLiteral("audio") << false;
+        QTest::newRow("video-first-audible") << QStringLiteral("video") << true;
+        QTest::newRow("audio-first-audible") << QStringLiteral("audio") << true;
+    }
+
+    void timestamp_jumps()
+    {
+        QFETCH(QString, order);
+        QFETCH(bool, audible);
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材");
+        }
+        const auto path = QDir(folder).filePath(QStringLiteral("pcma-%1-first-noend.ps").arg(order));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto payload = file.readAll();
+        QList<QByteArray> expected;
+        qsizetype reference_pcm = 0;
+        decode_reference(path, 50, expected, reference_pcm);
+        QVERIFY(!QTest::currentTestFailed());
+        http_fixture api, media;
+        QVERIFY(api.start());
+        QVERIFY(media.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(api.url()));
+        playback_view view;
+        view.resize(320, 240);
+        view.show();
+        painted_frames painted(view);
+        QSignalSpy errors(&view, &playback_view::playback_error);
+        bool lost_audio_while_active = false;
+        connect(&view,
+                &playback_view::audible_changed,
+                &view,
+                [&](bool active)
+                {
+                    if (!active && view.record_control_ready())
+                    {
+                        lost_audio_while_active = true;
+                    }
+                });
+        SDL_AudioSpec want{}, have{};
+        want.freq = 48000;
+        want.format = AUDIO_S16SYS;
+        want.channels = 2;
+        want.samples = 512;
+        const auto audio_id = audible ? SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0) : 0;
+        const auto close_audio = qScopeGuard(
+            [&]()
+            {
+                view.stop();
+                if (audio_id != 0)
+                {
+                    SDL_CloseAudioDevice(audio_id);
+                }
+            });
+        QVERIFY(!audible || audio_id != 0);
+        view.play_record(client, historical_target(), 1760000000, 1760000040);
+        if (audible)
+        {
+            view.set_audible(audio_id, have.size);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
+        QVERIFY(api.respond(0, 201, ticket(media)));
+        QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
+        QPointer<decode_thread> decoder = QCoreApplication::instance()->findChildren<decode_thread*>().front();
+        QElapsedTimer elapsed;
+        elapsed.start();
+        // 一个 GET 内先向前跳20秒，再回到原始PTS；既不是新连接，也不等待控制响应来定义边界。
+        QVERIFY(media.stream(0, payload + shifted_pes_timestamps(payload, 20 * 90000) + payload));
+        QTRY_VERIFY_WITH_TIMEOUT(view.snapshot().ended, 11000);
+        QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 2000);
+        QVERIFY2(view.snapshot().error.isEmpty(), qPrintable(view.snapshot().error));
+        QCOMPARE(view.snapshot().video_frames, quint64(150));
+        QCOMPARE(view.rendered_frames(), quint64(150));
+        QCOMPARE(painted.hashes, expected + expected + expected);
+        QCOMPARE(view.snapshot().video_dropped, quint64(0));
+        // 两次真实跳变会丢弃 SWR 的旧滤波尾部，而不是拼接到下一段；正常 EOF 仍 drain。
+        QVERIFY(view.snapshot().pcm_samples <= quint64(reference_pcm * 3 / 4));
+        QVERIFY(view.snapshot().pcm_samples >= quint64(reference_pcm * 3 / 4 - 200));
+        QCOMPARE(view.snapshot().audio_dropped, quint64(2));
+        QCOMPARE(errors.size(), qsizetype(0));
+        QVERIFY(!lost_audio_while_active);
+        QVERIFY(elapsed.elapsed() >= 5000 && elapsed.elapsed() < 10000);
+        QCOMPARE(media.requests.size(), qsizetype(1));
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api.requests[1].line, delete_line());
+        QVERIFY(api.respond(1, 204));
+        qInfo() << "同GET前后跳变 frames=150 PCM=" << view.snapshot().pcm_samples << "elapsed_ms=" << elapsed.elapsed() << "audible=" << audible;
+    }
+
+    void timestamp_tracks_diverge_data()
+    {
+        QTest::addColumn<bool>("audible");
+        QTest::addColumn<bool>("video_back");
+        QTest::newRow("video-back-muted") << false << true;
+        QTest::newRow("video-back-audible") << true << true;
+        QTest::newRow("audio-back-muted") << false << false;
+        QTest::newRow("audio-back-audible") << true << false;
+    }
+
+    void timestamp_tracks_diverge()
+    {
+        QFETCH(bool, audible);
+        QFETCH(bool, video_back);
+        const auto folder = qEnvironmentVariable("FINITE_PS_TEST_FIXTURE_DIR");
+        if (folder.isEmpty())
+        {
+            QSKIP("未指定私有PS素材");
+        }
+        const auto path = QDir(folder).filePath(QStringLiteral("pcma-video-first-noend.ps"));
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto payload = file.readAll();
+        QList<QByteArray> expected;
+        qsizetype reference_pcm = 0;
+        decode_reference(path, 50, expected, reference_pcm);
+        QVERIFY(!QTest::currentTestFailed());
+        http_fixture api, media;
+        QVERIFY(api.start());
+        QVERIFY(media.start());
+        platform_client client;
+        QVERIFY(client.set_base_url(api.url()));
+        playback_view view;
+        view.resize(320, 240);
+        view.show();
+        painted_frames painted(view);
+        QSignalSpy errors(&view, &playback_view::playback_error);
+        bool lost_audio_while_active = false;
+        connect(&view,
+                &playback_view::audible_changed,
+                &view,
+                [&](bool active)
+                {
+                    if (!active && view.record_control_ready())
+                    {
+                        lost_audio_while_active = true;
+                    }
+                });
+        SDL_AudioSpec want{}, have{};
+        want.freq = 48000;
+        want.format = AUDIO_S16SYS;
+        want.channels = 2;
+        want.samples = 512;
+        const auto audio_id = audible ? SDL_OpenAudioDevice(nullptr, 0, &want, &have, 0) : 0;
+        const auto close_audio = qScopeGuard(
+            [&]()
+            {
+                view.stop();
+                if (audio_id != 0)
+                {
+                    SDL_CloseAudioDevice(audio_id);
+                }
+            });
+        QVERIFY(!audible || audio_id != 0);
+        view.play_record(client, historical_target(), 1760000000, 1760000040);
+        if (audible)
+        {
+            view.set_audible(audio_id, have.size);
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(1), 2000);
+        QVERIFY(api.respond(0, 201, ticket(media)));
+        QTRY_COMPARE_WITH_TIMEOUT(media.requests.size(), qsizetype(1), 2000);
+        QPointer<decode_thread> decoder = QCoreApplication::instance()->findChildren<decode_thread*>().front();
+        QElapsedTimer elapsed;
+        elapsed.start();
+        // 首段双轨约20..22秒；第二段仅一轨回跳至0..2秒，另一轨连续22..24秒。
+        // 同一个 GET 的真实负载不变；不能用视频 epoch 等待已经排空的音频 PTS。
+        QVERIFY(media.stream(0, shifted_pes_timestamps(payload, 20 * 90000) + shifted_pes_timestamps(payload, 22 * 90000, !video_back, video_back)));
+        QTRY_COMPARE_WITH_TIMEOUT(view.rendered_frames(), quint64(100), 7000);
+        QTRY_VERIFY_WITH_TIMEOUT(view.snapshot().ended, 2000);
+        QVERIFY2(view.snapshot().error.isEmpty(), qPrintable(view.snapshot().error));
+        QCOMPARE(view.snapshot().video_frames, quint64(100));
+        QTRY_COMPARE_WITH_TIMEOUT(painted.hashes.size(), expected.size() * 2, 1000);
+        QCOMPARE(painted.hashes, expected + expected);
+        QCOMPARE(view.snapshot().video_dropped, quint64(0));
+        // 本素材的8k→48k SWR滤波尾为96个输出样本；仅真实音频回跳会丢弃这段旧delay。
+        QCOMPARE(view.snapshot().pcm_samples, quint64(reference_pcm * 2 / 4 - (video_back ? 0 : 96)));
+        QCOMPARE(view.snapshot().audio_dropped, quint64(video_back ? 0 : 1));
+        QCOMPARE(errors.size(), qsizetype(0));
+        QVERIFY(!lost_audio_while_active);
+        QTRY_VERIFY_WITH_TIMEOUT(decoder.isNull(), 2000);
+        QVERIFY(elapsed.elapsed() >= 3000 && elapsed.elapsed() < 7000);
+        QCOMPARE(media.requests.size(), qsizetype(1));
+        QTRY_COMPARE_WITH_TIMEOUT(api.requests.size(), qsizetype(2), 2000);
+        QCOMPARE(api.requests[1].line, delete_line());
+        QVERIFY(api.respond(1, 204));
+        qInfo() << "同GET单轨回跳 frames=100 PCM=" << view.snapshot().pcm_samples << "elapsed_ms=" << elapsed.elapsed() << "audible=" << audible
+                << "video_back=" << video_back;
     }
 
    private:

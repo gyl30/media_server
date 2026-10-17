@@ -32,6 +32,7 @@
 #include <QHBoxLayout>
 #include <QVBoxLayout>
 #include <QApplication>
+#include <QDoubleSpinBox>
 #include <QPlainTextEdit>
 #include <QSignalBlocker>
 #include <QStandardPaths>
@@ -53,6 +54,9 @@ monitor_window::monitor_window(QWidget* parent)
       sound_(new QPushButton(QStringLiteral("开启声音"), this)),
       talk_button_(new QPushButton(QStringLiteral("开始对讲"), this)),
       record_pause_(new QPushButton(QStringLiteral("暂停回放"), this)),
+      record_position_(new QDoubleSpinBox(this)),
+      record_seek_(new QPushButton(QStringLiteral("请求定位"), this)),
+      record_range_(new QLabel(this)),
       record_live_(new QPushButton(QStringLiteral("开始录制"), this)),
       alarm_list_(new QTreeWidget(this)),
       alarm_status_(new QLabel(this)),
@@ -448,6 +452,19 @@ monitor_window::monitor_window(QWidget* parent)
     bottom->addWidget(stop);
     bottom->addWidget(stop_everything);
     layout->addLayout(bottom);
+    auto* record_controls = new QHBoxLayout;
+    record_position_->setObjectName(QStringLiteral("record_position"));
+    record_position_->setDecimals(3);
+    record_position_->setSuffix(QStringLiteral(" 秒"));
+    record_position_->setToolTip(QStringLiteral("相对原录像范围起点的请求秒数；输入后点击请求定位，不代表实际命中位置"));
+    record_seek_->setObjectName(QStringLiteral("record_seek"));
+    record_seek_->setToolTip(QStringLiteral("同会话请求设备定位；设备受理不代表精确命中，暂停时须先继续回放"));
+    record_range_->setObjectName(QStringLiteral("record_range"));
+    record_controls->addWidget(record_range_, 1);
+    record_controls->addWidget(new QLabel(QStringLiteral("相对起点"), central));
+    record_controls->addWidget(record_position_);
+    record_controls->addWidget(record_seek_);
+    layout->addLayout(record_controls);
     setCentralWidget(central);
     statusBar()->showMessage(QStringLiteral("Linux x86_64 · H.264 · RTSP/TCP · 默认静音"));
     connect(refresh, &QPushButton::clicked, this, &monitor_window::reload_devices);
@@ -501,6 +518,7 @@ monitor_window::monitor_window(QWidget* parent)
                 }
             });
     connect(record_pause_, &QPushButton::clicked, this, [this]() { selected_->set_record_paused(!selected_->record_paused()); });
+    connect(record_seek_, &QPushButton::clicked, this, [this]() { selected_->seek_record(record_position_->value()); });
     connect(record_live_,
             &QPushButton::clicked,
             this,
@@ -589,6 +607,10 @@ monitor_window::~monitor_window()
 
 void monitor_window::select_view(playback_view* view)
 {
+    if (selected_ != view)
+    {
+        record_position_->setValue(0);
+    }
     selected_ = view;
     for (auto* item : views_)
     {
@@ -607,6 +629,17 @@ void monitor_window::update_view_controls()
     record_live_->setText(selected_->recording() ? QStringLiteral("停止录制") : QStringLiteral("开始录制"));
     record_pause_->setEnabled(selected_->record_control_ready());
     record_pause_->setText(selected_->record_paused() ? QStringLiteral("继续回放") : QStringLiteral("暂停回放"));
+    const auto start = selected_->record_start();
+    const auto end = selected_->record_end();
+    const bool has_range = start > 0 && end > start;
+    record_position_->setRange(0, has_range ? static_cast<double>(end - start) : 0);
+    const bool seek_ready = selected_->record_seek_ready();
+    record_position_->setEnabled(seek_ready);
+    record_seek_->setEnabled(seek_ready);
+    record_range_->setText(has_range ? QStringLiteral("原录像范围：%1 — %2（UTC）")
+                                           .arg(QDateTime::fromSecsSinceEpoch(start, Qt::UTC).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")),
+                                                QDateTime::fromSecsSinceEpoch(end, Qt::UTC).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
+                                     : QStringLiteral("未选择录像回放范围"));
 }
 
 void monitor_window::poll_alarms()

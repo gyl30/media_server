@@ -1,5 +1,6 @@
 #include <cerrno>
 #include <memory>
+#include <cstdlib>
 #include <utility>
 #include <algorithm>
 
@@ -451,6 +452,24 @@ void decode_thread::run()
                 {
                     error = tr("音频参数在播放期间发生变化");
                     return false;
+                }
+                if (mode_ == playback_mode::finite && pts != no_media_timestamp && next_pcm_pts != no_media_timestamp &&
+                    std::abs(pts - next_pcm_pts) > 100'000)
+                {
+                    // 实际音频跳变时丢弃上一段滤波尾部；不清解码器或尚未消费的合法媒体。
+                    const auto delayed = swr_get_delay(resampler, audio_input_rate);
+                    swr_close(resampler);
+                    result = swr_init(resampler);
+                    if (result < 0)
+                    {
+                        error = tr("音频重采样重新初始化失败：%1").arg(error_text(result));
+                        return false;
+                    }
+                    if (delayed > 0)
+                    {
+                        QMutexLocker lock(&mutex_);
+                        ++stats_.audio_dropped;
+                    }
                 }
                 const auto delay = swr_get_delay(resampler, audio_input_rate);
                 const int output_samples = static_cast<int>(av_rescale_rnd(delay + frame->nb_samples, 48000, audio_input_rate, AV_ROUND_UP));

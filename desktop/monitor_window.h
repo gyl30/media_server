@@ -17,6 +17,7 @@ class QComboBox;
 class QGridLayout;
 class QPushButton;
 class QTreeWidget;
+class QDoubleSpinBox;
 class QTreeWidgetItem;
 class QPlainTextEdit;
 
@@ -73,6 +74,9 @@ class monitor_window final : public QMainWindow
     QPushButton* sound_;
     QPushButton* talk_button_;
     QPushButton* record_pause_;
+    QDoubleSpinBox* record_position_;
+    QPushButton* record_seek_;
+    QLabel* record_range_;
     QPushButton* record_live_;
     QTreeWidget* alarm_list_;
     QLabel* alarm_status_;
