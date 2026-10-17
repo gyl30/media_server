@@ -258,6 +258,7 @@ add_library(media_core STATIC
     media/http/http_session.cpp
     media/gb28181/gb28181_rtp_receiver.cpp
     media/gb28181/gb28181_rtp_sender.cpp
+    media/gb28181/gb28181_audio_sender.cpp
     media/gb28181/gb28181_udp_receiver_session.cpp
     media/gb28181/gb28181_udp_sender_session.cpp
     media/gb28181/gb28181_tcp_sender_session.cpp
@@ -346,6 +347,11 @@ if(BUILD_TESTING)
     target_link_libraries(gb_sender_lifecycle_tests PRIVATE media_core media_server_link_options)
     add_test(NAME gb_sender_lifecycle COMMAND gb_sender_lifecycle_tests)
     set_tests_properties(gb_sender_lifecycle PROPERTIES TIMEOUT 30)
+
+    add_executable(gb_audio_sender_tests tests/gb_audio_sender.cpp)
+    target_link_libraries(gb_audio_sender_tests PRIVATE media_core media_server_link_options)
+    add_test(NAME gb_audio_sender COMMAND gb_audio_sender_tests)
+    set_tests_properties(gb_audio_sender PROPERTIES TIMEOUT 30)
 
     add_executable(gb_playback_lifecycle_tests tests/gb_playback_lifecycle.cpp)
     target_link_libraries(gb_playback_lifecycle_tests PRIVATE media_core media_server_link_options)
