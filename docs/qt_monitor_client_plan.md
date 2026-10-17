@@ -16,6 +16,8 @@
 
 2026-10-17 接续同会话 Range/Scale 信令：`/api/playbacks/{id}/seek` 接受原范围内相对秒数，`/scale` 接受基本五种倍率；复用原 dialog/CSeq、控制与 BYE 串行、5秒总期限及原 owner 预算。仅新增不可变录像范围，旧暂停/恢复与下载行为不变；HTTP 204只确认协议受理，不代表精确到位或实际倍率。真实 UDP 对端 RED/GREEN与race已通过，Qt 尚未接入，不能标记完整 seek/倍速通过，见[历史信令增量](qt_monitor_client_stage4_playback_owner.md)。
 
+2026-10-17 [旧大华定位样本离线补证](qt_monitor_client_dahua_playback_controls.md#8-离线补证宏块错误归因与倍速音频2026-10-17)：当前Qt实际shared SDK的四组对照把宏块错误归因到主动采集截尾，未得到codec flush收益，原始诊断保留；两处定位新旧PES字节匹配，不能再将缺少RTP-Info当作best-effort呈现的绝对阻断。2×短窗PCMA同样加速，Qt固定1×音频会反压，后续仍须实际呈现适配，不能静默丢音或宣称精确到位。只清理本轮自有旧静态探针约63MiB，未删源码、日志或原媒体。
+
 2026-10-17 补齐 [16 个独立源观看](qt_monitor_client_stage7_multisource.md)：仅扩展既有探针逐格指定不同 push 设备，生产播放器不变。DEV H.264 1080p25、8 AAC/4 PCMA/4 无音轨在共同30秒内每格解码及呈现749–750帧；有限发布源自然EOF、20个进程退出0及receiver归零通过。首轮无限FFmpeg发布者TERM清理FAIL和私有监督器解包错误均保留；后续有限源PASS不替代TERM故障，也不代表第二机16路、物理声音或完整阶段七GO。
 
 2026-10-17 接续完成 [Web 麦克风与可信 HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)：详情按钮、AudioWorklet PCMA、单消息credit与取消/迟到201清理；统一公开媒体HTTP origin避免安全页面混合内容。Chrome实际音频/SIP/C++ RTP、路由和隐藏停止、HTTPS双轨WHEP及Go全量test/race/vet通过。Firefox142.0补验确认在采集源连接8kHz上下文时因不同采样率抛NotSupportedError，当前上传BLOCKED；生产TalkCapture拒绝与清理通过、零对讲POST，不等于采集或整链通过。真实相机双向声学和完整阶段六仍未完成。
