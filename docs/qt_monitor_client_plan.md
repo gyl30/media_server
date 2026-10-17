@@ -103,3 +103,5 @@ PTZ 错误身份增量：START 超时/取消且独立 STOP 成功现返回 `ptz_
 内部包追溯增量：修正CMake编译器路径为STRING时版本漏记，完整打包CLI真实RED/GREEN通过，准确记录Ubuntu GCC16.0.1 experimental。三份实际GCC运行库另与本地16.2.0构建产物逐字节匹配，签名源码归档及有限源码核对保留；不把编译器与运行库版本混同，不据此关闭项目许可证、源码交付或公开分发门槛。详见[运行包来源补证](qt_monitor_client_package_provenance.md)。
 
 稳定单一SIP平台下的音量对照已接续：首轮监督工具完成标记竞态保留INCOMPLETE，实际AST回归RED/GREEN修正后另建独立实验，三轮协议/采集/配置及97恢复完整，原比较器音量来源验证true。原严格PTS前提和完整五频/10dB条件仍未满足，比较仍INCONCLUSIVE；不能据部分频带变化采纳直送路线或宣布广播声音PASS。旧失败、源码、ELF、媒体与高水位连续性证据均保留，详见[单一平台音量对照](qt_monitor_client_stage6_stable_volume.md)。
+
+录制实际ENOSPC补验完成：独立namespace的1MiB tmpfs、余32KiB下，Normal和ASan+UBSan均在已处理音视频包后写盘失败、不保存且删除本次.part，线程/挂载回收；Normal有内核ENOSPC轨迹，ASan以独立文件系统对照确认并保留LSan。首次私有文案断言错误保持INCOMPLETE，修正后不改生产EIO合同；12:22恢复只补未执行的ASan，不重跑已通过Normal。未扩大为真实设备下载或全量回归，见[实际磁盘满补验](qt_monitor_client_record_enospc.md)。
