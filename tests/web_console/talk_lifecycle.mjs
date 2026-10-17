@@ -8,13 +8,21 @@ export default async function (b) {
     const originalFetch = window.fetch;
     const originalCapture = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
     window.__streams = []; window.__posts = 0; window.__deletes = []; window.__states = [];
-    window.__mode = 'hold'; window.__deferMic = false; window.__denyMic = false;
+    window.__mode = 'hold'; window.__deferMic = false; window.__denyMic = false; window.__denyGraph = false;
     navigator.mediaDevices.getUserMedia = async options => {
       if (window.__denyMic) throw new DOMException('controlled permission rejection', 'NotAllowedError');
       const stream = await originalCapture(options);
       window.__streams.push(stream);
       if (window.__deferMic) await new Promise(resolve => window.__releaseMic = resolve);
       return stream;
+    };
+    const originalSource = AudioContext.prototype.createMediaStreamSource;
+    AudioContext.prototype.createMediaStreamSource = function(stream) {
+      if (window.__denyGraph) {
+        window.__rejectedAudio = this;
+        throw new DOMException('controlled source graph rejection', 'NotSupportedError');
+      }
+      return originalSource.call(this, stream);
     };
     window.__ticket = digit => ({talk_id:digit.repeat(64), upload_url:
       'ws://' + location.host + '/publish/gb28181/audio/' + digit.repeat(64) + '/' + 'f'.repeat(64)});
@@ -65,7 +73,11 @@ export default async function (b) {
   await b.eval("window.__denyMic = true; window.__beforePosts = window.__posts");
   await click();
   check("权限拒绝不创建对讲", await stopped() && await b.eval("window.__posts === window.__beforePosts"));
-  await b.eval("window.__denyMic = false; window.__mode = '5'");
+  await b.eval("window.__denyMic = false; window.__denyGraph = true; window.__beforePosts = window.__posts");
+  await click();
+  check("采集图不支持时不创建对讲", await stopped() && await b.eval("window.__posts === window.__beforePosts && window.__states.at(-1).error.includes('controlled source graph rejection')"));
+  check("采集图拒绝后麦克风及context已关闭", await ended() && await waitFor(b, "window.__rejectedAudio.state === 'closed'", 2000));
+  await b.eval("window.__denyGraph = false; window.__mode = '5'");
   await click();
   check("真实WS握手黑洞有界结束并清理", await stopped() && await b.eval("window.__states.at(-1).error.includes('握手超时') && window.__deletes.at(-1) === '5'.repeat(64)"));
   check("握手超时后采集已结束", await ended());

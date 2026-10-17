@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 接续修复[Firefox原生采样率对讲](qt_monitor_client_stage6_web_talk.md#原生采样率修复与整链补验2026-10-18)：AudioContext不再强制8kHz，Worklet保留8k精确编码，追加有界低通/跨块相位降采；44.1/48k各10秒80000样本、抗混叠与credit RED/GREEN通过。Firefox142.0实际44100Hz采集经Go/SIP和C++转发的60包数字1kHz验相关通过，Chrome回归及两浏览器19/19生命周期通过；两者可信HTTPS/WSS、Go race和后端ASan/UBSan/LSan整链亦通过，最终Go全量test/race/vet通过。保留历史BLOCKED及私有探针失败，不把受控数字音源/peer写成真实相机声学验收。只清理本轮三个成功且已退出的浏览器profile约53MB，配置和失败证据保留；Qt倍速呈现与完整阶段六仍未完成。
+
 2026-10-18 补采[大华Scale生产HTTP双轨输入节奏](qt_monitor_client_dahua_scale_input.md)：原dialog/唯一PS GET内，2倍及0.25倍窗口视频/音频约1.947/0.250，0.5倍约0.500；请求4倍的短窗实际仅约3.43，不能以请求值冒充实测速率。第一轮15秒无数据超时仍保留FAIL，短于平台20秒原收尾窗口；第二轮预设40秒主动结束仅记WINDOW_COLLECTED，非完整HTTP/库存PASS。独立抓包核对控制、重传、字节与终止，离线CLI解码1599/1381帧、退出0但保留重复DTS诊断；两轮receiver、进程、端口与原DB检查通过。未改生产代码或相机配置，Qt倍速呈现仍待实现，SCR也不能作为独立墙钟。仅删逐项SHA相同且无活动引用的本轮重复副本385728533字节，所有原证据与原runtime保留。
 
 2026-10-18 补齐[当前 Qt→真实大华同会话定位](qt_monitor_client_dahua_qt_seek.md)：Normal与ASan+UBSan+LSan各14/14断言、退出0；同一原owner/decoder和唯一PS GET上完成30秒/5秒两次Range控制，独立抓包核对原dialog的INVITE/ACK、两次INFO事务和BYE/200。实际音视频PTS前后跳变、Qt呈现/图像变化及SDL非零PCM继续增长，原对象最终析构、receiver归零、服务退出与端口释放通过。保留私有探针和启动器失败，不改生产代码；不等同主窗口鼠标操作、物理声音/精确落点或Scale验收。只删除本轮服务退出后确认无进程命令行引用且逐项SHA相同的冗余runtime副本约329.7MiB，两份原runtime及全部原始证据保留。

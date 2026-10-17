@@ -22,11 +22,11 @@ export class TalkCapture {
       throw new Error("麦克风需要 HTTPS（或 localhost）及支持 AudioWorklet 的浏览器");
     }
     session.timer = setTimeout(() => void this.stop("麦克风或对讲准备超时"), 20000);
-    const audio = session.audio = new AudioContext({ sampleRate: 8000 });
+    const audio = session.audio = new AudioContext();
     const resumed = audio.resume().catch(() => {
       if (!session.controller.signal.aborted) void this.stop("浏览器未允许启动音频上下文");
     }); // 用户点击期间发起，不依靠自动播放例外；立即处理拒绝，避免权限等待时的未处理 promise。
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 8000 }, video: false });
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
     if (session.controller.signal.aborted) {
       stream.getTracks().forEach(track => track.stop());
       return;
@@ -35,7 +35,6 @@ export class TalkCapture {
     for (const track of stream.getTracks()) track.onended = () => void this.stop("麦克风已断开");
     await resumed;
     if (session.controller.signal.aborted) return;
-    if (audio.sampleRate !== 8000) throw new Error("浏览器未提供 8kHz 音频上下文");
     await audio.audioWorklet.addModule("/talk-worklet.js");
     if (session.controller.signal.aborted) return;
     session.source = audio.createMediaStreamSource(stream);
