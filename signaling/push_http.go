@@ -41,7 +41,7 @@ func (s *infrastructureServer) pushURLs(credential string) pushURLs {
 		Token:   credential,
 		RTMPURL: (&url.URL{Scheme: "rtmp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtmpPort))), Path: "/live/" + credential}).String(),
 		RTSPURL: (&url.URL{Scheme: "rtsp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtspPort))), Path: "/" + credential}).String(),
-		WHIPURL: (&url.URL{Scheme: "http", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.httpPort))), Path: "/publish/whip/" + credential}).String(),
+		WHIPURL: server.publicHTTPOrigin() + "/publish/whip/" + credential,
 	}
 }
 

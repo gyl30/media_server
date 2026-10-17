@@ -49,7 +49,7 @@ func gbPlaybackTicket(t *testing.T, response *httptest.ResponseRecorder) (playba
 	}
 	prefix := "/play/gb28181/" + ticket.PlaybackID + "/"
 	token := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, prefix), ".ps")
-	if parsed.Scheme != "http" || parsed.Host == "" || !strings.HasPrefix(parsed.Path, prefix) || !strings.HasSuffix(parsed.Path, ".ps") || !validStreamToken(token) || parsed.RawQuery != "" {
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || !strings.HasPrefix(parsed.Path, prefix) || !strings.HasSuffix(parsed.Path, ".ps") || !validStreamToken(token) || parsed.RawQuery != "" {
 		t.Fatalf("无效 PS URL: %s", ticket.PSURL)
 	}
 	return ticket, token
@@ -151,6 +151,7 @@ func TestGBPlaybackAPIPreconditions(t *testing.T) {
 
 func TestGBPlaybackPrepareAndClaimOnce(t *testing.T) {
 	s := testInfrastructure(t)
+	s.media.server.httpOrigin = "https://video.example.test:8443"
 	created, release := make(chan struct{}), make(chan struct{})
 	var unblock sync.Once
 	var receiver map[string]json.RawMessage
@@ -205,6 +206,9 @@ func TestGBPlaybackPrepareAndClaimOnce(t *testing.T) {
 		t.Fatal("prepare 未完成")
 	}
 	ticket, token := gbPlaybackTicket(t, response)
+	if ticket.PSURL != s.media.server.httpOrigin+"/play/gb28181/"+ticket.PlaybackID+"/"+token+".ps" {
+		t.Fatal("历史 PS URL 未使用公开 HTTP origin")
+	}
 	if len(receiver) != 4 || string(receiver["transport"]) != `"tcp_passive"` || string(receiver["payload_type"]) != "96" || string(receiver["stream_id"]) != fmt.Sprintf("%q", ticket.PlaybackID) {
 		t.Fatalf("历史 create 必须恰好四字段: %v", receiver)
 	}

@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,9 +19,17 @@ type mediaServer struct {
 	controlURL   string
 	controlToken string
 	mediaIP      string
+	httpOrigin   string
 	httpPort     uint16
 	rtmpPort     uint16
 	rtspPort     uint16
+}
+
+func (s mediaServer) publicHTTPOrigin() string {
+	if s.httpOrigin != "" {
+		return s.httpOrigin
+	}
+	return "http://" + net.JoinHostPort(s.mediaIP, strconv.Itoa(int(s.httpPort)))
 }
 
 type gb28181ReceiverRequest struct {

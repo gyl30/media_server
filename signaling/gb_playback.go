@@ -6,9 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -167,8 +165,7 @@ func (s *infrastructureServer) startPlayback(ctx context.Context, deviceID, chan
 		s.tokens.mu.Unlock()
 		live.mu.Unlock()
 		deadline, _ := operationContext.Deadline()
-		host := net.JoinHostPort(s.media.server.mediaIP, strconv.Itoa(int(s.media.server.httpPort)))
-		psURL := (&url.URL{Scheme: "http", Host: host, Path: "/play/gb28181/" + id + "/" + value + ".ps"}).String()
+		psURL := s.media.server.publicHTTPOrigin() + "/play/gb28181/" + id + "/" + value + ".ps"
 		result <- prepared{ticket: playbackTicket{PlaybackID: id, PSURL: psURL, ExpiresAt: expiresAt, Deadline: deadline}}
 		timer := time.NewTimer(s.tokenTTL)
 		defer timer.Stop()

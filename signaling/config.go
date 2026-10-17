@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -46,6 +47,7 @@ func parseConfig(args []string) (config, error) {
 	flags.StringVar(&cfg.mediaServer.controlToken, "media-control-token", "", "bearer token for the media server control API")
 	flags.StringVar(&cfg.mediaServer.mediaIP, "media-ip", "127.0.0.1", "media server address advertised to clients and devices")
 	flags.UintVar(&mediaHTTPPort, "media-http-port", 8080, "media server HTTP port")
+	flags.StringVar(&cfg.mediaServer.httpOrigin, "media-http-origin", "", "public http/https origin for media URLs; empty uses media IP and HTTP port")
 	flags.UintVar(&mediaRTMPPort, "media-rtmp-port", 1935, "media server RTMP port")
 	flags.UintVar(&mediaRTSPPort, "media-rtsp-port", 8554, "media server RTSP port")
 	flags.DurationVar(&cfg.tokenTTL, "token-ttl", 60*time.Second, "lifetime of unconsumed stream authorization tokens")
@@ -94,6 +96,20 @@ func parseConfig(args []string) (config, error) {
 		return config{}, fmt.Errorf("invalid media control URL")
 	}
 	cfg.mediaServer.controlURL = strings.TrimSuffix(cfg.mediaServer.controlURL, "/")
+	if cfg.mediaServer.httpOrigin != "" {
+		origin, err := url.Parse(cfg.mediaServer.httpOrigin)
+		if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Hostname() == "" || origin.User != nil ||
+			(origin.Path != "" && origin.Path != "/") || strings.ContainsAny(cfg.mediaServer.httpOrigin, "?#") || origin.Opaque != "" || strings.HasSuffix(origin.Host, ":") {
+			return config{}, fmt.Errorf("invalid media HTTP origin")
+		}
+		if port := origin.Port(); port != "" {
+			value, err := strconv.ParseUint(port, 10, 16)
+			if err != nil || value == 0 {
+				return config{}, fmt.Errorf("invalid media HTTP port")
+			}
+		}
+		cfg.mediaServer.httpOrigin = strings.TrimSuffix(cfg.mediaServer.httpOrigin, "/")
+	}
 	mediaIP := net.ParseIP(cfg.mediaServer.mediaIP)
 	if mediaIP == nil || mediaIP.IsUnspecified() {
 		return config{}, fmt.Errorf("invalid media IP")

@@ -1,21 +1,28 @@
 // Minimal headless-Chrome driver over CDP (Node 22 global WebSocket). 用法：WEB_CONSOLE_URL=http://127.0.0.1:29090/ node tests/web_console/cdp.mjs tests/web_console/<脚本>.mjs
 import { spawn } from "node:child_process";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const port = Number(process.env.WEB_CONSOLE_CDP_PORT || 9333);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("invalid WEB_CONSOLE_CDP_PORT");
-const profile = mkdtempSync(join(tmpdir(), "msc-chrome-"));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let chrome;
 let browser;
 const logs = [];
+const audioFixture = process.env.WEB_CONSOLE_AUDIO_FIXTURE;
+const audioArgs = [];
+if (audioFixture) {
+  const file = resolve(audioFixture);
+  if (!statSync(file).isFile()) throw new Error("audio fixture must be a regular WAV file");
+  audioArgs.push("--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", `--use-file-for-fake-audio-capture=${file}`);
+}
+const profile = mkdtempSync(join(tmpdir(), "msc-chrome-"));
 try {
 let startError;
 chrome = spawn("google-chrome", ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", "about:blank"], { stdio: "ignore" });
+  "--no-first-run", "--no-default-browser-check", "--disable-gpu", "--hide-scrollbars", ...audioArgs, "about:blank"], { stdio: "ignore" });
 chrome.on("error", error => { startError = error; });
 let version;
 for (let attempt = 0; attempt < 50 && !version; attempt++) {
@@ -80,6 +87,15 @@ const api = {
   },
   async removeBeforeLoad(identifier) {
     await page("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+  },
+  async hide() {
+    const { targetId: background } = await send("Target.createTarget", { url: "about:blank" });
+    await send("Target.activateTarget", { targetId: background });
+    return background;
+  },
+  async show(background) {
+    await send("Target.activateTarget", { targetId });
+    await send("Target.closeTarget", { targetId: background });
   },
   async reload(wait = 2500) {
     await page("Page.reload", {});

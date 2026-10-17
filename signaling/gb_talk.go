@@ -3,10 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
+	"strings"
 )
 
 type talkTicket struct {
@@ -38,8 +36,8 @@ func (s *infrastructureServer) handleTalkCreate(writer http.ResponseWriter, requ
 		}
 		return
 	}
-	host := net.JoinHostPort(s.media.server.mediaIP, strconv.Itoa(int(s.media.server.httpPort)))
-	upload := (&url.URL{Scheme: "ws", Host: host, Path: "/publish/gb28181/audio/" + result.mediaID + "/" + result.uploadToken}).String()
+	origin := "ws" + strings.TrimPrefix(s.media.server.publicHTTPOrigin(), "http")
+	upload := origin + "/publish/gb28181/audio/" + result.mediaID + "/" + result.uploadToken
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(http.StatusCreated)

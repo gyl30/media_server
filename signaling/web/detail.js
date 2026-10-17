@@ -8,6 +8,7 @@ import {
   openDeviceDialog, deleteDevice, editState, startSource, stopSource, stopPush, renewPushURL, pushURLRows, playItem,
 } from "/devices.js";
 import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/player.js";
+import { TalkCapture } from "/talk.js";
 
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 const LIVE_LABEL = { preparing: "正在点播", inviting: "正在点播", stopping: "正在停止", cleanup_pending: "正在清理" };
@@ -20,6 +21,13 @@ export function mountDetail(root, ctx, kind, id) {
   const left = h("div", { class: "detail-col" });
   const right = h("div", { class: "detail-col" });
   let player = null;
+  let talkState = "stopped";
+  let talkError = "";
+  const talk = new TalkCapture((state, error = "") => {
+    talkState = state;
+    talkError = error;
+    if (mounted) update();
+  });
   const playbackHead = h("div", { class: "card-head" });
   const playbackBody = h("div", { class: "card-body" });
   right.append(h("section", { class: "card detail-player", "aria-label": "视频播放" }, playbackHead, playbackBody));
@@ -35,6 +43,7 @@ export function mountDetail(root, ctx, kind, id) {
     if (!mounted) return;
     const device = find();
     if (!device) {
+      void talk.stop();
       closePlayer();
       const confirmed = store.loaded && store.updatedAt >= mountedAt;
       if (!confirmed && !refreshing()) {
@@ -49,6 +58,7 @@ export function mountDetail(root, ctx, kind, id) {
       root.replaceChildren(page);
     }
     ctx.setTitle(device.name);
+    if (kind === "gb" && !device.raw.online) void talk.stop("设备已离线");
     if (kind === "gb" && device.raw.online) {
       syncChannels([id]);
     }
@@ -71,6 +81,11 @@ export function mountDetail(root, ctx, kind, id) {
         h("div", {}, h("h1", {}, device.name || "未命名"), h("div", { class: "line" },
           protoTag(device.protocol), h("span", {}, device.mode), badge(device.status.label, device.status.tone)))),
       h("div", { class: "head-actions" },
+        kind === "gb" ? h("button", { class: "btn", type: "button", dataset: { key: "talk" },
+          disabled: talkState === "stopping" || (talkState === "stopped" && !source.online),
+          onclick: () => talkState === "stopped" ? talk.start(id) : void talk.stop(),
+          title: "向该设备上送麦克风；设备回传声音仍由视频播放器独立开启" },
+        { stopped: "开始对讲", preparing: "取消对讲", transmitting: "停止对讲", stopping: "正在停止对讲…" }[talkState]) : null,
         kind === "rtsp" && !source.session
           ? h("button", { class: "btn primary", type: "button", dataset: { key: "start" }, onclick: () => void startSource(device) },
             icon("refresh", "sm"), "重试连接") : null,
@@ -88,6 +103,7 @@ export function mountDetail(root, ctx, kind, id) {
     if (kind === "gb") {
       const channels = device.channels || [];
       fields.push(["国标设备编号", h("span", { class: "mono" }, device.id)], ["注册状态", device.status.label],
+        ["对讲上传", talkError || { stopped: "未启动", preparing: "正在准备麦克风和设备连接", transmitting: "正在上送麦克风，设备听音未确认", stopping: "正在关闭采集和本次会话" }[talkState], true],
         ["最近心跳", raw.last_seen ? formatAgo(Date.parse(raw.last_seen)) : "—"],
         ["通道数量", raw.online ? (device.channels ? `${channels.length} 个，在线 ${channels.filter(channel => channel.status === "ON").length} 个` : "正在获取…") : "设备不在线"]);
     } else if (kind === "rtsp") {
@@ -262,6 +278,7 @@ export function mountDetail(root, ctx, kind, id) {
   }
 
   const onPageHide = () => {
+    void talk.stop();
     const closing = player;
     player = null;
     closing?.preview.closeForPageHide();
@@ -269,14 +286,18 @@ export function mountDetail(root, ctx, kind, id) {
     if (device) renderPlayback(device);
   };
   const onFullscreen = () => { if (player) renderPlayer(player, { onClose: () => { closePlayer(); update(); } }); };
+  const onVisibility = () => { if (document.hidden) void talk.stop(); };
   window.addEventListener("pagehide", onPageHide);
+  document.addEventListener("visibilitychange", onVisibility);
   document.addEventListener("fullscreenchange", onFullscreen);
 
   update();
   return { update, unmount() {
     mounted = false;
     window.removeEventListener("pagehide", onPageHide);
+    document.removeEventListener("visibilitychange", onVisibility);
     document.removeEventListener("fullscreenchange", onFullscreen);
+    void talk.stop();
     closePlayer();
     if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
   } };

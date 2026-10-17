@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"encoding/xml"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/exec"
@@ -226,7 +228,15 @@ func TestTalkRealMediaUpload(t *testing.T) {
 
 // 真实 Qt/SDL callback→FFmpeg PCMA→WebSocket→C++ RTP，仍非相机声学验收。
 func TestTalkQtCaptureMedia(t *testing.T) {
-	controlURL, probe := os.Getenv("GB_AUDIO_TEST_MEDIA_URL"), os.Getenv("GB_AUDIO_TEST_QT_PROBE")
+	testTalkCaptureMedia(t, "GB_AUDIO_TEST_QT_PROBE")
+}
+
+func TestTalkWebCaptureMedia(t *testing.T) {
+	testTalkCaptureMedia(t, "GB_AUDIO_TEST_WEB_PROBE")
+}
+
+func testTalkCaptureMedia(t *testing.T, probeVariable string) {
+	controlURL, probe := os.Getenv("GB_AUDIO_TEST_MEDIA_URL"), os.Getenv(probeVariable)
 	if controlURL == "" || probe == "" {
 		t.Skip("requires isolated media_server and desktop_talk_probe")
 	}
@@ -241,7 +251,30 @@ func TestTalkQtCaptureMedia(t *testing.T) {
 	w := newBroadcastWire(t)
 	w.s.media.server.controlURL = controlURL
 	w.s.media.server.httpPort = uint16(port)
-	api := httptest.NewServer(w.s.handler())
+	api := httptest.NewUnstartedServer(w.s.handler())
+	if certificate := os.Getenv("GB_AUDIO_TEST_TLS_CERT"); certificate != "" {
+		if probeVariable != "GB_AUDIO_TEST_WEB_PROBE" {
+			t.Fatal("TLS gateway fixture is only configured for the browser probe")
+		}
+		pair, err := tls.LoadX509KeyPair(certificate, os.Getenv("GB_AUDIO_TEST_TLS_KEY"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		proxy := httputil.NewSingleHostReverseProxy(address)
+		handler := w.s.handler()
+		api.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if strings.HasPrefix(request.URL.Path, "/publish/gb28181/audio/") {
+				proxy.ServeHTTP(writer, request)
+				return
+			}
+			handler.ServeHTTP(writer, request)
+		})
+		api.TLS = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+		api.StartTLS()
+		w.s.media.server.httpOrigin = api.URL
+	} else {
+		api.Start()
+	}
 	t.Cleanup(api.Close)
 	rtp, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
@@ -332,7 +365,7 @@ func TestTalkQtCaptureMedia(t *testing.T) {
 			}
 			pcm = append(pcm, float64(magnitude)/32768)
 		}
-		if os.Getenv("SDL_AUDIODRIVER") == "dummy" && !bytes.Equal(packet[12:count], bytes.Repeat([]byte{0xd5}, 160)) {
+		if probeVariable == "GB_AUDIO_TEST_QT_PROBE" && os.Getenv("SDL_AUDIODRIVER") == "dummy" && !bytes.Equal(packet[12:count], bytes.Repeat([]byte{0xd5}, 160)) {
 			t.Fatal("real SDL dummy silence did not survive FFmpeg/WS/RTP")
 		}
 	}

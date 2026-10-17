@@ -14,7 +14,7 @@
 - stop 先断 WS 到 owner 的连接、abort 上传、关闭采集，再精确 DELETE 本次 ID。启动中停止保留 owner 到 POST 有界结束，迟到 201 仍清理；关闭窗口沿既有异步收尾模式等待，不阻塞 GUI 等网络，不用额外 closing 标志。
 - 成功响应完全丢失时可能拿不到 ID，仍受 Go 请求取消和媒体 20 秒期限约束，不 GET 后盲删其他会话。POST 15 秒、DELETE 5 秒，不自动重试。
 
-Qt 网络 TLS 错误不会忽略。当前 Go 发布的是 LAN IPv4 的 `ws` URL，WSS 网关地址发布和 Web 麦克风安全上下文尚未补齐。
+Qt 网络 TLS 错误不会忽略。本增量完成时 Go 只发布 LAN `ws` URL；后续[Web采集与可信HTTPS/WSS](qt_monitor_client_stage6_web_talk.md)补充公开媒体origin，历史Qt测试结果不因此扩大为真实WSS或物理听音验收。
 
 ## 构建依赖
 

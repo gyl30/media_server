@@ -135,15 +135,15 @@ func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs,
 	expiresAt := s.live.sip.now().Add(s.tokenTTL)
 	s.tokens.tokens[value] = streamToken{streamID: streamID, expiresAt: expiresAt}
 	server := s.media.server
-	httpHost := net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.httpPort)))
+	httpOrigin := server.publicHTTPOrigin()
 	path := "/" + streamID + "/" + value
 	result := playbackURLs{
 		StreamID: streamID, Token: value, ExpiresAt: expiresAt,
 		RTMPURL: (&url.URL{Scheme: "rtmp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtmpPort))), Path: path}).String(),
 		RTSPURL: (&url.URL{Scheme: "rtsp", Host: net.JoinHostPort(server.mediaIP, strconv.Itoa(int(server.rtspPort))), Path: path}).String(),
-		FLVURL:  (&url.URL{Scheme: "http", Host: httpHost, Path: path + ".flv"}).String(),
-		HLSURL:  (&url.URL{Scheme: "http", Host: httpHost, Path: "/play/hls" + path + "/index.m3u8"}).String(),
-		WHEPURL: (&url.URL{Scheme: "http", Host: httpHost, Path: "/play/whep" + path}).String(),
+		FLVURL:  httpOrigin + path + ".flv",
+		HLSURL:  httpOrigin + "/play/hls" + path + "/index.m3u8",
+		WHEPURL: httpOrigin + "/play/whep" + path,
 	}
 	s.logger.Info("play URLs issued", "stream_id", streamID, "token", value, "expires_at", expiresAt,
 		"rtmp_url", result.RTMPURL, "rtsp_url", result.RTSPURL, "flv_url", result.FLVURL, "hls_url", result.HLSURL, "whep_url", result.WHEPURL)
