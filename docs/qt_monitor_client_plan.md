@@ -101,3 +101,5 @@ PTZ 错误身份增量：START 超时/取消且独立 STOP 成功现返回 `ptz_
 第二机实际播放补验：clean基线347decb的真实Qt窗口探针在TEST通过大华单路12秒及同源四路30秒，75/574项断言零失败；四路停三留一继续呈现，全部进程正常回收。私有Pulse记录到归属于Qt PID的非零PCM，认证SSH/Xvfb截图确认实际相机画面；它们是数字音频和虚拟屏幕，非物理听音/显示或安装版程序外部播放操作。原scp遇UNIX socket的外层INCOMPLETE记录保留，另行补收普通文件与SHA。未改生产实现或重跑全套回归，公开分发和完整平台仍未GO，详见[第二机播放补验](qt_monitor_client_stage7_second_play.md)。
 
 内部包追溯增量：修正CMake编译器路径为STRING时版本漏记，完整打包CLI真实RED/GREEN通过，准确记录Ubuntu GCC16.0.1 experimental。三份实际GCC运行库另与本地16.2.0构建产物逐字节匹配，签名源码归档及有限源码核对保留；不把编译器与运行库版本混同，不据此关闭项目许可证、源码交付或公开分发门槛。详见[运行包来源补证](qt_monitor_client_package_provenance.md)。
+
+稳定单一SIP平台下的音量对照已接续：首轮监督工具完成标记竞态保留INCOMPLETE，实际AST回归RED/GREEN修正后另建独立实验，三轮协议/采集/配置及97恢复完整，原比较器音量来源验证true。原严格PTS前提和完整五频/10dB条件仍未满足，比较仍INCONCLUSIVE；不能据部分频带变化采纳直送路线或宣布广播声音PASS。旧失败、源码、ELF、媒体与高水位连续性证据均保留，详见[单一平台音量对照](qt_monitor_client_stage6_stable_volume.md)。
