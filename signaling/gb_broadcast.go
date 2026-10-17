@@ -32,11 +32,8 @@ type broadcastPeer struct {
 }
 
 type broadcastResult struct {
-	sourceID    string
 	mediaID     string
 	uploadToken string
-	peer        broadcastPeer
-	ctx         context.Context // 媒体 owner 必须监听 Done；远端 BYE/下线不会取消调用方的父 ctx。
 	err         error
 }
 
@@ -160,7 +157,7 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 	if err != nil {
 		session.cancel(err)
 	}
-	session.result <- broadcastResult{sourceID: session.sourceID, mediaID: session.mediaID, uploadToken: token, peer: peer, ctx: session.ctx, err: err}
+	session.result <- broadcastResult{mediaID: session.mediaID, uploadToken: token, err: err}
 	<-session.ctx.Done()
 	// 明确拒绝 create 时没有取得媒体所有权；响应不确定则以本次唯一 ID 补偿删除。
 	var rejection *mediaServerHTTPRejection

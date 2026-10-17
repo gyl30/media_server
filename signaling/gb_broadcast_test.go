@@ -314,8 +314,23 @@ func TestBroadcastWireOrderingAndACK(t *testing.T) {
 				var mediaID string
 				select {
 				case result := <-results:
-					if result.err != nil || result.sourceID != body.SourceID || result.peer.ssrc != 123456789 || result.peer.endpoint.rtcp.Port() != 20001 {
+					if result.err != nil || !validStreamToken(result.mediaID) || !validStreamToken(result.uploadToken) {
 						t.Fatalf("broadcast result: %+v", result)
+					}
+					for _, path := range []string{"/gb28181/audio/create", "/gb28181/audio/configure"} {
+						select {
+						case call := <-w.mediaCalls:
+							if call.path != path || call.body["session_id"] != result.mediaID {
+								t.Fatalf("media ownership contract: %+v", call)
+							}
+							if path == "/gb28181/audio/configure" && (len(call.body) != 6 || call.body["upload_token"] != result.uploadToken ||
+								call.body["remote_address"] != "127.0.0.1" || call.body["rtp_port"] != float64(20000) ||
+								call.body["rtcp_port"] != float64(20001) || call.body["ssrc"] != float64(123456789)) {
+								t.Fatalf("media peer configuration: %+v", call)
+							}
+						case <-time.After(time.Second):
+							t.Fatalf("missing media request: %s", path)
+						}
 					}
 					mediaID = result.mediaID
 				case <-time.After(3 * time.Second):
@@ -354,7 +369,6 @@ func TestBroadcastCancellationAndDeviceFence(t *testing.T) {
 			w.business(t, attempt.sn, 200)
 			invite, answer := w.invite(t, attempt.sourceID)
 			beforeACK := strings.HasSuffix(action, "before-ACK")
-			var mediaContext context.Context
 			if !beforeACK {
 				w.ack(t, invite, answer, false, invite.CSeq().SeqNo)
 				select {
@@ -362,7 +376,6 @@ func TestBroadcastCancellationAndDeviceFence(t *testing.T) {
 					if result.err != nil {
 						t.Fatal(result.err)
 					}
-					mediaContext = result.ctx
 				case <-time.After(3 * time.Second):
 					t.Fatal("broadcast did not start")
 				}
@@ -425,11 +438,11 @@ func TestBroadcastCancellationAndDeviceFence(t *testing.T) {
 				t.Fatal("broadcast cleanup did not join")
 			}
 			if !beforeACK {
-				if mediaContext == nil || mediaContext.Err() == nil {
-					t.Fatal("media caller did not receive broadcast termination")
+				if session.ctx.Err() == nil {
+					t.Fatal("broadcast owner did not receive termination")
 				}
-				if action == "remote-BYE" && !errors.Is(context.Cause(mediaContext), errBroadcastRemoteBye) {
-					t.Fatalf("remote end cause: %v", context.Cause(mediaContext))
+				if action == "remote-BYE" && !errors.Is(context.Cause(session.ctx), errBroadcastRemoteBye) {
+					t.Fatalf("remote end cause: %v", context.Cause(session.ctx))
 				}
 			}
 			if beforeACK {
