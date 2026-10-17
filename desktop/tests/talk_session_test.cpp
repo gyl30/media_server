@@ -1,5 +1,6 @@
 #include <SDL.h>
 #include <QTest>
+#include <QProcess>
 #include <QLineEdit>
 #include <QSettings>
 #include <QSignalSpy>
@@ -148,6 +149,78 @@ class talk_session_test final : public QObject
         QCOMPARE(SDL_InitSubSystem(SDL_INIT_AUDIO), 0);
     }
     void cleanupTestCase() { SDL_QuitSubSystem(SDL_INIT_AUDIO); }
+
+    void bounded_probe_data()
+    {
+        QTest::addColumn<QString>("duration");
+        QTest::addColumn<bool>("early_close");
+        QTest::addColumn<int>("exit_code");
+        QTest::newRow("default-two-seconds") << QString() << false << 0;
+        QTest::newRow("explicit-twelve-seconds") << QStringLiteral("12") << false << 0;
+        QTest::newRow("early-upload-close") << QStringLiteral("2") << true << 1;
+        QTest::newRow("invalid-zero") << QStringLiteral("0") << false << 2;
+        QTest::newRow("invalid-too-long") << QStringLiteral("31") << false << 2;
+        QTest::newRow("invalid-text") << QStringLiteral("invalid") << false << 2;
+    }
+
+    void bounded_probe()
+    {
+        QFETCH(QString, duration);
+        QFETCH(bool, early_close);
+        QFETCH(int, exit_code);
+        talk_fixture fixture;
+        QVERIFY(fixture.listen());
+        QProcess probe;
+        QStringList arguments{fixture.base().toString(), QStringLiteral("34020000001320000089")};
+        if (!duration.isEmpty())
+        {
+            arguments.append(duration);
+        }
+        probe.start(QCoreApplication::applicationDirPath() + QStringLiteral("/desktop_talk_probe"), arguments);
+        if (early_close)
+        {
+            QTRY_VERIFY_WITH_TIMEOUT(fixture.peer, 2000);
+            fixture.peer->close();
+        }
+        QTRY_COMPARE_WITH_TIMEOUT(probe.state(), QProcess::NotRunning, 15000);
+        const auto output = probe.readAllStandardOutput();
+        const auto diagnostic = output + probe.readAllStandardError();
+        QCOMPARE(probe.exitStatus(), QProcess::NormalExit);
+        QVERIFY2(probe.exitCode() == exit_code, diagnostic.constData());
+        if (exit_code == 2)
+        {
+            QCOMPARE(fixture.creates, 0);
+            QCOMPARE(fixture.connections, 0);
+            QVERIFY(fixture.deletes.isEmpty());
+            return;
+        }
+        const auto report = QJsonDocument::fromJson(output).object();
+        QVERIFY2(!report.isEmpty(), diagnostic.constData());
+        QCOMPARE(report.value(QStringLiteral("progress_scope")).toString(), QStringLiteral("local_ws_enqueue"));
+        QCOMPARE(report.value(QStringLiteral("complete")).toBool(), !early_close);
+        QCOMPARE(fixture.creates, 1);
+        QCOMPARE(fixture.connections, 1);
+        QCOMPARE(fixture.deletes, QStringList{fixture.id});
+        if (early_close)
+        {
+            QVERIFY(!report.value(QStringLiteral("error")).toString().isEmpty());
+            QCOMPARE(report.value(QStringLiteral("observed_ms")).toInteger(), 0);
+            return;
+        }
+        const int seconds = duration.isEmpty() ? 2 : duration.toInt();
+        QVERIFY(report.value(QStringLiteral("error")).toString().isEmpty());
+        QVERIFY(report.value(QStringLiteral("observed_ms")).toInteger() >= seconds * 1000);
+        const auto buckets = report.value(QStringLiteral("packets_per_second")).toArray();
+        QCOMPARE(buckets.size(), seconds);
+        for (const auto& count : buckets)
+        {
+            QVERIFY(count.toInteger() >= 25);
+        }
+        for (const auto& packet : fixture.packets)
+        {
+            QCOMPARE(packet, QByteArray(160, char(0xd5)));
+        }
+    }
 
     void capture_encode_upload_and_stop()
     {

@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 为真实设备后续验收补齐[公共对讲探针有界观察](qt_monitor_client_stage6_talk_probe.md)：默认2秒保留，新增2–30秒、独立单调秒桶与停止前观察时长，不把DELETE时间计入上传。Normal/ASan+UBSan+LSan各1/1 CTest、17项QTest零失败/跳过；原生产SIP/C++默认组合各60包抽验及清理通过，真实相机仍待验。仅改测试与构建依赖，不改生产对讲/授权，不把本地WS接受当作设备收包，私有监督器重绑失败保留，七阶段未GO。
+
 2026-10-18 补齐[第二机16个独立源](qt_monitor_client_stage7_second_multisource.md)：clean d06f0c0内部包在TEST通过实际生产monitor_window/CPU解码，8AAC/4PCMA/4合法无音轨，30.002秒每格解码749–750帧、paint748–750帧，1950断言零失败，停15留1及所有源自然EOF、receiver/端口/进程回收通过。前两轮地址工具错误与真实libproxy动态模块遗漏均保留FAIL，后者以打包资源和实际映射RED/GREEN修正，未放宽健康门槛。offscreen/SDL dummy不是物理屏幕/声音或正式容量；公开分发和实际相机公共对讲/双向声学仍未收口，七阶段未GO。
 
 2026-10-18 补齐[倍率中临时断供与恢复](qt_monitor_client_stage4_scale_stall.md)：仅新增测试行，实际2×后停止夹具四秒而不暂停或断开原socket；固定25–26秒非空窗口确认Paint/输入/估算游标平台、SDL软件队列零且PLAYING，恢复仍在原GET/owner/decoder以实际2×完整呈现。Normal及ASan定向各3项QTest零失败/跳过通过；完整ASan+UBSan+LSan Scale组1/1、13项QTest零失败/跳过、563.50秒通过，不将数字gate当作所有内部缓存耗尽或物理声学证明，也不冒称整个桌面全套。无生产状态、接口或线程新增，后续转入第二机16路与实际产品对讲边界，七阶段未GO；本阶段不删除证据。
