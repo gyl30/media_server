@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 独立补齐[对讲探针首媒体与中途停滞负对照](qt_monitor_client_legacy_test_audit.md#9-独立补齐首媒体与中途停滞负对照)：仅测试目标使用真实SDL设备/线程并薄供PCM，原生产采集、编码、WS和DELETE不变；分别证明5秒无首媒体拒绝，以及完整8秒总量/末进展健康但中间缺供仍拒绝。两份仓库外禁用判据变体RED保留，Normal与ASan+UBSan+LSan各1/1、19项QTest零失败/跳过；不冒称484项全套，也不替代物理麦克风、摄像机听音或整平台GO。
+
 2026-10-18 完成[公共对讲→真实大华并行Qt回看](qt_monitor_client_dahua_public_talk.md)的限定数字链验证：run06首媒体520ms后完整12秒、600次本地WS及600个连续PCMA RTP包，预声明数字强度门槛通过；真实Qt60.099秒/315项覆盖整个talk并正常释放。保留run01–05全部失败，尤其run05原首秒21包退出1不倒改PASS。仅测试探针改为独立首媒体期限再开始稳态，25包/秒与末进展门槛不变，无新生产状态。独立RTCP/ICMP、旧严格声学INCONCLUSIVE、物理听音、完整PTZ及公开分发边界仍保留，七阶段未GO。
 
 按用户追加要求进行[遗留代码与测试深度审计](qt_monitor_client_legacy_test_audit.md)：子代理分别复核Qt回放/录制/对讲及Go/Web/音频发送链，先证明生产调用关系。删除仅三个无消费者的旧对讲返回副本；保留内部SIP身份、取消上下文及全部测试。修复可复现的浏览器CDP误连归属问题，RED/GREEN及真实Chrome两种端口通过，Go全量test/race/vet与worklet通过。完整Normal及ASan+UBSan+LSan桌面各10/10、482项QTest零失败/跳过通过；新版探针另补Normal17项，后端音频Normal/ASan各3/3通过。Normal旧探针与新版补跑的版本边界、重叠CTest日志归属错误及完整恢复、Boost运行库警告均如实保留，不据局部门禁宣布整个目标GO。

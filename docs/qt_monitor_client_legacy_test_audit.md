@@ -152,10 +152,40 @@ Normal全套先构建`2bb192a`桌面代码，其中原探针17项随后另以新
 
 ## 8. 未完成边界与最终限制
 
-1. 本轮审计快照尚未补齐 probe 的 no-first-media / mid-stream-stall 故障边界，不以已有正常 probe 结果替代这些负对照。
+1. 上述审计与482项全套的历史快照尚未补齐 probe 的 no-first-media / mid-stream-stall 故障边界；随后以第9节独立负对照补齐，不把旧正常用例倒写成已经覆盖，也不将新增定向结果冒充重跑全套。
 2. 数字 PCMA/RTP、WS 包增长或回传采集不等于摄像机扬声器实际发声、物理麦克风或同步双向声学通过。已有物理声学结论仍为 INCONCLUSIVE，不能据本文升级。
 3. Qt 发布许可与第三方分发闭合不在本轮审计范围，不能据代码/测试清理给产品发布 GO。
 4. 本轮没有证明所有输入×输出、真实 NVR seek/Scale 或全部 PTZ 动作都通过，也未运行新的容量或长期稳定性测试。
 5. `desktop/README.md` 中关于 seek/倍速及笼统验收状态的过时表述由主执行代理单独修订；不改写历史实验在当时未执行的事实。
 
 结论：已删除的仅为三个经调用链证明无生产消费者的返回副本，已修复可复现的浏览器测试归属错误及探针测量分层，未删除任何测试。保留项都有实际产品、异步所有权或独立测试职责。独立只读复审没有确认新的P0/P1；本轮局部变更和上述实际回归通过，不构成整产品GO。未删除原始证据或失败日志，未修改main、第三方依赖或相机配置。
+
+## 9. 独立补齐首媒体与中途停滞负对照
+
+在 `1192dff` 干净工作区接续本节。只增加测试专用 `desktop_talk_fault_probe` 和 `talk_capture_fault.cpp`，复用同一 `talk_probe.cpp`、静态 `desktop_media` 及真实 `SDL_OpenAudioDevice()`。链接 wrapper 只修改送入原采集回调的样本数量；真实 SDL dummy 设备、回调线程、Qt 单调时钟、FFmpeg PCMA 编码、WebSocket 发送及精确 DELETE 仍执行。不修改生产 `talk_session`、原探针 CLI、产品配置、编码或健康门槛，不使用 SIGSTOP 阻塞整个探针。
+
+故障模式仅存在于额外测试目标，以子进程环境 `QT_TEST_CAPTURE_FAULT` 选择。正常探针不链接 wrapper，也不读取该变量。两种合成输入故障为：
+
+- **无首媒体**：每100ms至多交付一个16位样本，维持生产3秒输入活性检查，但5秒内不足以编码首个160样本包。独立首媒体 timer 必须触发，而不是提前由麦克风失活或网络错误结束。断言0包、首媒体延迟为null、观察时长0、错误精确为 `probe first media timeout`、退出1且恰一次准确ID的DELETE。
+- **中途停滞并恢复**：先正常供给2秒，在2.0–5.5秒之间同样薄供样本，再恢复。3.5秒缺供远大于生产3200字节PCM队列最多200ms的可发送量；完整观察8秒，要求总包数至少200、末秒及最后进展健康、没有生产错误，但中间至少一秒低于25包，故 `complete=false`、退出1并精确DELETE。它专门排除“只看总量和结尾就通过”的假阳性。
+
+原17项和断言全部保留，仅新增两项负对照，故本组共19项。CTest期限从30秒改50秒，容纳原约22秒和新增约13秒的串行窗口，不改变任何单项首媒体、观察或清理期限。
+
+### RED 与 GREEN 的原始证据
+
+DEV独立证据目录：
+
+```text
+/var/tmp/qt-talk-capture-fault-1192dff-4IJCW2mT/
+```
+
+| 运行 | 实际结果与证据 |
+| --- | --- |
+| RED：仅禁用首媒体timer | 仓库外 `no-first-disabled.cpp` 保留原迟到首包检查，但去掉5秒timer。子进程约20.4秒才结束，12秒有界等待断言失败；测试退出1，`red-no-first.log/.exit`。没有把此变体提交或覆盖正常探针 |
+| RED：仅禁用中间秒桶判据 | 仓库外 `mid-stall-disabled.cpp` 保持总量和最后进展检查。实际8秒225包、末进展8000ms、错误为空，桶为 `[49,50,1,0,0,24,50,50]`，却错误报告 `complete=true`、探针退出0；新增回归拒绝它并退出1，`red-mid-stall.log/.exit` |
+| Normal GREEN | `normal-ctest.exit=0`，1/1 CTest、19项QTest零失败/跳过/blacklisted，35.27秒。无首媒体5043ms触发正确期限；中途故障观察8000ms、225包，桶 `[49,51,0,0,0,25,50,49]`、末进展8000ms、错误为空，正确报告不完整。详见 `normal-ctest.log`、`normal-LastTest.log` |
+| ASan+UBSan+LSan GREEN | `asan-test.exit=0`，1/1 CTest、19项QTest零失败/跳过/blacklisted，35.46秒。无首媒体5050ms结束；中途故障观察8001ms、225包，桶 `[50,49,1,0,0,24,50,51]`、末进展7999ms、错误为空，正确拒绝。详见 `asan-test.log`、`asan-LastTest.log`；未发现ASan/LSan错误或UBSan runtime error |
+
+构建与复现保留 `normal-build.log/.exit`、`normal-rebuild.log`、`asan-build.log/.exit`、`red-build.log`、`build_red.py`、两份禁用判据的源码和相应私有ELF。原 `source.diff/source.sha256` 对应受测代码；测试后仅将新wrapper两处函数签名换行为clang-format 20.1.8格式，未改变token。格式后差异与源码校验另存 `final-source.diff/final-source.sha256`，不覆盖受测快照；全部既有证据由 `SHA256SUMS` 覆盖，清单不包含自身。
+
+本节只证明两种本地 `local_ws_enqueue` 判据真实生效，并保留HTTP/WS生命周期清理。接收端观察到的包用于补充数据完整性，不用“服务端未读取”冒充本地采集停滞。这是合成SDL边界故障，不是物理麦克风异常、摄像机收包/解码或扬声器听音验收。新增19项定向运行不等于重新完成484项全套；第7节482项全套保留其原版本边界，物理声学、许可及整平台GO边界不变。

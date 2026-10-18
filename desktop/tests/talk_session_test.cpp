@@ -12,6 +12,7 @@
 #include <QTreeWidget>
 #include <QTemporaryDir>
 #include <QWebSocketServer>
+#include <QProcessEnvironment>
 
 #include "desktop/talk_session.h"
 #include "desktop/monitor_window.h"
@@ -229,6 +230,74 @@ class talk_session_test final : public QObject
         {
             QVERIFY(count.toInteger() >= 25);
         }
+        for (const auto& packet : fixture.packets)
+        {
+            QCOMPARE(packet, QByteArray(160, char(0xd5)));
+        }
+    }
+
+    void capture_fault_probe_data()
+    {
+        QTest::addColumn<QString>("mode");
+        QTest::newRow("no-first-media") << QStringLiteral("no-first");
+        QTest::newRow("mid-stream-stall-and-resume") << QStringLiteral("mid-stall");
+    }
+
+    void capture_fault_probe()
+    {
+        QFETCH(QString, mode);
+        talk_fixture fixture;
+        QVERIFY(fixture.listen());
+        QProcess probe;
+        auto environment = QProcessEnvironment::systemEnvironment();
+        environment.insert(QStringLiteral("QT_TEST_CAPTURE_FAULT"), mode);
+        probe.setProcessEnvironment(environment);
+        const bool no_first = mode == QStringLiteral("no-first");
+        probe.start(QCoreApplication::applicationDirPath() + QStringLiteral("/desktop_talk_fault_probe"),
+                    {fixture.base().toString(), QStringLiteral("34020000001320000089"), no_first ? QStringLiteral("2") : QStringLiteral("8")});
+        QTRY_COMPARE_WITH_TIMEOUT(probe.state(), QProcess::NotRunning, 12000);
+        const auto output = probe.readAllStandardOutput();
+        const auto diagnostic = output + probe.readAllStandardError();
+        qInfo().noquote() << output;
+        QCOMPARE(probe.exitStatus(), QProcess::NormalExit);
+        QVERIFY2(probe.exitCode() == 1, diagnostic.constData());
+        const auto report = QJsonDocument::fromJson(output).object();
+        QVERIFY2(!report.isEmpty(), diagnostic.constData());
+        QCOMPARE(report.value(QStringLiteral("progress_scope")).toString(), QStringLiteral("local_ws_enqueue"));
+        QCOMPARE(report.value(QStringLiteral("observation_anchor")).toString(), QStringLiteral("first_local_ws_packet"));
+        QCOMPARE(report.value(QStringLiteral("first_media_deadline_ms")).toInt(), 5000);
+        QVERIFY(!report.value(QStringLiteral("complete")).toBool());
+        QCOMPARE(fixture.creates, 1);
+        QCOMPARE(fixture.connections, 1);
+        QCOMPARE(fixture.deletes, QStringList{fixture.id});
+        if (no_first)
+        {
+            QCOMPARE(report.value(QStringLiteral("error")).toString(), QStringLiteral("probe first media timeout"));
+            QVERIFY(report.value(QStringLiteral("first_media_latency_ms")).isNull());
+            QCOMPARE(report.value(QStringLiteral("packets")).toInteger(), 0);
+            QCOMPARE(report.value(QStringLiteral("observed_ms")).toInteger(), 0);
+            QVERIFY(report.value(QStringLiteral("elapsed_ms")).toInteger() >= 5000);
+            QVERIFY(fixture.packets.isEmpty());
+            return;
+        }
+        QVERIFY(report.value(QStringLiteral("error")).toString().isEmpty());
+        QVERIFY(report.value(QStringLiteral("first_media_latency_ms")).isDouble());
+        const auto observed = report.value(QStringLiteral("observed_ms")).toInteger();
+        QVERIFY(observed >= 8000);
+        QVERIFY(observed - report.value(QStringLiteral("last_progress_ms")).toInteger() < 1000);
+        // 总量和末进展均健康，必须由中间秒桶识别短暂停供，不能只检查最终包数。
+        QVERIFY(report.value(QStringLiteral("packets")).toInteger() >= 200);
+        const auto buckets = report.value(QStringLiteral("packets_per_second")).toArray();
+        QCOMPARE(buckets.size(), 8);
+        QVERIFY(buckets.first().toInteger() >= 25);
+        QVERIFY(buckets.last().toInteger() >= 25);
+        bool stalled = false;
+        for (int i = 1; i < buckets.size() - 1; ++i)
+        {
+            stalled = stalled || buckets[i].toInteger() < 25;
+        }
+        QVERIFY(stalled);
+        QVERIFY(fixture.packets.size() >= 200);
         for (const auto& packet : fixture.packets)
         {
             QCOMPARE(packet, QByteArray(160, char(0xd5)));
