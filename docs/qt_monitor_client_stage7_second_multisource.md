@@ -14,12 +14,15 @@
 | --- | --- |
 | 归档 | `91fc9fde58a51480df9305754094ade85c49f5ba27156ad73cbac99ca75c0355` |
 | manifest（git_dirty=false） | `250917ea868a1238fc49cee7f4ffc3ba698c21dbb4f8b25083e2ab91bd2ff505` |
-| gb_monitor | `54e1aac16d9697ddcef13d058425ec6ce3a2b7a4588659b749ffa54bb4ee57b1` |
+| 构建树 gb_monitor（安装前） | `54e1aac16d9697ddcef13d058425ec6ce3a2b7a4588659b749ffa54bb4ee57b1` |
+| 包内及TEST安装版 gb_monitor | `8dcf4a71e613f8dcee9aae3dbc1875c0db0b7026b283a647bf2f6ba3461273d8` |
 | supplemental playback probe | `fe3d4dd5340146c4480103a5f9aa238e7b75f23c26e337a8040950f4dd9978c1` |
 | media_server | `45f0c48affb7b866578178f5298fe1291d6c6efbeab7f79c34366f54dda4fde4` |
 | signaling | `592cc54945cd2ad5393284b8e21db30e517a6933d48e839fa66ecfbac31c8501` |
 
 probe是单列工具，不篡改包manifest冒充产品安装程序；当前构建日志和源码SHA将它关联到此HEAD。TEST逐文件SHA、ldd-r及真实Qt maps核对通过，包括[动态libproxy闭包修复](qt_monitor_client_runtime_proxy.md)。63次maps采样未见包外非glibc DSO，不扩大为排除了任何采样间隔内的瞬态dlopen。公开发行许可仍BLOCKED。
+
+2026-10-18独立只读复核补正：上表原来未区分构建树与安装ELF。`desktop/package_internal_runtime.py:175`执行`cmake --install`，`desktop/CMakeLists.txt:24`的`$ORIGIN/../lib`使生成安装脚本执行RPATH_CHANGE，因此同为12473616字节的ELF具有不同SHA。manifest的`build_binary_sha256`记录54e1…，`files["bin/gb_monitor"]`记录8dcf…，不能互换。已在TEST原包`/var/tmp/qt-second16-runtime-d06f0c0-2xHxobof/runtime/bin/gb_monitor`及同目录原tar成员实际复算8dcf…；原归档及manifest的SHA仍与上表一致。未替换原包、修改manifest或重跑媒体。
 
 ## 预设门槛与实际结果
 
