@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 接手补齐[安装版录像控制与主动关闭](qt_monitor_client_stage7_installed_controls.md)：真实库存、外部XTest、实际Scale2→1和seek5；固定窗口显示约25.012→50.271→24.954fps，归属Qt的数字PCM持续非零，播放中主窗WM_DELETE后113.754ms退出0，唯一DELETE真实上游204、BYE/200及receiver/端口/进程回收已核对。run01无Scale2及关窗失败、后续工具输入/启动/中断和原FAIL_CLEANUP均保留；不将DELETE回写已退出Qt时的下游取消冒称Qt收到了204。另核查并收录[授权前挂起关闭](qt_monitor_client_stage7_pending_close.md)的独立PASS。七阶段与遗留审计的当前收口表见新报告，物理声学和公开分发仍未GO；下文历史快照保持原受测版本和范围。
+
 2026-10-18 保存[安装版Qt源替换与服务重启观察](qt_monitor_client_stage7_source_cycle.md)：真实安装ELF、外部XTest、独立Xvfb/Pulse下同push设备A→B→C，B/C各12.1秒实际解码/显示增长并有880/1320Hz数字输出，后端中断后同DB不恢复旧媒体，手动新发布与观看恢复，Qt正常WM_DELETE退出0。A缺两张活跃截图的完整窗口仍PARTIAL；两轮原始FAIL_CLEANUP保留，第二轮最终FFmpeg发布者TERM8秒未退出需KILL，虽设备/receiver/PID/端口最终归零也不宣称整轮PASS。未改生产、未重跑覆盖失败；完整关闭验收、物理声学与许可边界仍未GO。
 
 2026-10-18 独立补齐[对讲探针首媒体与中途停滞负对照](qt_monitor_client_legacy_test_audit.md#9-独立补齐首媒体与中途停滞负对照)：仅测试目标使用真实SDL设备/线程并薄供PCM，原生产采集、编码、WS和DELETE不变；分别证明5秒无首媒体拒绝，以及完整8秒总量/末进展健康但中间缺供仍拒绝。两份仓库外禁用判据变体RED保留，Normal与ASan+UBSan+LSan各1/1、19项QTest零失败/跳过；不冒称484项全套，也不替代物理麦克风、摄像机听音或整平台GO。
