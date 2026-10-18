@@ -182,7 +182,7 @@ class talk_session_test final : public QObject
             QTRY_VERIFY_WITH_TIMEOUT(fixture.peer, 2000);
             fixture.peer->close();
         }
-        QTRY_COMPARE_WITH_TIMEOUT(probe.state(), QProcess::NotRunning, 15000);
+        QTRY_COMPARE_WITH_TIMEOUT(probe.state(), QProcess::NotRunning, 20000);
         const auto output = probe.readAllStandardOutput();
         const auto diagnostic = output + probe.readAllStandardError();
         QCOMPARE(probe.exitStatus(), QProcess::NormalExit);
@@ -197,6 +197,8 @@ class talk_session_test final : public QObject
         const auto report = QJsonDocument::fromJson(output).object();
         QVERIFY2(!report.isEmpty(), diagnostic.constData());
         QCOMPARE(report.value(QStringLiteral("progress_scope")).toString(), QStringLiteral("local_ws_enqueue"));
+        QCOMPARE(report.value(QStringLiteral("observation_anchor")).toString(), QStringLiteral("first_local_ws_packet"));
+        QCOMPARE(report.value(QStringLiteral("first_media_deadline_ms")).toInt(), 5000);
         QCOMPARE(report.value(QStringLiteral("complete")).toBool(), !early_close);
         QCOMPARE(fixture.creates, 1);
         QCOMPARE(fixture.connections, 1);
@@ -209,7 +211,18 @@ class talk_session_test final : public QObject
         }
         const int seconds = duration.isEmpty() ? 2 : duration.toInt();
         QVERIFY(report.value(QStringLiteral("error")).toString().isEmpty());
+        const auto latency = report.value(QStringLiteral("first_media_latency_ms"));
+        QVERIFY(latency.isDouble());
+        QVERIFY(latency.toInteger() >= 0 && latency.toInteger() < 5000);
         QVERIFY(report.value(QStringLiteral("observed_ms")).toInteger() >= seconds * 1000);
+        const auto last_progress = report.value(QStringLiteral("last_progress_ms")).toInteger();
+        QVERIFY(last_progress >= 0);
+        QVERIFY(report.value(QStringLiteral("observed_ms")).toInteger() - last_progress < 1000);
+        const auto observations = report.value(QStringLiteral("observations")).toArray();
+        QVERIFY(!observations.isEmpty());
+        const auto last_observation = observations.last().toObject();
+        QVERIFY(last_observation.value(QStringLiteral("steady_ms")).toInteger() >= report.value(QStringLiteral("observed_ms")).toInteger());
+        QVERIFY(last_observation.value(QStringLiteral("transmitting_ms")).toInteger() >= seconds * 1000);
         const auto buckets = report.value(QStringLiteral("packets_per_second")).toArray();
         QCOMPARE(buckets.size(), seconds);
         for (const auto& count : buckets)

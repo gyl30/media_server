@@ -6,7 +6,7 @@
 
 现有`desktop_talk_probe PLATFORM DEVICE_ID`在上传建立后观察2秒。这个默认保留，既有Go生产媒体组合仍原样调用。新增末位可选`SECONDS`，只接受2–30整数；真实设备首轮计划12秒，30秒上界容纳后续控制续租观察，不是无限采集或容量工具。
 
-从`transmitting()`开始使用单调时钟；记录每秒累计值、实际停止前观察时长、最后进展和结束时刻。每个完整秒桶至少25个本地160字节WS包，末进展距观察结束小于1秒，全部请求时长完成才可通过。25包/秒沿用旧2秒至少50包的功能进展下限，不是完整50Hz收包率承诺。秒桶独立于观察/停止timer先后顺序，避免最后一秒漏检；DELETE时间不计上传观察时长。总期限27秒加请求时长，覆盖既有POST15秒、WS5秒、DELETE5秒和少量调度余量。仍等生产`finished()`后退出，不用强杀充当成功。
+原`2bb192a`版本从`transmitting()`开始使用单调时钟；记录每秒累计值、实际停止前观察时长、最后进展和结束时刻。每个完整秒桶至少25个本地160字节WS包，末进展距观察结束小于1秒，全部请求时长完成才可通过。25包/秒沿用旧2秒至少50包的功能进展下限，不是完整50Hz收包率承诺。秒桶独立于观察/停止timer先后顺序，避免最后一秒漏检；DELETE时间不计上传观察时长。原总期限27秒加请求时长，覆盖既有POST15秒、WS5秒、DELETE5秒和少量调度余量。仍等生产`finished()`后退出，不用强杀充当成功。
 
 输出明确标记`progress_scope=local_ws_enqueue`：它只证明SDL采集→FFmpeg编码→Qt WebSocket接受160字节，**不证明设备收到、解码或扬声器播放**。真实设备必须再独立核对协商、出口RTP和回传媒体。
 
@@ -27,3 +27,17 @@ DEV `/var/tmp/qt-talk-duration-e870f61-qE5OSnqV/`：构建、`normal/asan-ctest.
 Normal probe SHA `597ec75de66c73e129949446f7354542ca5dd270d466a5331d6ba3261e368de0`；ASan probe SHA `81e657c4eaa1d411404485ecbed4366fb13b3533398b2780b7a2bb837cb2dad2`。
 
 未跑整个桌面全套、Go全套或真实相机，不能据此宣称阶段六完成。连接存活但特定秒停滞尚无独立故障注入行；当前秒桶明确否决该条件，早断回归不能冒充该负对照。仅测试中新增有界计数/观测，不新增生产状态、endpoint或采集实现，也未删除历史覆盖或证据。
+
+## 首媒体准备与稳态分离
+
+后续真实设备`run05`的原始探针结果为FAIL：首个连接秒桶21包，随后11桶均50包，正常停止且无生产错误。证据保留在DEV `/var/tmp/qt-public-talk-2bb192a-run05-45TzYmvv/talk.private.stdout`。旧版没有记录首包时刻，不能据此确认具体是Pulse启动延迟，也不能把它倒推为PASS。
+
+源码`talk_session`在WS连接后解除SDL暂停并立即发出`transmitting()`，该信号不是首PCM已准备好的承诺。探针现将首次本地WS包与连接建立分开：从`transmitting()`起单独限定5秒首媒体期限，首次`progress`记录`first_media_latency_ms`后才开始请求的2–30秒稳态观察；超时及首包回调均检查该期限。JSON新增`observation_anchor=first_local_ws_packet`和`first_media_deadline_ms=5000`，未获得首媒体时延迟字段为null。
+
+稳态仍逐秒要求至少25包，结束前最后进展小于1秒，没有降低门槛。`observed_ms`、`last_progress_ms`和观察项`steady_ms`统一使用首包锚定时钟；原`transmitting_ms`继续表示真实连接后经过时间。首包本身计入第0桶；未到首包或未完成全部稳态窗口均不能通过。总期限增加明确的首媒体预算，改为32秒加请求时长。生产采集、编码、上传、关闭和DELETE路径不变。
+
+已有真实子进程回归补验观察锚点、首媒体延迟、稳态末进展及观察字段，原正常/早断/非法参数和精确DELETE断言保留。本增量的构建与运行结果须另记，不能沿用上文旧版PASS作为本版结果；无首媒体和中间单秒停滞仍无独立稳定故障注入，不新增生产测试接口或虚报覆盖。
+
+本版补测：Normal定向`desktop_talk_session` 1/1、17项QTest零失败/跳过，21.92秒；ASan+UBSan+LSan全套中的同组17项零失败/跳过，22.18秒（此时其他组仍在执行，不提前宣称整套PASS）。日志在DEV `/var/tmp/qt-final-audit-2bb192a-duu1a2Of/first-media-normal-LastTest.log`及`first-media-asan-in-full-ctest.log`。首条Normal构建命令把目标误写为`desktop_talk_session_test`，保留失败日志；正确目标`talk_session_test`构建及测试成功，未改CMake绕过。
+
+真实大华新版`run06`首媒体520ms后完整观察12000ms，12桶均49–51包、600次本地enqueue和600个实际出口RTP，正常退出。另一个真实Qt60.099秒回看窗口完整包容talk并完成315项断言。独立wire数字门槛、历史失败、RTCP限制及资源回收见[公共对讲实机报告](qt_monitor_client_dahua_public_talk.md)；仍不是物理听音、五频声学或整个阶段六GO。
