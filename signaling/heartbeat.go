@@ -121,7 +121,7 @@ func (s *sipServer) expireDevices(now time.Time) {
 }
 
 func (s *sipServer) runDeviceExpiry(ctxDone <-chan struct{}) {
-	ticker := time.NewTicker(s.sweepInterval)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
 		select {

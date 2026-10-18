@@ -52,7 +52,6 @@ type liveSession struct {
 	state       liveState
 	invite      *sip.Request
 	answer      *sip.Response
-	callID      string
 	ctx         context.Context
 	cancel      context.CancelFunc
 	claimed     chan struct{}
@@ -297,9 +296,6 @@ func (s *liveService) invite(operationContext context.Context, session *liveSess
 	}()
 	s.mu.Lock()
 	session.invite = invite
-	if callID := invite.CallID(); callID != nil {
-		session.callID = callID.Value()
-	}
 	s.mu.Unlock()
 	if err := transaction.Init(); err != nil {
 		return s.finishFailedStart(session, err, false)
@@ -599,8 +595,11 @@ func (s *liveService) dialogSession(request *sip.Request) *liveSession {
 	s.mu.Lock()
 	var session *liveSession
 	for _, candidate := range s.sessions {
-		if candidate.callID == callID.Value() && candidate.answer != nil &&
+		if candidate.answer != nil &&
 			(candidate.state == liveStreaming || (candidate.key.historyID != "" && candidate.state == liveInviting)) {
+			if inviteCallID := candidate.invite.CallID(); inviteCallID == nil || inviteCallID.Value() != callID.Value() {
+				continue
+			}
 			candidateID, err := sip.DialogIDFromResponse(candidate.answer)
 			if err != nil || candidateID != dialogID {
 				continue

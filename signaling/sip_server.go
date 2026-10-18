@@ -16,7 +16,6 @@ type sipServer struct {
 	ua             *sipgo.UserAgent
 	server         *sipgo.Server
 	client         *sipgo.Client
-	listen         string
 	cfg            config
 	logger         *slog.Logger
 	now            func() time.Time
@@ -24,7 +23,6 @@ type sipServer struct {
 	devices        *deviceRegistry
 	deviceStore    *deviceStore
 	channels       *channelRegistry
-	sweepInterval  time.Duration
 	live           *liveService
 	advertiseHost  string
 	advertisePort  int
@@ -65,7 +63,6 @@ func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipSe
 		ua:             ua,
 		server:         server,
 		client:         client,
-		listen:         cfg.sipListen,
 		cfg:            cfg,
 		logger:         logger,
 		now:            time.Now,
@@ -73,7 +70,6 @@ func newSIPServer(cfg config, devices *deviceStore, logger *slog.Logger) (*sipSe
 		devices:        newDeviceRegistry(),
 		deviceStore:    devices,
 		channels:       newChannelRegistry(),
-		sweepInterval:  time.Second,
 		advertiseHost:  advertiseHost,
 		advertisePort:  advertisePort,
 		catalogQueue:   make(chan registeredDevice, 256),
@@ -97,7 +93,7 @@ func (s *sipServer) serve(ctx context.Context) error {
 		defer close(catalogDone)
 		s.runCatalogQueries(serveContext)
 	}()
-	err := s.server.ListenAndServe(serveContext, "udp", s.listen)
+	err := s.server.ListenAndServe(serveContext, "udp", s.cfg.sipListen)
 	cancel()
 	<-expiryDone
 	<-catalogDone
