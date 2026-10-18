@@ -189,3 +189,5 @@ DEV独立证据目录：
 构建与复现保留 `normal-build.log/.exit`、`normal-rebuild.log`、`asan-build.log/.exit`、`red-build.log`、`build_red.py`、两份禁用判据的源码和相应私有ELF。原 `source.diff/source.sha256` 对应受测代码；测试后仅将新wrapper两处函数签名换行为clang-format 20.1.8格式，未改变token。格式后差异与源码校验另存 `final-source.diff/final-source.sha256`，不覆盖受测快照；全部既有证据由 `SHA256SUMS` 覆盖，清单不包含自身。
 
 本节只证明两种本地 `local_ws_enqueue` 判据真实生效，并保留HTTP/WS生命周期清理。接收端观察到的包用于补充数据完整性，不用“服务端未读取”冒充本地采集停滞。这是合成SDL边界故障，不是物理麦克风异常、摄像机收包/解码或扬声器听音验收。新增19项定向运行不等于重新完成484项全套；第7节482项全套保留其原版本边界，物理声学、许可及整平台GO边界不变。
+
+另行追加的[安装版源替换与服务重启观察](qt_monitor_client_stage7_source_cycle.md)使用外部鼠标和真实RTMP→RTSP双轨链，没有新增生产hook。该轮发现测试发布者TERM清理超时并保留FAIL_CLEANUP；不删失败、不改健康条件、不因Qt正常退出及最终资源归零就隐藏发布者强杀事实。B/C数字画面和音调观察有独立证据，A持续窗口不足仍PARTIAL，均不据此升级整产品GO。

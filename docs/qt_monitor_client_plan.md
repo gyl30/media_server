@@ -14,6 +14,8 @@
 
 ## 七阶段
 
+2026-10-18 保存[安装版Qt源替换与服务重启观察](qt_monitor_client_stage7_source_cycle.md)：真实安装ELF、外部XTest、独立Xvfb/Pulse下同push设备A→B→C，B/C各12.1秒实际解码/显示增长并有880/1320Hz数字输出，后端中断后同DB不恢复旧媒体，手动新发布与观看恢复，Qt正常WM_DELETE退出0。A缺两张活跃截图的完整窗口仍PARTIAL；两轮原始FAIL_CLEANUP保留，第二轮最终FFmpeg发布者TERM8秒未退出需KILL，虽设备/receiver/PID/端口最终归零也不宣称整轮PASS。未改生产、未重跑覆盖失败；完整关闭验收、物理声学与许可边界仍未GO。
+
 2026-10-18 独立补齐[对讲探针首媒体与中途停滞负对照](qt_monitor_client_legacy_test_audit.md#9-独立补齐首媒体与中途停滞负对照)：仅测试目标使用真实SDL设备/线程并薄供PCM，原生产采集、编码、WS和DELETE不变；分别证明5秒无首媒体拒绝，以及完整8秒总量/末进展健康但中间缺供仍拒绝。两份仓库外禁用判据变体RED保留，Normal与ASan+UBSan+LSan各1/1、19项QTest零失败/跳过；不冒称484项全套，也不替代物理麦克风、摄像机听音或整平台GO。
 
 2026-10-18 完成[公共对讲→真实大华并行Qt回看](qt_monitor_client_dahua_public_talk.md)的限定数字链验证：run06首媒体520ms后完整12秒、600次本地WS及600个连续PCMA RTP包，预声明数字强度门槛通过；真实Qt60.099秒/315项覆盖整个talk并正常释放。保留run01–05全部失败，尤其run05原首秒21包退出1不倒改PASS。仅测试探针改为独立首媒体期限再开始稳态，25包/秒与末进展门槛不变，无新生产状态。独立RTCP/ICMP、旧严格声学INCONCLUSIVE、物理听音、完整PTZ及公开分发边界仍保留，七阶段未GO。
