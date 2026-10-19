@@ -66,10 +66,11 @@ export default async function (b) {
   await api(`/api/sources/${sourceID}`, { method: "DELETE" });
 
   // 推流：详情显示同一地址与状态；待接入时不提供重新生成；过期后重新生成，旧地址失效
-  const push = (await api("/api/push-devices", { method: "POST", body: { name: "详情测试 推流" } })).body;
+  const prepared = (await api("/api/push-devices/credentials", { method: "POST" })).body;
+  const push = (await api("/api/push-devices", { method: "POST", body: { name: "详情测试 推流", protocol: "rtmp", token: prepared.token } })).body;
   await b.goto(base + `#devices/push/${push.device_id}`, 1500);
   const urls = await q("[...document.querySelectorAll('.page .url-value')].map(e => e.textContent)");
-  check("未指定协议显示三种地址且与接口一致", urls.length === 3 && urls[0] === push.rtmp_url && urls[1] === push.rtsp_url && urls[2] === push.whip_url, urls.join(" "));
+  check("按指定协议显示接入地址且与接口一致", urls.length === 1 && urls[0] === push.rtmp_url, urls.join(" "));
   check("显示待接入与截止时间", (await q(text(".page"))).includes("待接入") && (await q(text(".page"))).includes("前首次接入有效"));
   check("待接入时不提供重新生成", !(await q("!!document.querySelector('[data-key=push-renew]')")));
   check("不单独显示 token 字段", !(await q(text(".page"))).toLowerCase().includes("token"));

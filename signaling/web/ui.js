@@ -37,9 +37,9 @@ export function badge(label, tone = "neutral", dot = true) {
   return h("span", { class: `badge ${tone}` }, dot ? h("span", { class: "dot" }) : null, label);
 }
 
-// 协议标签：显示后端可确认的协议名；推流设备未保存协议时显示"未指定"。
+// 协议标签显示实际接入协议。
 export function protoTag(protocol) {
-  return h("span", { class: `proto${protocol === "未指定" ? " none" : ""}` }, protocol);
+  return h("span", { class: "proto" }, protocol);
 }
 
 export function emptyState({ icon: glyph = "info", title, text = "", tone = "", action = null }) {

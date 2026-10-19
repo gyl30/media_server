@@ -1,11 +1,10 @@
-// 设备管理（真实接口）：三类资源合并、七种接入协议创建与持久化、旧推流设备显示"未指定"、搜索筛选、
+// 设备管理（真实接口）：三类资源合并、七种接入协议创建与持久化、搜索筛选、
 // RTSP 编辑与密码语义、推流添加时显示真实一次性地址（确认后生效、取消不创建）、删除与失败提示。RTSP 密码与推流协议通过 SQLite 核对（WEB_CONSOLE_DB）。
 import { execFileSync } from "node:child_process";
 import { base, shots, check, clickText, text, setInput, toasts, api, waitFor, summary } from "./lib.mjs";
 
 const db = process.env.WEB_CONSOLE_DB;
 const sql = query => execFileSync("sqlite3", [db, query]).toString().trim();
-const LEGACY = process.env.LEGACY_PUSH_DEVICE;
 
 export default async function (b) {
   const q = js => b.eval(js);
@@ -29,11 +28,6 @@ export default async function (b) {
   const counts = { gb: (await api("/api/devices")).body.devices.length, rtsp: (await api("/api/sources")).body.sources.length, push: (await api("/api/push-devices")).body.devices.length };
   check("列表合并三类接口", (await rowNames()).length === counts.gb + counts.rtsp + counts.push, JSON.stringify(counts));
   check("列表按名称排序", JSON.stringify(await rowNames()) === JSON.stringify([...(await rowNames())].sort((a, b) => a.localeCompare(b, "zh-CN"))));
-  if (LEGACY) {
-    const legacy = (await api(`/api/push-devices/${LEGACY}`)).body;
-    check("旧推流设备升级后可读取且协议为空", legacy?.protocol === "", JSON.stringify(legacy));
-    check("旧推流设备显示协议未指定", (await rowText(legacy.name)).includes("未指定"));
-  }
   check("GB 设备行：协议、接入方式与编号", (await rowText("园区东门 NVR")).includes("GB28181") && (await rowText("园区东门 NVR")).includes("SIP 注册") && (await rowText("园区东门 NVR")).includes("34020000001320000101"));
   check("GB 设备有通道数量", await waitFor(b, `(${row("园区东门 NVR")}).querySelector('.num').textContent === '1'`, 5000));
 
@@ -142,8 +136,6 @@ export default async function (b) {
   await q(setInput(".toolbar input[type=search]", ""));
   await filter(0, "rtmp-push");
   check("协议筛选：RTMP 推流", (await rowNames()).includes("测试 RTMP 推流") && (await rowNames()).every(name => !name.includes("WHIP")));
-  await filter(0, "push-unspecified");
-  check("协议筛选：推流未指定", LEGACY ? (await rowNames()).length >= 1 && !(await rowNames()).includes("测试 RTMP 推流") : true);
   await filter(0, "all");
   await filter(1, "online");
   check("状态筛选：在线", (await rowNames()).includes("园区东门 NVR") && !(await rowNames()).includes("测试 GB 设备"));
@@ -185,17 +177,7 @@ export default async function (b) {
   await submit();
   const edited = (await api("/api/push-devices")).body.devices.find(item => item.name === "测试 RTMP 推流 改");
   check("编辑推流设备名称与协议", edited?.protocol === "whip");
-  if (LEGACY) {
-    const legacyName = (await api(`/api/push-devices/${LEGACY}`)).body.name;
-    await rowAction(legacyName, "edit"); await b.sleep(200);
-    check("旧设备编辑保留未指定选项", await q("document.querySelector('#device-dialog select[name=protocol]').value") === "");
-    await q("document.getElementById('device-dialog').close()");
-  }
 
-  if (LEGACY) {
-    const legacy = (await api(`/api/push-devices/${LEGACY}`)).body;
-    check("旧推流设备没有地址时显示未生成地址", legacy.state !== "none" || (await rowText(legacy.name)).includes("未生成地址"));
-  }
   await b.shot(`${shots}/devices-1440.png`);
 
   // 删除与失败提示

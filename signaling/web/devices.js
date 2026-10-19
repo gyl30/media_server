@@ -6,7 +6,7 @@ import {
 } from "/ui.js";
 
 const PROTOCOL_FILTERS = [["all", "全部协议"], ["gb", "GB28181"], ["rtsp-pull", "RTSP 拉流"], ["rtmp-pull", "RTMP 拉流"], ["whep-pull", "WHEP 拉流"], ["rtmp-push", "RTMP 推流"],
-  ["rtsp-push", "RTSP 推流"], ["whip-push", "WHIP 推流"], ["push-unspecified", "推流（未指定）"]];
+  ["rtsp-push", "RTSP 推流"], ["whip-push", "WHIP 推流"]];
 const filters = { query: "", protocol: "all", status: "all" };
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 
@@ -194,7 +194,7 @@ export async function renewPushURL(device) {
   await refresh();
 }
 
-// 接入地址行：按设备协议只列一种；未指定协议时三种共用同一凭据。
+// 接入地址行只显示选择的推流协议。
 export function pushURLRows(urls) {
   return h("div", { class: "url-rows bordered" }, urls.map(([, label, url]) => h("div", { class: "url-row" },
     h("div", { class: "url-proto" }, h("strong", {}, label)), h("div", { class: "url-side" }, copyButton(url, ` ${label} 推流地址`)), h("div", { class: "url-value" }, url))));
@@ -254,8 +254,7 @@ export function openDeviceDialog(existing = null) {
   };
   const picker = h("select", { class: "select", name: "protocol", "aria-label": "接入协议" });
   if (existing?.kind === "push") {
-    picker.append(...(raw.protocol ? [] : [h("option", { value: "" }, "未指定")]),
-      ...Object.entries(PUSH_PROTOCOLS).map(([value, label]) => h("option", { value }, `${label} · 主动推流`)));
+    picker.append(...Object.entries(PUSH_PROTOCOLS).map(([value, label]) => h("option", { value }, `${label} · 主动推流`)));
   } else {
     picker.append(...ADD_OPTIONS.map(([value, label]) => h("option", { value }, label)));
   }

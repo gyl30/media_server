@@ -112,7 +112,7 @@ export function mountDetail(root, ctx, kind, id) {
         ["认证", raw.username ? `用户名 ${raw.username} · 密码不回显` : raw.password_set ? "Bearer Token 已设置 · 不回显" : "未设置"], ["当前媒体流", raw.session ? h("span", { class: "mono" }, raw.session.stream_id) : "—"],
         ["资源标识", h("span", { class: "mono" }, device.id), true]);
     } else {
-      fields.push(["接入协议", PUSH_PROTOCOLS[raw.protocol] || "未指定"], ["推流状态", device.status.label],
+      fields.push(["接入协议", PUSH_PROTOCOLS[raw.protocol]], ["推流状态", device.status.label],
         ["状态说明", device.status.detail || "—", true], ["资源标识", h("span", { class: "mono" }, device.id), true]);
     }
     return h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", {}, "设备信息")),
@@ -220,21 +220,20 @@ export function mountDetail(root, ctx, kind, id) {
     raw.state === "pending" ? null : h("button", {
       class: "btn sm", type: "button", disabled: publishing, title: publishing ? "正在推流，停止推流后才能重新生成地址" : "",
       dataset: { key: "push-renew" }, onclick: () => void renewPushURL(device),
-    }, icon("refresh", "sm"), raw.state === "none" ? "生成地址" : "重新生成地址")].filter(Boolean);
+    }, icon("refresh", "sm"), "重新生成地址")].filter(Boolean);
     const text = {
-      none: "该设备创建于接入地址功能之前，还没有接入地址。",
       pending: `地址 ${formatClock(raw.expires_at)} 前首次接入有效，首次接入成功后立即失效。`,
       used: `地址已于 ${formatClock(raw.used_at)} 被使用，当前没有推流。需要再次接入时重新生成地址。`,
       expired: `地址已于 ${formatClock(raw.expires_at)} 过期且未被使用。重新生成后 5 分钟内有效。`,
       publishing: `地址已于 ${formatClock(raw.used_at)} 被使用，推流正在进行。推流认证不代表音视频一定正常，请以播放画面为准。`,
     }[raw.state];
-    const protocolNote = raw.protocol ? `按设备协议显示 ${PUSH_PROTOCOLS[raw.protocol]} 地址；服务端当前不限制推流协议。` : "设备未指定协议，三种地址共用同一凭据，任选其一。";
+    const protocolNote = `按设备协议显示 ${PUSH_PROTOCOLS[raw.protocol]} 地址；服务端当前不限制推流协议。`;
     return h("section", { class: "card" },
       h("div", { class: "card-head" }, h("div", {}, h("h2", {}, "接入地址"), h("div", { class: "sub" }, `一次性 · ${device.status.label}`)), h("div", { class: "head-actions" }, actions)),
       h("div", { class: "card-body stack" },
-        raw.token ? pushURLRows(pushURLs(raw)) : null,
+        pushURLRows(pushURLs(raw)),
         h("div", { class: "hint" }, text),
-        raw.token ? h("p", { class: "muted tiny" }, protocolNote) : null));
+        h("p", { class: "muted tiny" }, protocolNote)));
   }
 
   function closePlayer() {

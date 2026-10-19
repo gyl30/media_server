@@ -1,9 +1,9 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -146,11 +146,39 @@ func decodePushDevice(t *testing.T, body string) pushDeviceResponse {
 	return device
 }
 
+// 新设备表只接受明确协议和凭据，不再保留旧结构的空值入口。
+func TestPushDeviceSchemaRejectsMissingFields(t *testing.T) {
+	store, err := openSourceStore(t.Context(), filepath.Join(t.TempDir(), "signaling.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.close()
+	credential, err := newStreamToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.createPushDevice(t.Context(), pushDevice{deviceID: uuid.NewString(), name: "Valid", protocol: pushProtocolRTMP, credential: credential}); err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []string{
+		`INSERT INTO push_devices (device_id, name, credential, credential_expires_at) VALUES ('no-protocol', 'Bad', 'a', 0)`,
+		`INSERT INTO push_devices (device_id, name, protocol, credential_expires_at) VALUES ('no-credential', 'Bad', 'rtmp', 0)`,
+		`INSERT INTO push_devices (device_id, name, protocol, credential, credential_expires_at) VALUES ('bad-protocol', 'Bad', 'srt', 'b', 0)`,
+	} {
+		if _, err := store.db.ExecContext(t.Context(), query); err == nil {
+			t.Fatalf("invalid device persisted: %s", query)
+		}
+	}
+	if _, err := store.db.ExecContext(t.Context(), `INSERT INTO push_devices (device_id, name, protocol, credential, credential_expires_at) VALUES (?, 'Duplicate', 'whip', ?, 0)`, uuid.NewString(), credential); err == nil {
+		t.Fatal("duplicate credential accepted")
+	}
+}
+
 func TestPushDeviceProtocolCreateAndValidate(t *testing.T) {
 	s := testInfrastructure(t)
 	handler := s.handler()
 	for _, protocol := range []pushProtocol{pushProtocolRTMP, pushProtocolRTSP, pushProtocolWHIP} {
-		created := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Camera `+string(protocol)+`","protocol":"`+string(protocol)+`"}`, http.StatusCreated).Body.String())
+		created := createPreparedPushDevice(t, handler, "Camera "+string(protocol), protocol)
 		if created.Protocol != protocol || created.State != "pending" || !validStreamToken(created.Token) {
 			t.Fatalf("create %s: %+v", protocol, created)
 		}
@@ -159,17 +187,20 @@ func TestPushDeviceProtocolCreateAndValidate(t *testing.T) {
 			t.Fatalf("get %s: %+v", protocol, fetched)
 		}
 	}
-	for _, body := range []string{`{"name":"Bad","protocol":"srt"}`, `{"name":"Bad","protocol":"RTMP"}`, `{"name":"Bad","protocol":1}`} {
+	prepared := preparePushCredential(t, handler)
+	for _, body := range []string{
+		fmt.Sprintf(`{"name":"Bad","protocol":"srt","token":%q}`, prepared.Token),
+		fmt.Sprintf(`{"name":"Bad","protocol":"RTMP","token":%q}`, prepared.Token),
+		fmt.Sprintf(`{"name":"Bad","token":%q}`, prepared.Token),
+		`{"name":"Bad","protocol":1}`,
+		`{"name":"Bad","protocol":"rtmp"}`,
+	} {
 		apiRequest(t, handler, "POST", "/api/push-devices", body, http.StatusBadRequest)
-	}
-	unspecified := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Legacy client"}`, http.StatusCreated).Body.String())
-	if unspecified.Protocol != pushProtocolUnspecified || !strings.Contains(apiRequest(t, handler, "GET", "/api/push-devices/"+unspecified.DeviceID, "", http.StatusOK).Body.String(), `"protocol":""`) {
-		t.Fatalf("missing protocol must stay unspecified: %+v", unspecified)
 	}
 	var list struct {
 		Devices []pushDeviceResponse `json:"devices"`
 	}
-	if err := json.Unmarshal(apiRequest(t, handler, "GET", "/api/push-devices", "", http.StatusOK).Body.Bytes(), &list); err != nil || len(list.Devices) != 4 {
+	if err := json.Unmarshal(apiRequest(t, handler, "GET", "/api/push-devices", "", http.StatusOK).Body.Bytes(), &list); err != nil || len(list.Devices) != 3 {
 		t.Fatalf("list: %+v %v", list, err)
 	}
 }
@@ -177,7 +208,7 @@ func TestPushDeviceProtocolCreateAndValidate(t *testing.T) {
 func TestPushDeviceProtocolPatch(t *testing.T) {
 	s := testInfrastructure(t)
 	handler := s.handler()
-	device := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Camera","protocol":"rtmp"}`, http.StatusCreated).Body.String())
+	device := createPreparedPushDevice(t, handler, "Camera", pushProtocolRTMP)
 	path := "/api/push-devices/" + device.DeviceID
 	renamed := decodePushDevice(t, apiRequest(t, handler, "PATCH", path, `{"name":"Renamed"}`, http.StatusOK).Body.String())
 	if renamed.Name != "Renamed" || renamed.Protocol != pushProtocolRTMP {
@@ -199,7 +230,7 @@ func TestPushDeviceProtocolPersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	devices := map[string]pushProtocol{uuid.NewString(): pushProtocolRTMP, uuid.NewString(): pushProtocolRTSP, uuid.NewString(): pushProtocolWHIP, uuid.NewString(): pushProtocolUnspecified}
+	devices := map[string]pushProtocol{uuid.NewString(): pushProtocolRTMP, uuid.NewString(): pushProtocolRTSP, uuid.NewString(): pushProtocolWHIP}
 	for id, protocol := range devices {
 		credential, _ := newStreamToken()
 		if err := store.createPushDevice(t.Context(), pushDevice{deviceID: id, name: "Camera", protocol: protocol, credential: credential}); err != nil {
@@ -222,48 +253,7 @@ func TestPushDeviceProtocolPersistsAcrossReopen(t *testing.T) {
 	}
 }
 
-// 升级前的数据库只有 device_id 与 name：打开时补列，旧设备保持未指定且没有接入凭据，重复打开不重复修改。
-func TestPushDeviceProtocolUpgradesLegacyDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	legacy, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyID := uuid.NewString()
-	if _, err := legacy.Exec(`CREATE TABLE push_devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL);
-		INSERT INTO push_devices (device_id, name) VALUES (?, 'Old encoder')`, legacyID); err != nil {
-		t.Fatal(err)
-	}
-	if err := legacy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	for attempt := 0; attempt < 2; attempt++ {
-		store, err := openSourceStore(t.Context(), path)
-		if err != nil {
-			t.Fatalf("open %d: %v", attempt, err)
-		}
-		device, err := store.getPushDevice(t.Context(), legacyID)
-		if err != nil || device.name != "Old encoder" || device.protocol != pushProtocolUnspecified || device.credential != "" {
-			t.Fatalf("legacy device %d: %+v %v", attempt, device, err)
-		}
-		if attempt == 0 {
-			credential, _ := newStreamToken()
-			if err := store.createPushDevice(t.Context(), pushDevice{deviceID: uuid.NewString(), name: "New encoder", protocol: pushProtocolWHIP, credential: credential}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		listed, err := store.listPushDevices(t.Context())
-		if err != nil || len(listed) != 2 {
-			t.Fatalf("list %d: %+v %v", attempt, listed, err)
-		}
-		if _, err := store.db.Exec(`UPDATE push_devices SET protocol = 'srt' WHERE device_id = ?`, legacyID); err == nil {
-			t.Fatal("protocol column must reject unknown values")
-		}
-		_ = store.close()
-	}
-}
-
-// 协议只用于展示与取舍接入地址：重新生成、验证、停止、删除与未指定协议的设备一致。
+// 协议只用于展示与取舍接入地址：重新生成、验证、停止、删除一致。
 func TestPushDeviceProtocolKeepsPublishLifecycle(t *testing.T) {
 	s := testInfrastructure(t)
 	var deleted []string
@@ -280,7 +270,7 @@ func TestPushDeviceProtocolKeepsPublishLifecycle(t *testing.T) {
 	t.Cleanup(media.Close)
 	s.media.server.controlURL = media.URL
 	handler := s.handler()
-	device := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Camera","protocol":"whip"}`, http.StatusCreated).Body.String())
+	device := createPreparedPushDevice(t, handler, "Camera", pushProtocolWHIP)
 	path := "/api/push-devices/" + device.DeviceID
 	published := apiRequest(t, handler, "POST", path+"/publish", "", http.StatusCreated).Body.String()
 	for _, field := range []string{`"rtmp_url"`, `"rtsp_url"`, `"whip_url"`} {
@@ -316,6 +306,13 @@ func preparePushCredential(t *testing.T, handler http.Handler) pushURLs {
 	return urls
 }
 
+func createPreparedPushDevice(t *testing.T, handler http.Handler, name string, protocol pushProtocol) pushDeviceResponse {
+	t.Helper()
+	prepared := preparePushCredential(t, handler)
+	body := fmt.Sprintf(`{"name":%q,"protocol":%q,"token":%q}`, name, protocol, prepared.Token)
+	return decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", body, http.StatusCreated).Body.String())
+}
+
 // 添加页面先展示真实地址，确认添加后才可发布：未确认、伪造或重复确认的凭据都不能使用。
 func TestPushCredentialPrepareConfirmAndCancel(t *testing.T) {
 	s := testInfrastructure(t)
@@ -333,13 +330,13 @@ func TestPushCredentialPrepareConfirmAndCancel(t *testing.T) {
 	if created.Token != prepared.Token || created.RTSPURL != prepared.RTSPURL || created.State != "pending" || !created.ExpiresAt.Equal(pushCredentialDeadline(now)) {
 		t.Fatalf("confirmed device: %+v", created)
 	}
-	apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Duplicate","token":"`+prepared.Token+`"}`, http.StatusBadRequest)
+	apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Duplicate","protocol":"rtsp","token":"`+prepared.Token+`"}`, http.StatusBadRequest)
 
 	// 取消添加：预生成的凭据从未确认，确认期限过后丢弃，期间和之后都不能发布。
 	cancelled := preparePushCredential(t, handler)
 	verifyToken(t, s, cancelled.Token, "publish", cancelled.Token, http.StatusForbidden)
 	now = now.Add(pushCredentialTTL)
-	apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Late","token":"`+cancelled.Token+`"}`, http.StatusBadRequest)
+	apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Late","protocol":"rtmp","token":"`+cancelled.Token+`"}`, http.StatusBadRequest)
 	if _, kept := s.tokens.prepared[cancelled.Token]; kept {
 		t.Fatal("expired prepared credential kept")
 	}
@@ -357,8 +354,8 @@ func TestPushCredentialLifetimeAndSingleUse(t *testing.T) {
 	now := time.Now()
 	s.live.sip.now = func() time.Time { return now }
 	handler := s.handler()
-	expiring := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Expiring","protocol":"rtmp"}`, http.StatusCreated).Body.String())
-	used := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Used","protocol":"whip"}`, http.StatusCreated).Body.String())
+	expiring := createPreparedPushDevice(t, handler, "Expiring", pushProtocolRTMP)
+	used := createPreparedPushDevice(t, handler, "Used", pushProtocolWHIP)
 
 	now = now.Add(pushCredentialTTL - time.Millisecond)
 	verifyToken(t, s, used.Token, "publish", used.Token, http.StatusOK)
@@ -375,7 +372,7 @@ func TestPushCredentialLifetimeAndSingleUse(t *testing.T) {
 	}
 }
 
-// 重新生成：旧凭据立即失效，新凭据重新计时；正在推流时拒绝且不停止现有发布；旧设备首次生成地址。
+// 重新生成：旧凭据立即失效，新凭据重新计时；正在推流时拒绝且不停止现有发布。
 func TestPushCredentialRenew(t *testing.T) {
 	s := testInfrastructure(t)
 	now := time.Now()
@@ -386,7 +383,7 @@ func TestPushCredentialRenew(t *testing.T) {
 	t.Cleanup(media.Close)
 	s.media.server.controlURL = media.URL
 	handler := s.handler()
-	device := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Camera","protocol":"rtmp"}`, http.StatusCreated).Body.String())
+	device := createPreparedPushDevice(t, handler, "Camera", pushProtocolRTMP)
 	path := "/api/push-devices/" + device.DeviceID
 	now = now.Add(4 * time.Minute)
 	renewed := decodePushDevice(t, apiRequest(t, handler, "POST", path+"/publish", "", http.StatusCreated).Body.String())
@@ -400,17 +397,6 @@ func TestPushCredentialRenew(t *testing.T) {
 		t.Fatalf("conflicting renew changed publish: %+v", current)
 	}
 
-	legacyID := uuid.NewString()
-	if _, err := s.sources.db.Exec(`INSERT INTO push_devices (device_id, name) VALUES (?, 'Old encoder')`, legacyID); err != nil {
-		t.Fatal(err)
-	}
-	legacy := decodePushDevice(t, apiRequest(t, handler, "GET", "/api/push-devices/"+legacyID, "", http.StatusOK).Body.String())
-	if legacy.State != "none" || legacy.Token != "" || legacy.RTMPURL != "" {
-		t.Fatalf("legacy device: %+v", legacy)
-	}
-	if issued := decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices/"+legacyID+"/publish", "", http.StatusCreated).Body.String()); issued.State != "pending" || !validStreamToken(issued.Token) {
-		t.Fatalf("legacy renew: %+v", issued)
-	}
 	apiRequest(t, handler, "POST", "/api/push-devices/"+uuid.NewString()+"/publish", "", http.StatusNotFound)
 }
 
@@ -427,7 +413,7 @@ func TestPushCredentialSurvivesRestart(t *testing.T) {
 	s.live.sip.now = func() time.Time { return now }
 	handler := s.handler()
 	create := func(name string) pushDeviceResponse {
-		return decodePushDevice(t, apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"`+name+`","protocol":"rtmp"}`, http.StatusCreated).Body.String())
+		return createPreparedPushDevice(t, handler, name, pushProtocolRTMP)
 	}
 	used, old := create("Used"), create("Old")
 	verifyToken(t, s, used.Token, "publish", used.Token, http.StatusOK)
@@ -460,49 +446,5 @@ func TestPushCredentialSurvivesRestart(t *testing.T) {
 	verifyToken(t, restarted, fresh.Token, "publish", fresh.Token, http.StatusOK)
 	if len(restarted.tokens.pushRuns) != 1 {
 		t.Fatalf("restart restored runs: %v", restarted.tokens.pushRuns)
-	}
-}
-
-// dea4528 的数据库已有 protocol 列：补齐凭据列，凭据唯一。
-func TestPushCredentialColumnsUpgradeProtocolDatabase(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "protocol.db")
-	previous, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := uuid.NewString()
-	if _, err := previous.Exec(`CREATE TABLE push_devices (device_id TEXT PRIMARY KEY, name TEXT NOT NULL,
-		protocol TEXT NOT NULL DEFAULT '' CHECK (protocol IN ('', 'rtmp', 'rtsp', 'whip')));
-		INSERT INTO push_devices (device_id, name, protocol) VALUES (?, 'RTMP encoder', 'rtmp')`, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := previous.Close(); err != nil {
-		t.Fatal(err)
-	}
-	credential, _ := newStreamToken()
-	for attempt := 0; attempt < 2; attempt++ {
-		store, err := openSourceStore(t.Context(), path)
-		if err != nil {
-			t.Fatalf("open %d: %v", attempt, err)
-		}
-		device, err := store.getPushDevice(t.Context(), id)
-		if err != nil || device.protocol != pushProtocolRTMP || device.name != "RTMP encoder" {
-			t.Fatalf("upgraded device %d: %+v %v", attempt, device, err)
-		}
-		if attempt == 0 {
-			if device.credential != "" || !device.expiresAt.IsZero() || !device.usedAt.IsZero() {
-				t.Fatalf("upgrade invented a credential: %+v", device)
-			}
-			if err := store.renewPushCredential(t.Context(), id, credential, time.Now().Add(pushCredentialTTL)); err != nil {
-				t.Fatal(err)
-			}
-		} else if device.credential != credential {
-			t.Fatalf("credential lost on reopen: %+v", device)
-		}
-		duplicate := pushDevice{deviceID: uuid.NewString(), name: "Copy", credential: credential, expiresAt: time.Now()}
-		if err := store.createPushDevice(t.Context(), duplicate); err == nil {
-			t.Fatal("duplicate credential accepted")
-		}
-		_ = store.close()
 	}
 }

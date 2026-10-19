@@ -135,7 +135,6 @@ p { margin: 0; }
 .badge.danger { background: var(--danger-bg); color: var(--danger); }
 @keyframes pulse { 50% { opacity: .3; } }
 .proto { display: inline-flex; align-items: center; padding: 2px 7px; border: 1px solid #cfe0f4; border-radius: 4px; background: #f1f6fd; color: #3f6fa6; font-size: 11px; font-weight: 600; white-space: nowrap; }
-.proto.none { border-color: #e2e6ec; background: #f4f6f9; color: #8a95a5; }
 
 /* ---------- 卡片与提示 ---------- */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-l); box-shadow: var(--shadow); }

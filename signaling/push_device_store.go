@@ -8,15 +8,13 @@ import (
 	"time"
 )
 
-// pushProtocol 是推流设备选择的接入协议，仅用于展示与签发结果的取舍；空值表示未指定（旧数据）。
-// 发布凭据本身不绑定协议。
+// 推流协议只决定界面展示哪一种接入地址；发布凭据本身不绑定协议。
 type pushProtocol string
 
 const (
-	pushProtocolUnspecified pushProtocol = ""
-	pushProtocolRTMP        pushProtocol = "rtmp"
-	pushProtocolRTSP        pushProtocol = "rtsp"
-	pushProtocolWHIP        pushProtocol = "whip"
+	pushProtocolRTMP pushProtocol = "rtmp"
+	pushProtocolRTSP pushProtocol = "rtsp"
+	pushProtocolWHIP pushProtocol = "whip"
 )
 
 // 推流接入凭据（即接入地址中的 token）从确认添加或重新生成时起 5 分钟内可首次使用；播放 token 的有效期另行配置。
@@ -29,13 +27,13 @@ func pushCredentialDeadline(now time.Time) time.Time {
 
 func validPushProtocol(protocol pushProtocol) bool {
 	switch protocol {
-	case pushProtocolUnspecified, pushProtocolRTMP, pushProtocolRTSP, pushProtocolWHIP:
+	case pushProtocolRTMP, pushProtocolRTSP, pushProtocolWHIP:
 		return true
 	}
 	return false
 }
 
-// credential 为空表示旧设备尚未生成接入地址；usedAt 非零表示凭据已被一次发布认证消费。
+// usedAt 非零表示凭据已被一次发布认证消费。
 type pushDevice struct {
 	deviceID   string
 	name       string
@@ -43,29 +41,6 @@ type pushDevice struct {
 	credential string
 	expiresAt  time.Time
 	usedAt     time.Time
-}
-
-// 旧库的 push_devices 缺少后加的列：按需补列，已有设备保持未指定协议、没有接入凭据。
-func ensurePushDeviceColumns(ctx context.Context, db *sql.DB) error {
-	for _, column := range []struct{ name, definition string }{
-		{"protocol", `protocol TEXT NOT NULL DEFAULT '' CHECK (protocol IN ('', 'rtmp', 'rtsp', 'whip'))`},
-		{"credential", `credential TEXT`},
-		{"credential_expires_at", `credential_expires_at INTEGER NOT NULL DEFAULT 0`},
-		{"credential_used_at", `credential_used_at INTEGER NOT NULL DEFAULT 0`},
-	} {
-		var count int
-		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_table_info('push_devices') WHERE name = ?`, column.name).Scan(&count); err != nil {
-			return err
-		}
-		if count != 0 {
-			continue
-		}
-		if _, err := db.ExecContext(ctx, `ALTER TABLE push_devices ADD COLUMN `+column.definition); err != nil {
-			return err
-		}
-	}
-	_, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS push_devices_credential ON push_devices (credential)`)
-	return err
 }
 
 func unixMilli(value time.Time) int64 {
@@ -82,7 +57,7 @@ func fromUnixMilli(value int64) time.Time {
 	return time.UnixMilli(value)
 }
 
-const pushDeviceColumns = `device_id, name, protocol, COALESCE(credential, ''), credential_expires_at, credential_used_at`
+const pushDeviceColumns = `device_id, name, protocol, credential, credential_expires_at, credential_used_at`
 
 func scanPushDevice(scan func(...any) error) (pushDevice, error) {
 	var device pushDevice

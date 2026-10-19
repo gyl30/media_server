@@ -82,14 +82,14 @@ func openSourceStore(ctx context.Context, path string) (*sourceStore, error) {
 		);
 		CREATE TABLE IF NOT EXISTS push_devices (
 			device_id TEXT PRIMARY KEY,
-			name TEXT NOT NULL
+			name TEXT NOT NULL,
+			protocol TEXT NOT NULL CHECK (protocol IN ('rtmp', 'rtsp', 'whip')),
+			credential TEXT NOT NULL UNIQUE,
+			credential_expires_at INTEGER NOT NULL,
+			credential_used_at INTEGER NOT NULL DEFAULT 0
 		)`); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("initialize database: %w", err)
-	}
-	if err := ensurePushDeviceColumns(ctx, db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("upgrade push device table: %w", err)
 	}
 	return store, nil
 }

@@ -27,10 +27,10 @@ signaling 通过 Go `embed` 提供 `signaling/web/` 下的静态页面（HTML、
 | 字段 | GB28181 | 主动拉流 | 推流设备 |
 | --- | --- | --- | --- |
 | key | `gb:<device_id>` | `rtsp:<source_id>` | `push:<device_id>` |
-| 协议 | GB28181 | RTSP / RTMP / WHEP（由 URL 协议确定） | RTMP / RTSP / WHIP；未保存协议显示"未指定" |
+| 协议 | GB28181 | RTSP / RTMP / WHEP（由 URL 协议确定） | RTMP / RTSP / WHIP（创建时必须指定） |
 | 接入方式 | SIP 注册 | 拉流 | 推流 |
-| 地址 / 编号 | 20 位设备编号 | 上游 URL | 所选协议的接入地址；旧设备为"未生成地址" |
-| 状态依据 | `online`、`last_seen`（注册与心跳） | `desired_state` 是配置，`session.state` 是运行事实 | `state`：none / pending / used / expired / publishing |
+| 地址 / 编号 | 20 位设备编号 | 上游 URL | 所选协议的接入地址 |
+| 状态依据 | `online`、`last_seen`（注册与心跳） | `desired_state` 是配置，`session.state` 是运行事实 | `state`：pending / used / expired / publishing |
 | 操作 | 详情、通道、删除 | 详情、编辑、失败后重试、停止拉流、播放、删除 | 详情、编辑、播放、删除；详情中重新生成地址、停止推流 |
 
 状态含义彼此独立：GB 在线只说明注册与心跳有效；拉流 `created` 表示已创建接收会话，`media_ready` 才表示媒体已注册；推流 `publishing` 只表示接入地址已通过认证。实际音视频是否正常仍以播放为准。每个画面独占播放器、video、PeerConnection 与状态回调，详情和监控复用 `player.js`，不另存槽位连接状态。
@@ -42,7 +42,7 @@ signaling 通过 Go `embed` 提供 `signaling/web/` 下的静态页面（HTML、
 | GB28181 添加 / 删除 | `POST /api/devices`、`DELETE /api/devices/{id}`（无修改接口，界面不提供编辑） |
 | GB 点播 / 停止点播 | `POST /api/devices/{id}/channels/{ch}/play`、`DELETE /api/lives/{live_id}` |
 | 主动源增删改、重试 / 停止拉流 | `/api/sources*`；创建即自动接入。RTSP 用独立用户名 / 密码；WHEP 用独立 Bearer Token，密码字段承载且不回显；RTMP 不支持这些凭据字段 |
-| 推流设备增删改（含协议）、重新生成地址、停止推流 | `POST /api/push-devices/credentials`（添加前预生成）、`/api/push-devices*`（`protocol`：`rtmp` / `rtsp` / `whip`，空串为未指定；创建时带预生成的 `token`）、`POST …/publish`（重新生成）、`POST …/stop` |
+| 推流设备增删改（含协议）、重新生成地址、停止推流 | `POST /api/push-devices/credentials`（添加前预生成）、`/api/push-devices*`（创建时必须指定 `protocol`：`rtmp` / `rtsp` / `whip`，并提交预生成的 `token`）、`POST …/publish`（重新生成）、`POST …/stop` |
 | 播放地址 | `POST /api/play`（`live_id` / `source_id` / `push_device_id`） |
 | 浏览器播放 | `player.js` 复用 `whep.js` 的 `WHEPPreview`，每个画面一个实例 |
 
@@ -50,7 +50,7 @@ signaling 通过 Go `embed` 提供 `signaling/web/` 下的静态页面（HTML、
 
 - 播放授权仍为 60 秒、一次性消费：API 签发的五个协议 URL 共用一张票据，任一消费后其他地址失效。UI 不展示五地址或“签发地址”，只在用户点击播放时申请并建立 WHEP。主动源 / 推流设备未 `media_ready` 时返回 `409 media_not_ready`；GB 点播保留先签票据、后接入的既有时序。授权成功后的失败不恢复 token。
 - 推流设备接入地址：添加页面选择协议后由服务端预生成凭据并展示真实地址；该凭据只在内存中等待确认，发布认证只认数据库中的凭据，因此确认前不能使用，取消添加不产生设备和有效授权。确认添加（或在详情中重新生成）后凭据写入数据库，5 分钟内可首次使用；首次发布认证在数据库中原子标记已使用，并发认证只有一次成功，重启后仍不可复用；已建立的推流不受期限影响。推流中不能重新生成（不隐式断开现有发布）。地址由凭据和媒体服务器地址重建，详情页随时可查看。
-- 推流协议由服务端持久化并校验，旧设备为未指定。三种地址共用一个凭据，界面只展示所选协议的地址（未指定时展示三种），服务端不限制推流协议。
+- 推流协议由服务端持久化并校验，创建时必须指定。三种推流地址共用一个凭据，界面只展示所选协议的地址；服务端不按协议限制发布认证。
 - signaling 重启不恢复推流运行：媒体侧遗留的推流接收会话按对账删除，设备显示"地址已使用"。
 - RTSP、RTMP、WHEP 源创建后自动连接。失败保留配置及运行意图，不无限重连；用户可修改配置或重试。服务启动恢复 `desired_state=running` 的配置，生成新的媒体代，不恢复旧会话。外部一次性上游 URL 已消费后必须由用户提供新地址，平台不替上游签发授权。
 - 详情打开不自动播放。GB 选择通道后点击播放按需点播；主动源 / 被动设备就绪后可直接本页播放。切通道、关闭画面、离页和 `pagehide` 只释放该 viewer，不停止共享上游。迟到的请求结果不能重新挂回旧路由。
@@ -82,7 +82,7 @@ signaling 通过 Go `embed` 提供 `signaling/web/` 下的静态页面（HTML、
 ```
 WEB_CONSOLE_URL=http://127.0.0.1:29090/ WEB_CONSOLE_DB=<signaling.db> \
 WEB_CONSOLE_CDP_PORT=49333 WEB_CONSOLE_SHOTS=<本轮独立截图目录> \
-PUSH_DEVICE=<正在推流的推流设备 ID> MEDIA_LOG=<media_server 日志> LEGACY_PUSH_DEVICE=<升级前创建的推流设备 ID，可选> \
+PUSH_DEVICE=<正在推流的推流设备 ID> MEDIA_LOG=<media_server 日志> \
 node tests/web_console/cdp.mjs tests/web_console/<脚本>.mjs
 ```
 

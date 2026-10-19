@@ -164,11 +164,10 @@ const PUSH_STATUS = {
   pending: { label: "待接入", tone: "pending", group: "offline" },
   used: { label: "地址已使用", tone: "neutral", group: "offline", detail: "当前没有推流，重新生成地址后可再次接入" },
   expired: { label: "地址已过期", tone: "warn", group: "attention", detail: "重新生成地址后可接入" },
-  none: { label: "未生成地址", tone: "neutral", group: "offline", detail: "生成接入地址后设备才能推流" },
 };
 
 export function pushStatus(device) {
-  const status = PUSH_STATUS[device.state] || PUSH_STATUS.none;
+  const status = PUSH_STATUS[device.state];
   if (device.state === "publishing") {
     return { ...status, detail: `已接入 ${formatDuration(Date.now() - Date.parse(device.used_at))}` };
   }
@@ -182,13 +181,10 @@ export function formatClock(value) {
   return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-// 推流设备按所选协议展示的接入地址；未指定协议时为空，由调用方展示全部三种。
+// 推流设备按所选协议展示接入地址。
 export function pushURLs(device) {
-  if (!device.token) {
-    return [];
-  }
   return [["rtmp", "RTMP", device.rtmp_url], ["rtsp", "RTSP", device.rtsp_url], ["whip", "WHIP", device.whip_url]]
-    .filter(([value]) => !device.protocol || value === device.protocol);
+    .filter(([value]) => value === device.protocol);
 }
 
 // 前端统一展示对象。key 在三类资源间唯一；protocol 是显示用协议名，filter 是协议筛选值。
@@ -206,8 +202,8 @@ export function unifiedDevices() {
     })),
     ...store.pushDevices.map(device => ({
       key: `push:${device.device_id}`, kind: "push", id: device.device_id, name: device.name,
-      protocol: PUSH_PROTOCOLS[device.protocol] || "未指定", filter: device.protocol ? `${device.protocol}-push` : "push-unspecified",
-      mode: "推流", endpoint: pushURLs(device)[0]?.[2] || "未生成地址", raw: device, status: pushStatus(device),
+      protocol: PUSH_PROTOCOLS[device.protocol], filter: `${device.protocol}-push`,
+      mode: "推流", endpoint: pushURLs(device)[0]?.[2], raw: device, status: pushStatus(device),
     })),
   ].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }

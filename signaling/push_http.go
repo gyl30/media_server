@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// 推流设备状态：none 为旧设备尚无接入地址；pending 为地址可首次使用；used 为地址已被消费且当前没有推流；
+// 推流设备状态：pending 为地址可首次使用；used 为地址已被消费且当前没有推流；
 // expired 为地址未使用已过期；publishing 为推流已通过认证（是否有画面以实际播放为准）。
 type pushDeviceResponse struct {
 	DeviceID  string       `json:"device_id"`
@@ -46,11 +46,10 @@ func (s *infrastructureServer) pushURLs(credential string) pushURLs {
 }
 
 func (s *infrastructureServer) pushDeviceResponseLocked(device pushDevice, now time.Time) pushDeviceResponse {
-	response := pushDeviceResponse{DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol, State: "none"}
-	if device.credential == "" {
-		return response
+	response := pushDeviceResponse{
+		DeviceID: device.deviceID, Name: device.name, Protocol: device.protocol,
+		ExpiresAt: device.expiresAt, UsedAt: device.usedAt, pushURLs: s.pushURLs(device.credential),
 	}
-	response.ExpiresAt, response.UsedAt, response.pushURLs = device.expiresAt, device.usedAt, s.pushURLs(device.credential)
 	switch run, running := s.tokens.pushRuns[device.deviceID]; {
 	case running && run.streamID == device.credential:
 		response.State = "publishing"
@@ -112,7 +111,7 @@ func (s *infrastructureServer) handlePushCredentialPrepare(writer http.ResponseW
 	writeJSON(writer, http.StatusCreated, s.pushURLs(value))
 }
 
-// 创建时 token 为预生成的凭据（确认添加）；旧客户端不带 token 时直接生成。凭据从创建成功起 5 分钟内有效。
+// 创建只接受预生成凭据，确认后凭据从创建成功起 5 分钟内有效。
 func (s *infrastructureServer) handlePushDeviceCreate(writer http.ResponseWriter, request *http.Request) {
 	var command struct {
 		Name     string       `json:"name"`
@@ -127,19 +126,10 @@ func (s *infrastructureServer) handlePushDeviceCreate(writer http.ResponseWriter
 	s.tokens.mu.Lock()
 	now := s.live.sip.now()
 	s.tokens.expireLocked(now)
-	if device.credential != "" {
-		if _, ok := s.tokens.prepared[device.credential]; !ok {
-			s.tokens.mu.Unlock()
-			writeHTTPError(writer, http.StatusBadRequest, "invalid_credential")
-			return
-		}
-	} else {
-		var err error
-		if device.credential, err = newStreamToken(); err != nil {
-			s.tokens.mu.Unlock()
-			writeHTTPError(writer, http.StatusInternalServerError, "operation_failed")
-			return
-		}
+	if _, ok := s.tokens.prepared[device.credential]; !ok {
+		s.tokens.mu.Unlock()
+		writeHTTPError(writer, http.StatusBadRequest, "invalid_credential")
+		return
 	}
 	device.expiresAt = pushCredentialDeadline(now)
 	err := s.sources.createPushDevice(request.Context(), device)

@@ -210,7 +210,9 @@ func TestTokenResponsesDoNotHoldStateLocks(t *testing.T) {
 
 func createPushDevice(t *testing.T, s *infrastructureServer) string {
 	t.Helper()
-	response := apiRequest(t, s.handler(), "POST", "/api/push-devices", `{"name":"Camera"}`, http.StatusCreated)
+	handler := s.handler()
+	prepared := preparePushCredential(t, handler)
+	response := apiRequest(t, handler, "POST", "/api/push-devices", `{"name":"Camera","protocol":"rtmp","token":"`+prepared.Token+`"}`, http.StatusCreated)
 	var device pushDeviceResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &device); err != nil || !validUUIDv4(device.DeviceID) || device.State != "pending" {
 		t.Fatalf("invalid push device: %s", response.Body.String())
