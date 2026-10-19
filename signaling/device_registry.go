@@ -89,7 +89,6 @@ func (r *deviceRegistry) keepalive(deviceID, remoteEndpoint string, now time.Tim
 		return false
 	}
 	device.lastHeartbeat = now
-	device.online = true
 	r.devices[deviceID] = device
 	return true
 }

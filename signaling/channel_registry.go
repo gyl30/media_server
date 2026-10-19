@@ -28,19 +28,15 @@ type pendingCatalog struct {
 }
 
 type channelRegistry struct {
-	mu             sync.RWMutex
-	channels       map[string]map[string]channel
-	pending        map[catalogKey]pendingCatalog
-	now            func() time.Time
-	pendingTimeout time.Duration
+	mu       sync.RWMutex
+	channels map[string]map[string]channel
+	pending  map[catalogKey]pendingCatalog
 }
 
 func newChannelRegistry() *channelRegistry {
 	return &channelRegistry{
-		channels:       make(map[string]map[string]channel),
-		pending:        make(map[catalogKey]pendingCatalog),
-		now:            time.Now,
-		pendingTimeout: 10 * time.Second,
+		channels: make(map[string]map[string]channel),
+		pending:  make(map[catalogKey]pendingCatalog),
 	}
 }
 
@@ -48,7 +44,7 @@ func (r *channelRegistry) beginQuery(deviceID string, sn int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.pending[catalogKey{deviceID: deviceID, sn: sn}] = pendingCatalog{
-		channels: make(map[string]channel), expiresAt: r.now().Add(r.pendingTimeout),
+		channels: make(map[string]channel), expiresAt: time.Now().Add(10 * time.Second),
 	}
 }
 
@@ -66,7 +62,7 @@ func (r *channelRegistry) apply(response catalogResponse) error {
 	if !ok || response.SumNum < 0 || response.DeviceList.Num != len(response.DeviceList.Items) || response.SumNum < len(response.DeviceList.Items) {
 		return fmt.Errorf("invalid Catalog response")
 	}
-	if !r.now().Before(pending.expiresAt) {
+	if !time.Now().Before(pending.expiresAt) {
 		delete(r.pending, key)
 		return fmt.Errorf("expired Catalog response")
 	}

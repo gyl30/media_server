@@ -19,7 +19,6 @@ type digestAuthenticator struct {
 	mu       sync.Mutex
 	realm    string
 	password string
-	now      func() time.Time
 	nonces   map[string]digestNonce
 }
 
@@ -27,7 +26,6 @@ func newDigestAuthenticator(realm, password string) *digestAuthenticator {
 	return &digestAuthenticator{
 		realm:    realm,
 		password: password,
-		now:      time.Now,
 		nonces:   make(map[string]digestNonce),
 	}
 }
@@ -38,7 +36,7 @@ func (a *digestAuthenticator) challenge(deviceID string) (digest.Challenge, erro
 		return digest.Challenge{}, err
 	}
 	nonce := hex.EncodeToString(random)
-	now := a.now()
+	now := time.Now()
 	a.mu.Lock()
 	a.expireLocked(now)
 	a.nonces[nonce] = digestNonce{deviceID: deviceID, expires: now.Add(5 * time.Minute)}
@@ -89,8 +87,9 @@ func (a *digestAuthenticator) verify(deviceID, method, requestURI, authorization
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	entry, ok := a.nonces[credentials.Nonce]
-	if !ok || entry.deviceID != deviceID || !a.now().Before(entry.expires) {
-		if ok && !a.now().Before(entry.expires) {
+	now := time.Now()
+	if !ok || entry.deviceID != deviceID || !now.Before(entry.expires) {
+		if ok && !now.Before(entry.expires) {
 			delete(a.nonces, credentials.Nonce)
 		}
 		return false
