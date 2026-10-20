@@ -66,7 +66,6 @@ func (s *infrastructureServer) handler() http.Handler {
 	routes.HandleFunc("DELETE /api/sources/{source_id}", s.handleSourceDelete)
 	routes.HandleFunc("POST /api/sources/{source_id}/start", s.handleSourceStart)
 	routes.HandleFunc("POST /api/sources/{source_id}/stop", s.handleSourceStop)
-	routes.HandleFunc("POST /api/preview/start", s.handlePreviewStart)
 	routes.HandleFunc("GET /api/devices", s.handleDeviceList)
 	routes.HandleFunc("POST /api/devices", s.handleDeviceCreate)
 	routes.HandleFunc("GET /api/devices/{device_id}", s.handleDeviceGet)

@@ -7,22 +7,19 @@ import (
 	"testing"
 )
 
-func TestRetiredGBControlRoutesAreAbsent(t *testing.T) {
+func TestRetiredControlRoutesAreAbsent(t *testing.T) {
 	s := testInfrastructure(t)
 	handler := s.handler()
 	for _, path := range []string{
 		"/internal/live/start", "/internal/live/stop",
 		"/api/devices/device/channels/channel/start", "/api/devices/device/channels/channel/stop",
+		"/api/preview/start",
 	} {
 		apiRequest(t, handler, "POST", path, `{}`, http.StatusNotFound)
 	}
-	apiRequest(t, handler, "POST", "/api/preview/start",
-		`{"device_id":"34020000001320000001","channel_id":"34020000001320000002"}`, http.StatusBadRequest)
-	apiRequest(t, handler, "POST", "/api/preview/start",
-		`{"source_id":"11111111-1111-4111-8111-111111111111"}`, http.StatusNotFound)
 }
 
-func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
+func TestRTSPSourcePlayAvailable(t *testing.T) {
 	s := testInfrastructure(t)
 	media := &fakePullMedia{}
 	media.serve(t, s)
@@ -36,15 +33,15 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	if source.DesiredState != sourceDesiredRunning || source.Session == nil || source.Session.State != "created" {
 		t.Fatalf("create did not start pulling: %s", response.Body.String())
 	}
-	body := `{"source_id":"` + source.SourceID + `"}`
-	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	body := `{"source":{"source_id":"` + source.SourceID + `"}}`
+	apiRequest(t, handler, "POST", "/api/play", body, http.StatusConflict)
 	media.ready = true
 	if err := s.reconcileMedia(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
+	apiRequest(t, handler, "POST", "/api/play", body, http.StatusCreated)
 	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/stop", "", http.StatusNoContent)
-	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	apiRequest(t, handler, "POST", "/api/play", body, http.StatusConflict)
 	start := apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/start", "", http.StatusCreated)
 	var session struct {
 		StreamID string `json:"stream_id"`
@@ -52,14 +49,14 @@ func TestRTSPSourcePreviewRemainsAvailable(t *testing.T) {
 	if err := json.Unmarshal(start.Body.Bytes(), &session); err != nil || !validUUIDv4(session.StreamID) {
 		t.Fatalf("invalid start response: %s", start.Body.String())
 	}
-	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	apiRequest(t, handler, "POST", "/api/play", body, http.StatusConflict)
 	if err := s.reconcileMedia(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	response = apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusCreated)
+	response = apiRequest(t, handler, "POST", "/api/play", body, http.StatusCreated)
 	if !strings.Contains(response.Body.String(), "http://127.0.0.1:8080/play/whep/"+session.StreamID) {
 		t.Fatal(response.Body.String())
 	}
 	apiRequest(t, handler, "POST", "/api/sources/"+source.SourceID+"/stop", "", http.StatusNoContent)
-	apiRequest(t, handler, "POST", "/api/preview/start", body, http.StatusConflict)
+	apiRequest(t, handler, "POST", "/api/play", body, http.StatusConflict)
 }
