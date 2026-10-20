@@ -1,7 +1,6 @@
 package main
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -66,19 +65,6 @@ func (r *deviceRegistry) get(deviceID string) (registeredDevice, bool) {
 func (r *deviceRegistry) getOnline(deviceID string, now time.Time) (registeredDevice, bool) {
 	device, ok := r.get(deviceID)
 	return device, ok && device.online && now.Before(device.expiresAt)
-}
-
-func (r *deviceRegistry) snapshot(now time.Time) []registeredDevice {
-	r.mu.RLock()
-	devices := make([]registeredDevice, 0, len(r.devices))
-	for _, device := range r.devices {
-		device.contact = *device.contact.Clone()
-		device.online = device.online && now.Before(device.expiresAt)
-		devices = append(devices, device)
-	}
-	r.mu.RUnlock()
-	sort.Slice(devices, func(left, right int) bool { return devices[left].id < devices[right].id })
-	return devices
 }
 
 func (r *deviceRegistry) keepalive(deviceID, remoteEndpoint string, now time.Time) bool {
