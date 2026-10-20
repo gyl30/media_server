@@ -587,8 +587,11 @@ func TestGBPlaybackHTTPPrepareCancellation(t *testing.T) {
 	t.Cleanup(media.Close)
 	s.media.server.controlURL = media.URL
 	invites, _ := gbPlaybackPeer(t, s)
-	finished := make(chan struct{})
+	finished, serverCanceled := make(chan struct{}), make(chan struct{})
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 确认服务端已观察到 HTTP 取消，再释放阻塞的媒体创建响应。
+		stop := context.AfterFunc(r.Context(), func() { close(serverCanceled) })
+		defer stop()
 		defer close(finished)
 		s.handler().ServeHTTP(w, r)
 	}))
@@ -629,6 +632,7 @@ func TestGBPlaybackHTTPPrepareCancellation(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("HTTP 取消没有结束客户端")
 	}
+	gbPlaybackWait(t, serverCanceled, "服务端收到 HTTP 取消")
 	unblock.Do(func() { close(release) })
 	gbPlaybackWait(t, finished, "取消的 API handler")
 	gbPlaybackWait(t, session.established, "取消的 prepare owner")
