@@ -55,22 +55,27 @@ func TestLiveAnswerCompatibility(t *testing.T) {
 	}
 }
 
-func TestCatalogStatusCompatibility(t *testing.T) {
+func TestCatalogStatusUsesProtocolValues(t *testing.T) {
 	registry := newChannelRegistry()
 	registry.beginQuery("34020000001320000001", 1)
-	response := catalogResponse{DeviceID: "34020000001320000001", SN: 1, SumNum: 4}
-	response.DeviceList.Num = 4
+	response := catalogResponse{DeviceID: "34020000001320000001", SN: 1, SumNum: 7}
+	response.DeviceList.Num = 7
 	response.DeviceList.Items = []catalogChannel{
 		{DeviceID: "34020000002150000001", Name: "virtual group"},
-		{DeviceID: "34020000001320000002", Status: "ONLINE"},
-		{DeviceID: "34020000001320000003", Status: "on"},
-		{DeviceID: "34020000001320000004", Status: "OFFLINE"},
+		{DeviceID: "34020000001320000002", Status: "ON"},
+		{DeviceID: "34020000001320000003", Status: "ONLINE"},
+		{DeviceID: "34020000001320000004", Status: "on"},
+		{DeviceID: "34020000001320000005", Status: "OFF"},
+		{DeviceID: "34020000001320000006", Status: "OK"},
+		{DeviceID: "34020000001320000007", Status: " ON "},
 	}
 	if err := registry.apply(response); err != nil {
 		t.Fatalf("catalog rejected: %v", err)
 	}
 	expected := map[string]string{
-		"34020000002150000001": "OFF", "34020000001320000002": "ON", "34020000001320000003": "ON", "34020000001320000004": "OFF",
+		"34020000002150000001": "OFF", "34020000001320000002": "ON", "34020000001320000003": "OFF",
+		"34020000001320000004": "OFF", "34020000001320000005": "OFF", "34020000001320000006": "OFF",
+		"34020000001320000007": "OFF",
 	}
 	for id, status := range expected {
 		if channel, ok := registry.get("34020000001320000001", id); !ok || channel.status != status {

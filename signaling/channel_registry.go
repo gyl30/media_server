@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 )
@@ -80,12 +79,16 @@ func (r *channelRegistry) apply(response catalogResponse) error {
 		if !validDigits(item.DeviceID, 20) {
 			return fmt.Errorf("invalid Catalog channel")
 		}
+		status := item.Status
+		if status != "ON" {
+			status = "OFF"
+		}
 		merged[item.DeviceID] = channel{
 			deviceID: response.DeviceID,
 			id:       item.DeviceID,
 			name:     item.Name,
 			parentID: item.ParentID,
-			status:   normalizeChannelStatus(item.Status),
+			status:   status,
 		}
 	}
 	if len(merged) > expected {
@@ -100,17 +103,6 @@ func (r *channelRegistry) apply(response catalogResponse) error {
 	}
 	r.pending[key] = pending
 	return nil
-}
-
-// normalizeChannelStatus 兼容设备的不同写法：目录分组条目常省略 Status，
-// 部分设备使用 ONLINE/OK；无法识别的值按离线处理而不是拒绝整个目录。
-func normalizeChannelStatus(status string) string {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "ON", "ONLINE", "OK":
-		return "ON"
-	default:
-		return "OFF"
-	}
 }
 
 func (r *channelRegistry) get(deviceID, channelID string) (channel, bool) {
