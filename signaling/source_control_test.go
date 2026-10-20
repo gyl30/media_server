@@ -169,6 +169,29 @@ func TestSourcePatchRestartsRunningPull(t *testing.T) {
 	}
 }
 
+// 改名冲突由数据库唯一约束判定；拒绝时配置不变，原名和新名称都能正常更新。
+func TestSourcePatchNameConflict(t *testing.T) {
+	s := testInfrastructure(t)
+	media := &fakePullMedia{}
+	media.serve(t, s)
+	handler := s.handler()
+	first := decodeSource(t, apiRequest(t, handler, "POST", "/api/sources", `{"stream_name":"first","url":"rtsp://10.0.0.1/first"}`, http.StatusCreated).Body.Bytes())
+	second := decodeSource(t, apiRequest(t, handler, "POST", "/api/sources", `{"stream_name":"second","url":"rtsp://10.0.0.2/second"}`, http.StatusCreated).Body.Bytes())
+
+	apiRequest(t, handler, "PATCH", "/api/sources/"+second.SourceID, `{"stream_name":"first","url":"rtsp://10.0.0.3/changed"}`, http.StatusConflict)
+	if current := listedSource(t, handler, second.SourceID); current.StreamName != "second" || current.URL != "rtsp://10.0.0.2/second" {
+		t.Fatalf("conflicting update changed source: %+v", current)
+	}
+	same := decodeSource(t, apiRequest(t, handler, "PATCH", "/api/sources/"+second.SourceID, `{"stream_name":"second"}`, http.StatusOK).Body.Bytes())
+	if same.StreamName != "second" {
+		t.Fatalf("same name update failed: %+v", same)
+	}
+	renamed := decodeSource(t, apiRequest(t, handler, "PATCH", "/api/sources/"+second.SourceID, `{"stream_name":"third"}`, http.StatusOK).Body.Bytes())
+	if renamed.StreamName != "third" || listedSource(t, handler, second.SourceID).StreamName != "third" || listedSource(t, handler, first.SourceID).StreamName != "first" {
+		t.Fatalf("rename persisted wrong configuration: %+v", renamed)
+	}
+}
+
 // 启动时只恢复期望运行的源，每个源一个会话，再次恢复不会重复建立。
 func TestResumeSourcesFollowsDesiredState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "signaling.db")

@@ -178,19 +178,18 @@ func (s *sourceStore) patch(ctx context.Context, sourceID string, patch rtspSour
 		return rtspSource{}, errInvalidSource
 	}
 
-	var conflictingID string
-	err = tx.QueryRowContext(ctx, `
-		SELECT source_id FROM rtsp_sources WHERE stream_name = ? AND source_id <> ?`, source.streamName, source.sourceID).Scan(&conflictingID)
-	if err == nil {
-		return rtspSource{}, errSourceConflict
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return rtspSource{}, fmt.Errorf("check source conflict: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE rtsp_sources SET stream_name = ?, url = ?, username = ?, password = ? WHERE source_id = ?`,
-		source.streamName, source.url, source.username, source.password, source.sourceID); err != nil {
+	result, err := tx.ExecContext(ctx, `
+		UPDATE OR IGNORE rtsp_sources SET stream_name = ?, url = ?, username = ?, password = ? WHERE source_id = ?`,
+		source.streamName, source.url, source.username, source.password, source.sourceID)
+	if err != nil {
 		return rtspSource{}, fmt.Errorf("update source: %w", err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return rtspSource{}, fmt.Errorf("source update result: %w", err)
+	}
+	if changed == 0 {
+		return rtspSource{}, errSourceConflict
 	}
 	if err := tx.Commit(); err != nil {
 		return rtspSource{}, fmt.Errorf("commit source update: %w", err)
