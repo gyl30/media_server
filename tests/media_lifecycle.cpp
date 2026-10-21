@@ -500,6 +500,7 @@ void derived_generation_lifetimes(workers& context)
                require(audio->output_stream()->tracks().at(1).codec == codec_id::opus, "derived audio is not Opus");
                auto segmenter = hls::get_or_create(source);
                require(segmenter && segmenter != previous_hls && !segmenter->ended_at(), "HLS shared across wrong generation");
+               require(hls::get_or_create(source) == segmenter, "HLS same stream ID did not reuse segmenter");
                if (previous_hls)
                {
                    require(previous_hls->ended_at().has_value(), "old HLS segmenter remained live");

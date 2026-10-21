@@ -16,16 +16,10 @@ namespace media_server::hls
 namespace
 {
 
-struct entry
-{
-    std::weak_ptr<media_stream> stream;
-    std::shared_ptr<hls_segmenter> segmenter;
-};
-
 struct state
 {
     std::mutex mutex;
-    std::map<std::string, entry, std::less<>> segmenters;
+    std::map<std::string, std::shared_ptr<hls_segmenter>, std::less<>> segmenters;
 };
 
 state& runtime()
@@ -41,7 +35,7 @@ void remove_expired_segmenters(std::chrono::steady_clock::time_point now)
     std::erase_if(runtime().segmenters,
                   [now](const auto& item)
                   {
-                      const auto ended_at = item.second.segmenter->ended_at();
+                      const auto ended_at = item.second->ended_at();
                       return ended_at && now - *ended_at >= ended_retention;
                   });
 }
@@ -78,16 +72,9 @@ std::shared_ptr<hls_segmenter> get_or_create(const std::shared_ptr<media_stream>
     remove_expired_segmenters(now);
 
     const auto& stream_id = stream->stream_id();
-    auto existing = current.segmenters.find(stream_id);
-
-    if (existing != current.segmenters.end())
+    if (const auto existing = current.segmenters.find(stream_id); existing != current.segmenters.end())
     {
-        if (const auto current_stream = existing->second.stream.lock(); current_stream && current_stream.get() == stream.get())
-        {
-            return existing->second.segmenter;
-        }
-        existing->second.segmenter->shutdown();
-        current.segmenters.erase(existing);
+        return existing->second;
     }
 
     auto segmenter = std::make_shared<hls_segmenter>();
@@ -96,7 +83,7 @@ std::shared_ptr<hls_segmenter> get_or_create(const std::shared_ptr<media_stream>
         segmenter->shutdown();
         return {};
     }
-    current.segmenters.emplace(std::string(stream_id), entry{.stream = stream, .segmenter = segmenter});
+    current.segmenters.emplace(std::string(stream_id), segmenter);
     return segmenter;
 }
 
@@ -106,7 +93,7 @@ void shutdown()
     std::scoped_lock lock(current.mutex);
     for (auto& [stream_id, value] : current.segmenters)
     {
-        value.segmenter->shutdown();
+        value->shutdown();
     }
     current.segmenters.clear();
 }
