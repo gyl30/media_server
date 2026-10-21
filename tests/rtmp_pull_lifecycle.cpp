@@ -52,7 +52,7 @@ rtmp_pull_config make_config(std::string host, std::uint16_t port)
 }
 
 // 解析期间关闭：迟到的解析结果不能再连接上游，也不能改变替换会话的注册。
-void close_during_resolve(bool replace)
+void close_during_resolve()
 {
     {
         std::scoped_lock lock(resolve_mutex);
@@ -65,7 +65,6 @@ void close_during_resolve(bool replace)
     const auto port = upstream.local_endpoint().port();
     auto receiver = std::make_shared<rtmp_pull_session>(worker, make_config(std::string(test_host), port));
     const std::weak_ptr<rtmp_pull_session> lifetime = receiver;
-    std::shared_ptr<rtmp_pull_session> replacement;
     bool connected{};
     boost::scope::scope_exit cleanup(
         [&]()
@@ -77,12 +76,6 @@ void close_during_resolve(bool replace)
             resolve_event.notify_all();
             boost::system::error_code error;
             upstream.close(error);
-            if (replacement)
-            {
-                session_registry::instance().remove_receiver_session(stream_id, *replacement);
-                replacement->shutdown();
-                replacement.reset();
-            }
             receiver.reset();
             worker.request_stop();
             worker.io().restart();
@@ -100,11 +93,6 @@ void close_during_resolve(bool replace)
     worker.io().poll();
     require(!session_registry::instance().find_receiver_session(stream_id), "pull safe_shutdown did not run before resolver release");
     receiver.reset();
-    if (replace)
-    {
-        replacement = std::make_shared<rtmp_pull_session>(worker, make_config("127.0.0.1", port));
-        require(session_registry::instance().add_receiver_session(std::string(stream_id), replacement), "replacement registration failed");
-    }
     {
         std::scoped_lock lock(resolve_mutex);
         release_resolve = true;
@@ -122,8 +110,8 @@ void close_during_resolve(bool replace)
     }
     require(!connected, "closed RTMP pull connected upstream after resolver completion");
     require(lifetime.expired(), "closed RTMP pull retained coroutine ownership");
-    require(session_registry::instance().find_receiver_session(stream_id) == replacement, "old pull changed replacement ownership");
-    std::cout << "RTMP pull shutdown during resolve, replacement=" << replace << ": PASS\n";
+    require(!session_registry::instance().find_receiver_session(stream_id), "closed pull restored receiver ownership");
+    std::cout << "RTMP pull shutdown during resolve: PASS\n";
 }
 
 // 已连接、握手未完成时关闭：上游连接被关闭，会话、注册和异步任务全部释放，不注册媒体源。
@@ -242,8 +230,7 @@ int main()
 {
     try
     {
-        close_during_resolve(false);
-        close_during_resolve(true);
+        close_during_resolve();
         close_during_handshake();
         peer_close();
         return 0;

@@ -185,7 +185,7 @@ func (s *infrastructureServer) dropEndedRTSPPull(expected rtspPullSession) bool 
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || !sameRTSPPull(session, expected) || !session.createConfirmed || session.starting || session.stopDone != nil {
+	if !ok || session.streamID != expected.streamID || !session.createConfirmed || session.starting || session.stopDone != nil {
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)

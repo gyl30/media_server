@@ -150,7 +150,10 @@ void admission(bool rtmp, const std::string& scenario)
     config application_config;
     application_config.signaling_url =
         *ada::parse<ada::url_aggregator>("http://127.0.0.1:" + std::to_string(signaling_listener.local_endpoint().port()));
-    const std::string stream_id(64, 'a');
+    static unsigned invocation{};
+    std::string stream_id(64, 'a');
+    const auto suffix = std::to_string(++invocation);
+    stream_id.replace(stream_id.size() - suffix.size(), suffix.size(), suffix);
     const std::string token(64, 'b');
     std::optional<std::string> pending_token{token};
     auto source = std::make_shared<media_stream>(stream_id, cross_worker ? source_worker : worker);
@@ -163,7 +166,6 @@ void admission(bool rtmp, const std::string& scenario)
                                    .channel_count = 1,
                                    .codec_config = {}};
     require(source->set_tracks({track}) && stream_registry::instance().add(source), "test source setup failed");
-    std::shared_ptr<media_stream> replacement;
     std::vector<std::shared_ptr<session>> owners;
     std::vector<std::weak_ptr<session>> released_owners;
     unsigned verify_requests{};
@@ -199,11 +201,6 @@ void admission(bool rtmp, const std::string& scenario)
         else
         {
             source->end();
-        }
-        if (replacement)
-        {
-            stream_registry::instance().remove(*replacement);
-            replacement->end();
         }
         worker.request_stop();
     };
@@ -348,12 +345,10 @@ void admission(bool rtmp, const std::string& scenario)
                     {
                         observed.fail_next = true;
                     }
-                    if (scenario == "replacement")
+                    if (scenario == "source_ended")
                     {
                         stream_registry::instance().remove(*source);
                         source->end();
-                        replacement = std::make_shared<media_stream>(stream_id, worker);
-                        require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
                     }
                 }
                 http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
@@ -480,9 +475,9 @@ void admission(bool rtmp, const std::string& scenario)
                     {
                         require(!error && headers.starts_with("RTSP/1.0 200"), "accepted RTSP DESCRIBE failed");
                     }
-                    else if (scenario == "replacement")
+                    else if (scenario == "source_ended")
                     {
-                        require(!error && headers.starts_with("RTSP/1.0 404"), "RTSP switched to replacement source during verification");
+                        require(!error && headers.starts_with("RTSP/1.0 404"), "RTSP accepted ended source during verification");
                     }
                     else
                     {
@@ -549,7 +544,7 @@ void admission(bool rtmp, const std::string& scenario)
     }
     require(observed.live == 0, "play mux remained after shutdown");
     require(invalid_context_sends == 0, "late media used a destroyed RTMP context");
-    require(observed.destroyed == (accepted || scenario == "replacement" || scenario == "no_tracks" ? 1U : 0U), "play mux cleanup count changed");
+    require(observed.destroyed == (accepted || scenario == "source_ended" || scenario == "no_tracks" ? 1U : 0U), "play mux cleanup count changed");
     for (const auto& owner : released_owners)
     {
         require(owner.expired(), "play connection retained after shutdown");
@@ -662,7 +657,7 @@ int main(int argc, char** argv)
         }
         if (!rtmp)
         {
-            admission(false, "replacement");
+            admission(false, "source_ended");
             admission(false, "no_tracks");
             for (const auto* scenario : {"play_normal", "play_replied", "play_buffered", "play_combined", "play_after_failure", "play_cross_worker"})
             {

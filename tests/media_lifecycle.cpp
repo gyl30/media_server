@@ -382,7 +382,6 @@ void rtsp_common_start_clock(workers& context)
 void ordered_generations_and_churn(workers& context)
 {
     auto& registry = stream_registry::instance();
-    std::shared_ptr<media_stream> previous;
     const auto payload = std::make_shared<const std::vector<std::uint8_t>>(160, 0xd5);
     for (int generation = 0; generation < 20; ++generation)
     {
@@ -390,20 +389,23 @@ void ordered_generations_and_churn(workers& context)
             context.source,
             [&]()
             {
-                auto stream = std::make_shared<media_stream>("verify/generation", context.source);
+                auto stream = std::make_shared<media_stream>("verify/generation/" + std::to_string(generation), context.source);
                 require(
                     stream->set_tracks(
                         {{.id = 1, .kind = media_kind::audio, .codec = codec_id::g711a, .clock_rate = 8000, .channel_count = 1, .codec_config = {}}}),
                     "initial tracks rejected");
                 require(registry.add(stream), "generation not registered");
-                if (previous)
+                require(registry.find(stream->stream_id()) == stream, "generation registry lookup failed");
+                if (generation == 0)
                 {
-                    registry.remove(*previous);
-                    require(registry.find(stream->stream_id()) == stream, "old cleanup removed new generation");
+                    auto duplicate = std::make_shared<media_stream>(stream->stream_id(), context.source);
+                    require(duplicate->set_tracks(stream->tracks()) && !registry.add(duplicate), "duplicate stream ID accepted");
+                    registry.remove(*duplicate);
+                    require(registry.find(stream->stream_id()) == stream, "rejected source cleanup removed registered source");
+                    duplicate->end();
                 }
                 return stream;
             });
-        previous.reset();
         auto sink = std::make_shared<recording_sink>(context.viewer);
         auto ended = sink->ended.get_future();
         on(context.source,
@@ -418,6 +420,7 @@ void ordered_generations_and_churn(workers& context)
                registry.remove(*source);
                source->end();
            });
+        require(!registry.find(source->stream_id()), "ended generation remains registered");
         require(ended.wait_for(5s) == std::future_status::ready, "old sink did not end");
         const auto frames = ended.get();
         require(frames.size() == 20, "source end overtook pending frames");
@@ -426,12 +429,10 @@ void ordered_generations_and_churn(workers& context)
             const auto expected = static_cast<std::int64_t>(generation) * 1'000'000'000 + frame * 20'000'000;
             require(frames[static_cast<std::size_t>(frame)].pts_ns == expected, "cross-worker frame order/generation mismatch");
         }
-        previous = std::move(source);
+        const std::weak_ptr<media_stream> ended_source = source;
+        source.reset();
+        require(ended_source.expired(), "ended source retained after last owner left");
     }
-    const std::weak_ptr<media_stream> old = previous;
-    previous.reset();
-    require(old.expired(), "ended source retained after last owner left");
-    require(!registry.find("verify/generation"), "ended generation remains registered");
 
     auto source = on(
         context.source,
@@ -480,7 +481,7 @@ void derived_generation_lifetimes(workers& context)
         on(context.source,
            [&]()
            {
-               auto source = std::make_shared<media_stream>("verify/derived", context.source);
+               auto source = std::make_shared<media_stream>("verify/derived/" + std::to_string(generation), context.source);
                sources.emplace_back(source);
                require(source->set_tracks({{.id = 1, .kind = media_kind::video, .codec = codec_id::h264, .clock_rate = 90000, .codec_config = {}},
                                            {.id = 2,
@@ -536,20 +537,22 @@ void session_registry_identity()
 {
     auto& registry = session_registry::instance();
     const std::string stream_id = "verify/session-identity";
+    const std::string next_stream_id = "verify/session-identity-next";
     auto previous = std::make_shared<registered_session>();
     auto current = std::make_shared<registered_session>();
     auto sender = std::make_shared<registered_session>();
     auto other_sender = std::make_shared<registered_session>();
     require(registry.add_receiver_session(stream_id, previous), "receiver registration failed");
     require(!registry.add_receiver_session(stream_id, current), "duplicate receiver accepted");
+    registry.remove_receiver_session(stream_id, *current);
+    require(registry.find_receiver_session(stream_id) == previous, "rejected receiver cleanup removed owner");
     require(!registry.take_receiver_session("missing"), "missing receiver returned a session");
     require(registry.find_receiver_session(stream_id) == previous, "wrong ID removed receiver");
     require(registry.receivers() == std::vector<std::string>{stream_id}, "receiver list did not contain only stream ID");
     require(registry.take_receiver_session(stream_id) == previous, "receiver take failed");
     require(!registry.take_receiver_session(stream_id), "receiver take was not destructive");
-    require(registry.add_receiver_session(stream_id, current), "replacement receiver registration failed");
-    registry.remove_receiver_session(stream_id, *previous);
-    require(registry.find_receiver_session(stream_id) == current, "old receiver cleanup removed replacement");
+    require(registry.add_receiver_session(next_stream_id, current), "distinct receiver registration failed");
+    require(registry.find_receiver_session(next_stream_id) == current, "distinct receiver lookup failed");
     require(registry.add_sender_session(stream_id, "sender", previous), "sender registration failed");
     require(!registry.add_sender_session(stream_id, "sender", sender), "duplicate sender accepted");
     require(registry.add_sender_session(stream_id, "other", other_sender), "distinct sender rejected");
@@ -558,12 +561,12 @@ void session_registry_identity()
     registry.remove_sender_session(stream_id, "sender", *previous);
     require(!registry.take_sender_session("missing", "sender"), "wrong stream ID removed sender");
     require(!registry.take_sender_session(stream_id, "missing"), "wrong sender ID removed sender");
-    registry.remove_receiver_session(stream_id, *current);
+    registry.remove_receiver_session(next_stream_id, *current);
     require(registry.receivers().empty(), "sender was listed as receiver");
     require(registry.take_sender_session(stream_id, "sender") == sender, "old sender cleanup removed replacement");
     require(registry.take_sender_session(stream_id, "other") == other_sender, "receiver removal removed sender");
     require(!registry.take_sender_session(stream_id, "sender"), "sender take was not destructive");
-    std::cout << "session registry stream ID, sender IDs and object-identity cleanup: PASS\n";
+    std::cout << "session registry unique receiver IDs, duplicate rejection and sender cleanup: PASS\n";
 }
 
 void session_registry_stop()

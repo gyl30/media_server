@@ -492,31 +492,6 @@ void test_second_consumer()
     f.finish();
 }
 
-class replacement_session final : public session
-{
-   public:
-    void shutdown() override {}
-};
-
-void test_stale_identity()
-{
-    fixture f;
-    auto replacement = std::make_shared<replacement_session>();
-    auto old = session_registry::instance().take_receiver_session(f.id);
-    require(old.get() == f.receiver.get(), "take original receiver");
-    old.reset();
-    require(session_registry::instance().add_receiver_session(f.id, replacement), "install replacement identity");
-    auto consumer = f.consumer();
-    response rejected;
-    rejected.header(f, *consumer, http::status::conflict);
-    require(!rejected.body(f, *consumer) && rejected.parser.is_done(), "stale receiver receives complete 409");
-    f.receiver->shutdown();
-    on(f.owner, []() {});
-    require(session_registry::instance().find_receiver_session(f.id) == replacement, "old cleanup preserves replacement identity");
-    session_registry::instance().remove_receiver_session(f.id, *replacement);
-    f.finish();
-}
-
 void test_owner_already_stopped()
 {
     fixture f;
@@ -879,7 +854,7 @@ int main()
 {
     using namespace media_server;
     media_port_pool::init(20'000, 20'007);
-    const std::array<std::pair<const char*, void (*)()>, 20> cases{{
+    const std::array<std::pair<const char*, void (*)()>, 19> cases{{
         {"migrate_wrap_device_first", test_migrate_wrap_device_first},
         {"get_first", test_get_first},
         {"half_length", []() { test_incomplete(malformed::half_length); }},
@@ -889,7 +864,6 @@ int main()
         {"consumer_disconnect_before_device", []() { test_consumer_disconnect(true); }},
         {"consumer_disconnect_silent_device", []() { test_consumer_disconnect(false); }},
         {"second_consumer", test_second_consumer},
-        {"stale_identity", test_stale_identity},
         {"owner_already_stopped", test_owner_already_stopped},
         {"handoff_queued_then_stop", test_handoff_queued_then_stop},
         {"shutdown_during_transfer", []() { test_shutdown_during_transfer(false); }},

@@ -452,8 +452,7 @@ void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data
 
 bool rtsp_play_session::stream_current() const
 {
-    const auto current_stream = stream_registry::instance().find(stream_->stream_id());
-    return current_stream && current_stream.get() == stream_.get();
+    return stream_registry::instance().find(stream_->stream_id()) != nullptr;
 }
 
 bool rtsp_play_session::channels_available(track_id id, int rtp_channel, int rtcp_channel) const

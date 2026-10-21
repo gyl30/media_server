@@ -1,6 +1,6 @@
 # 媒体核心边界
 
-`media_stream` 表示一个 source generation。输入协议先收集完整的固定轨道，调用 `set_tracks()` 后再将 stream 放入 registry；stream 对外可见后，轨道、codec 和 codec config 在整个 generation 内不再变化。配置变化意味着旧 generation 结束并创建新的 stream。
+`media_stream` 表示一个 source generation。`stream_id` 在一次推流、拉流或历史回放生命周期内唯一，结束后不复用；新的生命周期必须使用新 ID。注册失败的重复请求仍可能产生短暂对象，因此 registry 删除时保留对象身份检查，避免失败对象的清理误删已注册对象。输入协议先收集完整的固定轨道，调用 `set_tracks()` 后再将 stream 放入 registry；stream 对外可见后，轨道、codec 和 codec config 在整个 generation 内不再变化。配置变化意味着旧 generation 结束并创建新的 stream。
 
 媒体核心只做一件事：把 canonical `media_frame` 推送给 sink。
 

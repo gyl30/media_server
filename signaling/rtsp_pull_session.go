@@ -71,7 +71,7 @@ func (s *infrastructureServer) finishRTSPPull(expected rtspPullSession) bool {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || !sameRTSPPull(session, expected) {
+	if !ok || session.streamID != expected.streamID {
 		return false
 	}
 	session.starting = false
@@ -84,7 +84,7 @@ func (s *infrastructureServer) finishUnconfirmedRTSPPull(expected rtspPullSessio
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || !sameRTSPPull(session, expected) {
+	if !ok || session.streamID != expected.streamID {
 		return false
 	}
 	session.starting = false
@@ -99,7 +99,7 @@ func (s *infrastructureServer) removeRTSPPull(expected rtspPullSession) bool {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || !sameRTSPPull(session, expected) {
+	if !ok || session.streamID != expected.streamID {
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)
@@ -133,7 +133,7 @@ func (s *infrastructureServer) finishRTSPPullStop(expected rtspPullSession, succ
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || !sameRTSPPull(session, expected) || session.stopDone != expected.stopDone {
+	if !ok || session.streamID != expected.streamID || session.stopDone != expected.stopDone {
 		return false
 	}
 	if succeeded {
@@ -175,8 +175,4 @@ func (s *infrastructureServer) shutdownRTSPPulls(ctx context.Context) {
 		}()
 	}
 	wait.Wait()
-}
-
-func sameRTSPPull(left, right rtspPullSession) bool {
-	return left.sourceID == right.sourceID && left.streamID == right.streamID && left.streamName == right.streamName
 }

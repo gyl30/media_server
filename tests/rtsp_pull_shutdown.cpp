@@ -41,7 +41,7 @@ void require(bool condition, const char* message)
     }
 }
 
-void close_during_resolve(bool replace)
+void close_during_resolve()
 {
     {
         std::scoped_lock lock(resolve_mutex);
@@ -63,7 +63,6 @@ void close_during_resolve(bool replace)
                                                              .username = {},
                                                              .password = {}});
     const std::weak_ptr<rtsp_pull_session> lifetime = receiver;
-    std::shared_ptr<rtsp_pull_session> replacement;
     std::shared_ptr<tcp::socket> peer;
     bool connected{};
     bool described{};
@@ -85,12 +84,6 @@ void close_during_resolve(bool replace)
             if (const auto remaining = lifetime.lock())
             {
                 remaining->shutdown();
-            }
-            if (replacement)
-            {
-                session_registry::instance().remove_receiver_session(stream_id, *replacement);
-                replacement->shutdown();
-                replacement.reset();
             }
             receiver.reset();
             worker.request_stop();
@@ -131,17 +124,6 @@ void close_during_resolve(bool replace)
     require(cleanup_barrier.wait_for(0s) == std::future_status::ready && !session_registry::instance().find_receiver_session(stream_id),
             "pull safe_shutdown did not run before resolver release");
     receiver.reset();
-    if (replace)
-    {
-        replacement = std::make_shared<rtsp_pull_session>(worker,
-                                                          rtsp_pull_config{.stream_id = stream_id,
-                                                                           .url = "rtsp://127.0.0.1:" + std::to_string(port) + "/replacement",
-                                                                           .host = "127.0.0.1",
-                                                                           .port = port,
-                                                                           .username = {},
-                                                                           .password = {}});
-        require(session_registry::instance().add_receiver_session(stream_id, replacement), "replacement pull registration failed");
-    }
     {
         std::scoped_lock lock(resolve_mutex);
         release_resolve = true;
@@ -156,12 +138,11 @@ void close_during_resolve(bool replace)
         std::scoped_lock lock(resolve_mutex);
         require(returned_resolve, "controlled resolver did not return");
     }
-    std::cout << "RTSP pull after cleanup replacement=" << replace << ": connected=" << connected << " describe=" << described
+    std::cout << "RTSP pull after cleanup: connected=" << connected << " describe=" << described
               << " expired=" << lifetime.expired() << '\n';
     require(!connected && !described, "closed RTSP pull reopened its socket and contacted upstream after resolver completion");
     require(lifetime.expired(), "closed RTSP pull retained coroutine ownership after resolver completion");
-    require(session_registry::instance().find_receiver_session(stream_id) == replacement,
-            "old pull continuation changed replacement receiver ownership");
+    require(!session_registry::instance().find_receiver_session(stream_id), "closed pull restored receiver ownership");
 }
 
 void close_during_play(bool late_response)
@@ -318,8 +299,7 @@ int main()
 {
     try
     {
-        close_during_resolve(false);
-        close_during_resolve(true);
+        close_during_resolve();
         std::cout << "RTSP pull shutdown during active resolver: PASS\n";
         close_during_play(false);
         close_during_play(true);
