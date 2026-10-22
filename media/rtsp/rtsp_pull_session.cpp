@@ -216,10 +216,6 @@ int rtsp_pull_session::play_callback(
     return self->media_->set_rtp_info(static_cast<std::size_t>(media), static_cast<std::uint16_t>(info[0].seq), info[0].time);
 }
 
-int rtsp_pull_session::pause_callback(void*) { return 0; }
-
-int rtsp_pull_session::teardown_callback(void*) { return 0; }
-
 void rtsp_pull_session::rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes)
 {
     static_cast<rtsp_pull_session*>(param)->on_rtp(channel, data, bytes);
@@ -261,8 +257,6 @@ void rtsp_pull_session::run(boost::asio::yield_context yield)
     handler.ondescribe = &rtsp_pull_session::describe_callback;
     handler.onsetup = &rtsp_pull_session::setup_callback;
     handler.onplay = &rtsp_pull_session::play_callback;
-    handler.onpause = &rtsp_pull_session::pause_callback;
-    handler.onteardown = &rtsp_pull_session::teardown_callback;
     handler.onrtp = &rtsp_pull_session::rtp_callback;
 
     auto* client = rtsp_client_create(config_.url.c_str(),

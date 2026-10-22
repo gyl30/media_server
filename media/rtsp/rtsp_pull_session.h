@@ -54,8 +54,6 @@ class rtsp_pull_session final : public session, public std::enable_shared_from_t
     static int setup_callback(void* param, int, std::int64_t);
     static int play_callback(
         void* param, int media, const std::uint64_t* begin, const std::uint64_t* end, const double* scale, const rtsp_rtp_info_t* info, int count);
-    static int pause_callback(void* param);
-    static int teardown_callback(void* param);
     static void rtp_callback(void* param, std::uint8_t channel, const void* data, std::uint16_t bytes);
 
    private:
