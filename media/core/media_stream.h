@@ -31,8 +31,6 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] std::shared_ptr<mpeg_ps_output> ps_output();
 
    private:
-    void add_sink_owner(std::shared_ptr<media_sink> sink, worker_context& worker);
-
     std::string stream_id_;
     worker_context& worker_;
     std::vector<media_track> tracks_;

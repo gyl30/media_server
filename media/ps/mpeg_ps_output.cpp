@@ -143,17 +143,15 @@ void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink)
     }
     auto* target = &sink->worker();
     boost::asio::dispatch(worker_.io(),
-                          [self = shared_from_this(), sink = std::move(sink), target]() mutable { self->add_sink_owner(std::move(sink), *target); });
-}
-
-void mpeg_ps_output::add_sink_owner(std::shared_ptr<mpeg_ps_sink> sink, worker_context& worker)
-{
-    if (!source_ || !muxer_)
-    {
-        boost::asio::post(worker.io(), [sink = std::move(sink)]() { sink->on_end(); });
-        return;
-    }
-    dispatcher_.add(std::move(sink), worker);
+                          [self = shared_from_this(), sink = std::move(sink), target]() mutable
+                          {
+                              if (!self->source_ || !self->muxer_)
+                              {
+                                  boost::asio::post(target->io(), [sink = std::move(sink)]() { sink->on_end(); });
+                                  return;
+                              }
+                              self->dispatcher_.add(std::move(sink), *target);
+                          });
 }
 
 void mpeg_ps_output::remove_sink(mpeg_ps_sink* sink)
