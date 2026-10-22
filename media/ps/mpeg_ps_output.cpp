@@ -52,7 +52,6 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
     {
         return false;
     }
-    source_ = source;
     const ps_muxer_func_t callbacks{allocate_packet, free_packet, write_packet};
     muxer_.reset(ps_muxer_create(&callbacks, this));
     if (!muxer_)
@@ -91,6 +90,7 @@ bool mpeg_ps_output::startup(const std::shared_ptr<media_stream>& source)
         }
         mux_tracks_.emplace(track.id, std::pair{track.kind, id});
     }
+    source_ = source;
     source->add_sink(shared_from_this());
     return true;
 }
