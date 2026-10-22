@@ -20,8 +20,6 @@ class worker_context;
 struct mpeg_ps_frame
 {
     track_id track{};
-    std::int64_t dts_ns{};
-    std::int64_t pts_ns{};
     bool key_frame{};
     byte_buffer payload;
     std::uint32_t media_timestamp{};

@@ -126,8 +126,6 @@ void mpeg_ps_output::on_frame(const media_frame& frame)
     }
     waiting_for_key_frame_ = false;
     dispatcher_.publish({.track = frame.track,
-                         .dts_ns = frame.dts_ns,
-                         .pts_ns = frame.pts_ns,
                          .key_frame = frame.key_frame,
                          .payload = std::move(packet_),
                          .media_timestamp = static_cast<std::uint32_t>(pts)});
