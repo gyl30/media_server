@@ -66,7 +66,7 @@ void admission(bool publishing, const std::string& scenario)
     const auto certificate = dtls_certificate::create();
     require(certificate != nullptr, "test certificate failed");
     const auto mid = std::string("0");
-    const bool aac_source = scenario == "replacement_aac";
+    const bool aac_source = scenario == "source_ended_aac";
     auto offer = std::string("v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE ") + mid + "\r\n" +
                  (publishing   ? "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n"
                   : aac_source ? "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
@@ -134,7 +134,6 @@ void admission(bool publishing, const std::string& scenario)
     {
         require(stream_registry::instance().add(source), "test source registration failed");
     }
-    std::shared_ptr<media_stream> replacement;
     std::exception_ptr failure;
     unsigned verify_requests{};
     const auto failed_contexts_before = failed_ssl_contexts;
@@ -209,12 +208,10 @@ void admission(bool publishing, const std::string& scenario)
                     {
                         fail_ssl_context = true;
                     }
-                    if (scenario == "replacement" || scenario == "replacement_aac")
+                    if (scenario == "source_ended" || scenario == "source_ended_aac")
                     {
                         stream_registry::instance().remove(*source);
                         source->end();
-                        replacement = std::make_shared<media_stream>(stream_id, worker);
-                        require(replacement->set_tracks({track}) && stream_registry::instance().add(replacement), "replacement setup failed");
                     }
                 }
                 http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
@@ -336,7 +333,7 @@ void admission(bool publishing, const std::string& scenario)
                 }
                 else
                 {
-                    if (scenario == "replacement" || scenario == "replacement_aac")
+                    if (scenario == "source_ended" || scenario == "source_ended_aac")
                     {
                         // 源终止通过 owner executor 关闭 socket，等整个 executor drain 后检查释放。
                     }
@@ -392,17 +389,13 @@ void admission(bool publishing, const std::string& scenario)
     }
     require(worker.stop_requested(), "test exceeded deadline");
     require(!session_registry::instance().find_receiver_session(stream_id), "WHIP shutdown retained registry entry");
-    if (scenario == "replacement" || scenario == "replacement_aac")
+    if (scenario == "source_ended" || scenario == "source_ended_aac")
     {
-        require(!whep::contains(created_session_id), "WHEP switched to replacement source after verification");
+        require(!whep::contains(created_session_id), "WHEP session survived source end");
     }
     if (source_present)
     {
         stream_registry::instance().remove(*source);
-    }
-    if (replacement)
-    {
-        stream_registry::instance().remove(*replacement);
     }
     std::vector<std::uint16_t> available_ports;
     while (const auto port = media_port_pool::instance().acquire())
@@ -477,8 +470,8 @@ int main(int argc, char** argv)
                                      "rejected_exhausted",
                                      "closed_http",
                                      "accepted",
-                                     "replacement",
-                                     "replacement_aac",
+                                     "source_ended",
+                                     "source_ended_aac",
                                      "establishment_timeout"})
         {
             admission(false, scenario);

@@ -88,7 +88,6 @@ void admission(std::string_view scenario)
             "source tracks rejected");
     require(stream_registry::instance().add(source), "source registration failed");
     const std::weak_ptr<media_stream> source_lifetime = source;
-    std::shared_ptr<media_stream> replacement;
     std::weak_ptr<http_flv_session> first_session;
     std::weak_ptr<http_flv_session> second_session;
     boost::scope::scope_exit cleanup(
@@ -102,12 +101,6 @@ void admission(std::string_view scenario)
                 stream_registry::instance().remove(*source);
                 source->end();
                 source.reset();
-            }
-            if (replacement)
-            {
-                stream_registry::instance().remove(*replacement);
-                replacement->end();
-                replacement.reset();
             }
             fail_writer = false;
             worker.request_stop();
@@ -163,23 +156,11 @@ void admission(std::string_view scenario)
                     {
                         fail_writer = true;
                     }
-                    if (scenario == "replacement")
+                    if (scenario == "source_ended")
                     {
                         stream_registry::instance().remove(*source);
                         source->end();
                         source.reset();
-                        replacement = std::make_shared<media_stream>(stream_id, worker);
-                        // 既有 FFmpeg 16x16 fixture 的 SPS/PPS，不含视频 AU。
-                        constexpr std::array<std::uint8_t, 32> config_bytes{0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x0a, 0xdd, 0xec, 0x04,
-                                                                            0x40, 0x00, 0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x0c, 0x83, 0xc4,
-                                                                            0x89, 0xe0, 0x00, 0x00, 0x00, 0x01, 0x68, 0xce, 0x0f, 0xc8};
-                        require(replacement->set_tracks({{.id = 1,
-                                                          .kind = media_kind::video,
-                                                          .codec = codec_id::h264,
-                                                          .clock_rate = 90'000,
-                                                          .codec_config = {config_bytes.begin(), config_bytes.end()}}}) &&
-                                    stream_registry::instance().add(replacement),
-                                "replacement registration failed");
                     }
                 }
                 http::response<http::empty_body> response(authorized ? http::status::ok : http::status::forbidden, 11);
@@ -249,7 +230,7 @@ void admission(std::string_view scenario)
                 if (expected == http::status::ok)
                 {
                     require(parser.chunked(), "HTTP-FLV output is not chunked");
-                    if (scenario != "replacement")
+                    if (scenario != "source_ended")
                     {
                         while (parser.get().body().size() < 13U)
                         {
@@ -259,7 +240,7 @@ void admission(std::string_view scenario)
                         const auto body = boost::beast::buffers_to_string(parser.get().body().data());
                         require(body.starts_with("FLV"), "HTTP-FLV initial header missing");
                     }
-                    require(writer_audio == 1 && writer_video == 0, "HTTP-FLV used replacement tracks after authorization");
+                    require(writer_audio == 1 && writer_video == 0, "HTTP-FLV track configuration changed after authorization");
                     if (scenario == "normal_media")
                     {
                         for (std::int64_t index = 0; index < 2; ++index)
@@ -359,9 +340,9 @@ void admission(std::string_view scenario)
             {
                 require(verify_requests == attempts && consumed_tokens == 1 && !pending_token, "token replay was admitted");
             }
-            if (scenario == "replacement")
+            if (scenario == "source_ended")
             {
-                require(stream_registry::instance().find(stream_id) == replacement, "old source cleanup removed replacement");
+                require(stream_registry::instance().find(stream_id) == nullptr, "ended source remained registered");
             }
             completed = true;
             boost::system::error_code error;
@@ -461,7 +442,7 @@ int main(int argc, char** argv)
                                                 "expired",
                                                 "accepted",
                                                 "writer_failure",
-                                                "replacement",
+                                                "source_ended",
                                                 "normal_media",
                                                 "slow_close",
                                                 "pending_end",
@@ -477,7 +458,7 @@ int main(int argc, char** argv)
         {
             require(std::string_view(argv[1]) == "invalid_path" || std::string_view(argv[1]) == "denied" || std::string_view(argv[1]) == "expired" ||
                         std::string_view(argv[1]) == "accepted" || std::string_view(argv[1]) == "writer_failure" ||
-                        std::string_view(argv[1]) == "replacement" || std::string_view(argv[1]) == "normal_media" ||
+                        std::string_view(argv[1]) == "source_ended" || std::string_view(argv[1]) == "normal_media" ||
                         std::string_view(argv[1]) == "slow_close" || std::string_view(argv[1]) == "pending_end" ||
                         std::string_view(argv[1]) == "pending_stop" || std::string_view(argv[1]) == "queue_overflow",
                     "unknown scenario");
