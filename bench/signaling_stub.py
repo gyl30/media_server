@@ -10,9 +10,6 @@ class SignalingStub:
         self.lock = threading.Lock()
         self.tokens = {}
         self.calls = []
-        self.response_gate = None
-        self.verify_started = threading.Event()
-        self.verify_finished = threading.Event()
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -30,19 +27,12 @@ class SignalingStub:
                                 and (expected[2] is None or time.monotonic() < expected[2]))
                     if accepted:
                         del stub.tokens[token]
-                gate = stub.response_gate
-                if gate is not None:
-                    stub.verify_started.set()
-                    gate.wait(timeout=10)
                 try:
                     self.send_response(200 if accepted else 403)
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
-                finally:
-                    if gate is not None:
-                        stub.verify_finished.set()
 
             def log_message(self, *_):
                 pass
@@ -60,10 +50,6 @@ class SignalingStub:
             self.tokens[token] = (operation, token if stream_id is None else stream_id,
                                   None if ttl is None else time.monotonic() + ttl)
         return token
-
-    def pending(self, token):
-        with self.lock:
-            return token in self.tokens
 
     def count(self):
         with self.lock:

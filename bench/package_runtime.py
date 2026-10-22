@@ -78,8 +78,7 @@ def main():
     executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "http_flv_fanout", "rtsp_publisher", "gb_ps_fanout")
     files = [(args.build_dir / name, Path("build") / name) for name in executables]
     files.extend((path, Path("bench") / path.name) for path in Path("bench").glob("*.py") if path.name != "package_runtime.py")
-    files.extend(((Path("tests/signaling_stub.py"), Path("bench/signaling_stub.py")),
-                  (Path("bench/requirements.txt"), Path("bench/requirements.txt"))))
+    files.append((Path("bench/requirements.txt"), Path("bench/requirements.txt")))
     if args.signaling_bin:
         files.append((args.signaling_bin, Path("bin/signaling")))
     files.extend(((args.ffprobe_bin, Path("bin/ffprobe")), (args.ffmpeg_bin, Path("bin/ffmpeg")), (args.fixture, Path(".cache/perf_fixture_720p30.flv"))))
@@ -132,8 +131,7 @@ def main():
                 "host_requirements": {"python": ">=3.10", "python_packages": Path("bench/requirements.txt").read_text().splitlines(),
                                       "system_runtime": sorted(SYSTEM_RUNTIME_LIBRARIES), "commands": ["taskset", "ldd"]},
                 "optional_assets": {"signaling": bool(args.signaling_bin), "whip_fixture": bool(args.whip_fixture),
-                                    "not_bundled": ["Chrome/Firefox", "Playwright", "GB28181 simulator", "perf/BCC/jeprof",
-                                                    "legacy lifecycle disconnect test assets and compiler"]}}
+                                    "not_bundled": ["Chrome/Firefox", "Playwright", "GB28181 simulator", "perf/BCC/jeprof"]}}
     for name, executable in (("ffmpeg", args.ffmpeg_bin), ("ffprobe", args.ffprobe_bin)):
         version = subprocess.run([str(executable), "-version"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10,
                                  env={**os.environ, "LC_ALL": "C"})

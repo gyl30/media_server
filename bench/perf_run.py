@@ -320,11 +320,7 @@ def run(args):
         check_budget(force=True)
         subprocess.run(["taskset", "-pc", args.client_cpus, str(os.getpid())], check=True, capture_output=True)
         if owned:
-            try:
-                from signaling_stub import SignalingStub
-            except ImportError:
-                sys.path.insert(0, str(script_dir.parent / "tests"))
-                from signaling_stub import SignalingStub
+            from signaling_stub import SignalingStub
             auth_context = SignalingStub()
         else:
             auth_context = contextlib.nullcontext(None)
