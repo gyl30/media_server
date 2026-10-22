@@ -49,7 +49,6 @@ class rtsp_server_connection final : public session, public std::enable_shared_f
     static int announce_callback(void* param, rtsp_server_t* server, const char* uri, const char* sdp, int length);
     static int record_callback(
         void* param, rtsp_server_t* server, const char* uri, const char* session, const std::int64_t* npt, const double* scale);
-    static int options_callback(void* param, rtsp_server_t* server, const char* uri);
     static int get_parameter_callback(void* param, rtsp_server_t* server, const char* uri, const char* session, const void* content, int bytes);
 
    private:

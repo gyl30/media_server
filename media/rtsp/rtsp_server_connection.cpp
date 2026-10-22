@@ -80,7 +80,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
     rtsp_handler.onteardown = &rtsp_server_connection::teardown_callback;
     rtsp_handler.onannounce = &rtsp_server_connection::announce_callback;
     rtsp_handler.onrecord = &rtsp_server_connection::record_callback;
-    rtsp_handler.onoptions = &rtsp_server_connection::options_callback;
     rtsp_handler.ongetparameter = &rtsp_server_connection::get_parameter_callback;
 
     const auto peer_address = peer.address().to_string();
@@ -338,8 +337,6 @@ int rtsp_server_connection::record_callback(
     spdlog::debug("rtsp record rejected without publish session");
     return -1;
 }
-
-int rtsp_server_connection::options_callback(void*, rtsp_server_t* server, const char*) { return rtsp_server_reply_options(server, 200); }
 
 int rtsp_server_connection::get_parameter_callback(void* param, rtsp_server_t* server, const char*, const char* session, const void*, int bytes)
 {
