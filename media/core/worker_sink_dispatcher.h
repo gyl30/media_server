@@ -40,6 +40,7 @@ class worker_sink_dispatcher final
         for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)
         {
             const auto& group = iterator->second;
+            bool group_empty;
             {
                 std::scoped_lock lock(group->mutex);
                 std::erase_if(group->sinks,
@@ -48,8 +49,9 @@ class worker_sink_dispatcher final
                                   const auto current = weak.lock();
                                   return !current || current.get() == sink;
                               });
+                group_empty = group->sinks.empty();
             }
-            if (group->snapshot_sinks().empty())
+            if (group_empty)
             {
                 iterator = sink_groups_.erase(iterator);
             }
