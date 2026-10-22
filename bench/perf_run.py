@@ -367,7 +367,7 @@ def run(args):
                         source = {"stream_id": stream}
                         if args.input == "rtsp_pull":
                             url = play_value({"stream_id": upstream_stream}, "rtsp", stub, args.client_address, upstream_ports)
-                            request(control, "/rtsp/pull/create", {"stream_id": stream, "url": url}, control_token)
+                            request(control, "/pull/create", {"stream_id": stream, "url": url}, control_token)
                         else:
                             ssrc = 100000000 + index
                             sender = {"stream_id": upstream_stream, "sender_id": str(uuid.uuid4()), "payload_type": 96, "ssrc": ssrc}

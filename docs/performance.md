@@ -44,7 +44,7 @@ python3 bench/perf_run.py \
 
 outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
 
-input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、GB UDP/TCP 和 existing。源码还列有 `rtsp_pull`，但当前分支仍调用旧 `/rtsp/pull/create`，与生产 `/pull/create` 不一致；该模式存在既有失效调用，本轮不修复、不宣称可运行。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
+input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、GB UDP/TCP 和 existing。`rtsp_pull` 通过 `POST /pull/create` 创建主动 RTSP 拉流；接口路径已修正，但该模式尚未完成实际运行验证。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
 
 自管模式启动自己的授权夹具和媒体进程。`--input existing` 必须提供 `--sources-file`、`--signaling-url`、`--server-pid`、`--control-token`，并使用匹配的 `--server-bin`；它只停止自己创建的客户端，不停止外部 DUT。sources.json 每项含 `stream_id` 和 `play_body`（其中指定 source_id、push_device_id 或 live_id）；声明 publisher PID 时还须提供 publisher_starttick。真实发布入口 `perf_publish.py --help` 给出生成这些数据的参数。
 
