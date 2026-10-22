@@ -118,8 +118,6 @@ void udp_transport::on_write(const std::shared_ptr<pending_datagram>& datagram, 
     }
 }
 
-boost::asio::ip::udp::endpoint udp_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
-
 void udp_transport::shutdown()
 {
     write_queue_.clear();

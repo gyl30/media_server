@@ -39,7 +39,6 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
     void set_write_callback(write_callback callback);
     bool write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
     bool write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
-    [[nodiscard]] boost::asio::ip::udp::endpoint local_endpoint(boost::system::error_code& error) const;
     void shutdown();
 
    private:
