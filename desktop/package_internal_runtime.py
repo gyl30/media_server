@@ -279,7 +279,7 @@ def main():
     compiler_match = re.search(r"^CMAKE_CXX_COMPILER:(?:FILEPATH|STRING)=(.+)$", cache, re.MULTILINE)
     source_files = [path for path in (repository / "desktop").rglob("*")
                     if path.is_file() and (path.suffix in (".cpp", ".h", ".py", ".md") or path.name == "CMakeLists.txt")]
-    source_files += [repository / "signaling/gb_http.go", repository / "signaling/gb_http_test.go"]
+    source_files += [repository / "signaling/gb_http.go"]
     manifest = {
         "scope": "INTERNAL_VALIDATION_ONLY", "public_distribution": "BLOCKED",
         "created_utc": datetime.now(timezone.utc).isoformat(),
