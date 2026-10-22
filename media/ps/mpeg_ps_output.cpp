@@ -152,15 +152,6 @@ void mpeg_ps_output::add_sink(std::shared_ptr<mpeg_ps_sink> sink)
                           });
 }
 
-void mpeg_ps_output::remove_sink(mpeg_ps_sink* sink)
-{
-    if (!sink)
-    {
-        return;
-    }
-    boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink]() { self->dispatcher_.remove(sink); });
-}
-
 void mpeg_ps_output::finish()
 {
     if (source_)

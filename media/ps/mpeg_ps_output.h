@@ -46,7 +46,6 @@ class mpeg_ps_output final : public media_sink, public std::enable_shared_from_t
     void on_end() override;
 
     void add_sink(std::shared_ptr<mpeg_ps_sink> sink);
-    void remove_sink(mpeg_ps_sink* sink);
 
    private:
     static void* allocate_packet(void* param, std::size_t bytes);
