@@ -172,7 +172,7 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 	dialog := session.dialog
 	s.mu.Unlock()
 	if dialog != nil {
-		// Terminate 解除库内部应答等待；Close 自身不会取消事务。先 join，再读应答或 BYE。
+		// Terminate 解除库内部应答等待；先 join，再读应答或 BYE。
 		if dialog.session.LoadState() != sip.DialogStateConfirmed {
 			dialog.tx.Terminate()
 		}
@@ -184,7 +184,6 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 		}
 		dialog.tx.Terminate()
 		<-dialog.ackDone
-		_ = dialog.session.Close()
 	}
 	s.mu.Lock()
 	if s.broadcasts[session.deviceID] == session {
