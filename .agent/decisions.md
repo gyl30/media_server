@@ -1,20 +1,20 @@
 # 已接受的架构决策
 
-以下决定以 `813b4f1` 源码、可核对提交和已跟踪报告为依据，核心决定及原因直接写在本文。已备份的旧个人 `AGENTS.md`、未跟踪的本地 `docs/project_decisions.md` 仅补充历史讨论，缺少它们不影响理解这些决定。普通编码规范另见已跟踪的 [development_conventions.md](../docs/development_conventions.md)。
+以下决定以 `813b4f1` 源码、可核对提交和已跟踪报告为依据，核心决定及原因直接写在本文。已备份的旧个人 `AGENTS.md`、未跟踪的本地 `docs/project_decisions.md` 仅补充历史讨论，缺少它们不影响理解这些决定。普通编码规范另见已跟踪的 [构建与维护约定](../docs/build-deploy.md)。
 
 ## D01：固定轨道的统一内部媒体
 
 - 背景：多个输入和输出协议需要共用媒体，同时曾存在运行时轨道更新、reader 和历史缓存。
 - 决定：输入协议整理完整 tracks 后注册 `media_stream`；一个对象代表一个 source generation。内部传递 canonical frame，配置变化通过结束旧代、重新建立新代表示；重新发布由外层业务负责，不在同一对象更新轨道。
 - 原因：协议报文和网络状态留在边界，输出读取固定轨道即可初始化；代际切换替代轨道事件、cursor/resync 和多份版本状态。
-- 相关历史：`bd99e20`「固定媒体流轨道并删除运行时轨道更新」、`4c2a1ab`「删除媒体历史并直接推送到 sink」、`1770d0b`「收口 sink 推送终止生命周期」。现行依据：`media/core/media_types.h`、`media_stream.*`、[媒体核心边界](../docs/media_core_architecture.md)。
+- 相关历史：`bd99e20`「固定媒体流轨道并删除运行时轨道更新」、`4c2a1ab`「删除媒体历史并直接推送到 sink」、`1770d0b`「收口 sink 推送终止生命周期」。现行依据：`media/core/media_types.h`、`media_stream.*`、[媒体核心边界](../docs/architecture.md)。
 
 ## D02：源主导推送与自然关键帧
 
 - 背景：后加入的输出需要可解码起点，但反向控制会把 viewer 的需求传播到输入源；历史模型还包含 GOP/history。
 - 决定：输出等待实际到达的自然关键帧，不回放历史，不反向要求源产出关键帧，不恢复已淘汰的上游控制机制；GB SIP 点播继续由业务信令负责。
 - 原因：保持 live push 的单向职责，不为每个观看者维护历史或增加源控制状态。首媒体等待受源 GOP 影响，是此模型的真实代价。
-- 相关历史：`4c2a1ab`、`f54e597`「统一播放会话关键帧起点」、`d84e0b4`「收口播放会话关键帧等待状态」。已跟踪的 [系统验证](../docs/system_validation.md)保留了 WHIP 无下一关键帧失败及测试端显式 resume 的覆盖边界，后者不是服务端 PLI/FIR；本地 `docs/project_decisions.md` §4 仅补充讨论背景。
+- 相关历史：`4c2a1ab`、`f54e597`「统一播放会话关键帧起点」、`d84e0b4`「收口播放会话关键帧等待状态」。历史「系统验证」（`git show 3c3167e:docs/system_validation.md`）保留了 WHIP 无下一关键帧失败及测试端显式 resume 的覆盖边界，后者不是服务端 PLI/FIR；本地 `docs/project_decisions.md` §4 仅补充讨论背景。
 
 ## D03：按源共享派生媒体，保留 viewer 身份
 
@@ -56,14 +56,14 @@
 - 背景：SDP 接受、ICE nomination、DTLS、SRTP ready 与媒体开始是不同事件。
 - 决定：维持现有一次性 SDP、ICE-Lite、DTLS/SRTP 模型，不新增 Trickle ICE、ICE restart、自动重连或反向源控制。合法、认证后的再次 nomination 可更新 endpoint；普通 check 不改变媒体目标。
 - 原因：保持已经验证的最小协商范围，避免把传输建立等同媒体 ready，或把 viewer 失败等同 source 结束。
-- 相关历史：`cc63c0d`「修复 WebRTC 候选地址切换后的媒体传输」、`3dc1603`、`5023b2c` 的创建/启动职责整理；当前 `whep.cpp`、`whip.cpp`、两个 session 和 [系统验证](../docs/system_validation.md)。
+- 相关历史：`cc63c0d`「修复 WebRTC 候选地址切换后的媒体传输」、`3dc1603`、`5023b2c` 的创建/启动职责整理；当前 `whep.cpp`、`whip.cpp`、两个 session 和历史「系统验证」（`git show 3c3167e:docs/system_validation.md`）。
 
 ## D09：RTSP 的协议阶段不合并
 
 - 背景：DESCRIBE/SETUP/PLAY 和 ANNOUNCE/SETUP/RECORD 有真实控制顺序，TCP/UDP 资源准备也不同。
 - 决定：保留 session identity、已 SETUP 轨道与 PLAY 阶段；成功 PLAY 回复先于媒体订阅。Pull 的 URL 在入口解析，恢复异步 resolve/connect 后校验取消与 registry identity。
 - 原因：持有 source 不代表已开始播放；迟到完成不能让旧接收器替换新代或访问已释放媒体。
-- 相关历史：`7ca4a9b`、`3af9496`、`a753d54`；当前 `rtsp_play_session::on_play()`、`rtsp_pull_session::run()`。V2 不可达结论仅适用于当前单线程 worker 和已核对的 Boost 1.92 调度，见 [专项报告](../docs/reviews/rtsp_play_v2_lifecycle_review.md)。
+- 相关历史：`7ca4a9b`、`3af9496`、`a753d54`；当前 `rtsp_play_session::on_play()`、`rtsp_pull_session::run()`。V2 不可达结论仅适用于当前单线程 worker 和已核对的 Boost 1.92 调度，见历史「专项报告」（`git show 3c3167e:docs/reviews/rtsp_play_v2_lifecycle_review.md`）。
 
 ## D10：RTMP 初始化媒体服从 Play.Start 顺序
 
@@ -91,4 +91,4 @@
 - 背景：历史审查曾把异步提交、空闲刷新及日志等既定行为反复当作缺陷。
 - 决定：停止推流后旧输入可能迟到登记的竞态只记录；GB UDP 收到数据即刷新空闲；SSRC 更新和 receiver 删除的 204 表示异步提交，不等待执行/释放；完整一次性 token/URL 的 INFO 日志沿用当前既有行为。
 - 原因：需求方已接受这些控制语义，不为它们追加 pending/closing、跨 worker 完成通知或同步 HTTP 等待。完整 token/URL 日志只是这一已有实现的历史取舍，不代表所有部署条件下都安全，也不构成扩大敏感信息日志或公开传播凭据的通用许可；新增日志或部署需求应单独评估。新的需求或真实新证据才能重新开启相应取舍。
-- 相关历史：已跟踪的 [HLS 与复杂度审计](../docs/hls_auth_complexity_audit.md)记录了范围约束，另有 `caacd25`、`3e99476`「撤销接收会话关闭等待机制」；当前 GB receiver、HTTP 控制路径及 `signaling/stream_token.go` 日志。
+- 相关历史：历史「HLS 与复杂度审计」（`git show 3c3167e:docs/hls_auth_complexity_audit.md`）记录了范围约束，另有 `caacd25`、`3e99476`「撤销接收会话关闭等待机制」；当前 GB receiver、HTTP 控制路径及 `signaling/stream_token.go` 日志。

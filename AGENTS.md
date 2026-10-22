@@ -1,12 +1,15 @@
 # media_server 项目入口
 
-Codex、Pi Agent 和 Claude Code 的首次任务提示应显式要求读取本文件，再按任务阅读以下文档；不假定工具会自动加载它们。
+首次接手先读取本文件，检查 Git 基线和工作区，再阅读 [.agent/context.md](.agent/context.md) 与 [.agent/current.md](.agent/current.md)。其中的提交、测试和报告属于历史快照；当前实现以源码及下列文档为准。
 
-- 接手任务：阅读 [.agent/context.md](.agent/context.md) 和 [.agent/current.md](.agent/current.md)，了解项目及历史验证快照。
-- 涉及架构、状态、生命周期或设计建议：阅读 [.agent/decisions.md](.agent/decisions.md) 和 [.agent/constraints.md](.agent/constraints.md)。
-- 排查问题、选择回归或审查历史修复：阅读 [.agent/lessons.md](.agent/lessons.md)。
-- 编码、整理格式或准备提交：阅读 [docs/development_conventions.md](docs/development_conventions.md)。
-- 涉及媒体核心实现：阅读 [docs/media_core_architecture.md](docs/media_core_architecture.md)。
-- 性能测试、容量分析或 profiling：阅读 [docs/performance_testing.md](docs/performance_testing.md)，再按工具读取 [docs/performance_tools/README.md](docs/performance_tools/README.md)。
+- 架构与模块边界：读 [architecture.md](docs/architecture.md)、[decisions.md](.agent/decisions.md) 和 [constraints.md](.agent/constraints.md)。
+- 状态、并发、取消和资源归属：读 [media-lifecycle.md](docs/media-lifecycle.md)。`stream_id` 全生命周期唯一，结束后不复用；与 session 身份、播放器本地 generation 分别处理。
+- 协议接入与媒体输出：读 [protocols.md](docs/protocols.md)。
+- 信令、Web 或桌面调用：读 [signaling-api.md](docs/signaling-api.md)。
+- 编码、构建、部署或提交：读 [build-deploy.md](docs/build-deploy.md)，遵守 `.clang-format` 和本次任务授权。
+- 性能测量、容量或 profiling：读 [performance.md](docs/performance.md)。
+- 排查问题或核对历史修复：读 [lessons.md](.agent/lessons.md)，按所列提交查证已删除的历史测试与报告。
 
-`docs/` 保留当前工程规范、操作指南以及有独立价值的架构和验证文档；历史报告不自动作为当前待办，已删除的历史资料仍可通过 Git 提交追溯。未跟踪的性能原始报告仍由测试流程独立管理，不能因为整理文档而删除活动测试证据。
+第一方旧测试和 CTest 注册已清理。按任务执行实际需要的构建与验证，报告真实范围，不把历史 PASS 当作当前结果，也不自动恢复旧测试。
+
+`docs/` 维护上述六篇当前文档；`.agent/` 保留设计决定和历史经验，不自动转为待办。`designs/`、已有 build、`docs/performance_reports/`、`docs/verification_results/` 及其他未跟踪或忽略的原始数据由本地使用者管理；清理已跟踪文档时保留这些内容。`third/` 按任务授权处理，不顺带修改依赖。

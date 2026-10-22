@@ -1,10 +1,12 @@
 # media_server 工程上下文
 
+当前文档入口见 [README.md](../README.md)。下文保留历史背景；已删除的报告与测试按注明的提交通过 `git show <提交>:<路径>` 查阅。
+
 首次接手项目读本文；提出设计改动时读 [decisions.md](decisions.md) 和 [constraints.md](constraints.md)；排查重复问题时读 [lessons.md](lessons.md)；交接进度与测试范围读 [current.md](current.md)。五份文档完整说明核心取舍，并引用仓库源码、提交和已跟踪报告，不替代当前明确需求与源码核对。
 
 在 `813b4f1` 文件树中尚无项目 `AGENTS.md` 入口，旧个人规则已完整备份到工作树外；本次根目录 `AGENTS.md` 仅路由到版本控制中的项目文档。未跟踪的本地 `docs/project_decisions.md` 只补充历史讨论，不是读取本知识库的前提，也不作为唯一权威来源。
 
-`docs/development_conventions.md` 中指向旧 `docs/project_decisions.md` 的架构阅读要求，现由本文、[decisions.md](decisions.md) 和 [constraints.md](constraints.md) 承担；克隆仓库后不需要取得该本地文件。
+历史 `docs/development_conventions.md` 中指向旧 `docs/project_decisions.md` 的架构阅读要求，现由本文、[decisions.md](decisions.md) 和 [constraints.md](constraints.md) 承担；克隆仓库后不需要取得该本地文件。
 
 ## 项目目标
 
@@ -12,7 +14,7 @@
 
 既定产品边界为视频源、可选音频。内部存在 AAC、Opus、G.711 类型和 HLS 音频分支，不等于已承诺纯音频 publisher 或所有 codec 的任意协议组合。
 
-依据：已跟踪的 [媒体核心边界](../docs/media_core_architecture.md)、[协议客户端边界](../docs/performance_tools/protocol_clients.md)和当前 `media/core/media_types.h`；本地 `docs/project_decisions.md` §1 仅补充历史讨论。
+依据：已跟踪的 [媒体核心边界](../docs/architecture.md)、[协议客户端边界](../docs/protocols.md)和当前 `media/core/media_types.h`；本地 `docs/project_decisions.md` §1 仅补充历史讨论。
 
 ## 架构与职责
 
@@ -38,7 +40,7 @@
 
 RTSP UDP 发布不能推导为 UDP Play/Pull。codec 和参数是否可用由实际协议协商决定，第三方库支持某 codec 不等于项目对外支持。
 
-依据：当前协议 session、`rtsp_pull_session::rtp_port_callback()`、`rtsp_play_session::on_setup()`；[协议客户端说明](../docs/performance_tools/protocol_clients.md)记录工具能力及媒体检查边界，不代表所有输入×输出组合都已实测。
+依据：当前协议 session、`rtsp_pull_session::rtp_port_callback()`、`rtsp_play_session::on_setup()`；[性能工具说明](../docs/performance.md)记录工具能力及媒体检查边界，不代表所有输入×输出组合都已实测。
 
 ## 核心数据流
 
