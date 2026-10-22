@@ -112,33 +112,21 @@ class worker_sink_dispatcher final
         }
         for (const auto& overflowed : overflowed_groups)
         {
-            for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)
+            const auto iterator = sink_groups_.find(&overflowed->worker);
+            if (iterator != sink_groups_.end() && iterator->second == overflowed)
             {
-                if (iterator->second == overflowed)
-                {
-                    iterator = sink_groups_.erase(iterator);
-                }
-                else
-                {
-                    ++iterator;
-                }
+                sink_groups_.erase(iterator);
             }
         }
     }
 
     void end()
     {
-        std::vector<std::shared_ptr<sink_group>> groups;
-        groups.reserve(sink_groups_.size());
-        for (const auto& [worker, group] : sink_groups_)
+        decltype(sink_groups_) groups;
+        groups.swap(sink_groups_);
+        for (const auto& [worker, group] : groups)
         {
-            static_cast<void>(worker);
-            groups.push_back(group);
-        }
-        sink_groups_.clear();
-        for (const auto& group : groups)
-        {
-            if (&group->worker == &owner_)
+            if (worker == &owner_)
             {
                 for (const auto& sink : group->snapshot_sinks())
                 {
