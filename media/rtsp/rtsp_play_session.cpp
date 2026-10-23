@@ -32,6 +32,9 @@ namespace media_server
 
 namespace
 {
+constexpr std::size_t packet_header_reserve_divisor = 16U;
+constexpr std::size_t rtcp_reserve_bytes = 2048U;
+
 std::uint32_t random_u32()
 {
     std::random_device device;
@@ -111,6 +114,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
             return;
         }
     }
+    output_.reserve(entry.payload->size() + entry.payload->size() / packet_header_reserve_divisor + rtcp_reserve_bytes);
     const auto mux_result = rtsp_muxer_input(muxer_,
                                              state.media_index,
                                              ns_to_milliseconds(entry.pts_ns),
