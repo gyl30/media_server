@@ -182,6 +182,7 @@ def parse_arguments():
     parser.add_argument("--max-server-pss-mib", type=int, default=0)
     parser.add_argument("--decode-probe", action="store_true", help="decode six seconds of each RTMP/RTSP/FLV/HLS output with ffprobe during the window")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
+    parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
@@ -872,6 +873,9 @@ def run(args):
             try:
                 result["cleanup"]["remaining_owned_receivers"] = sorted(receiver_list(control) & set(source_ids))
                 result["cleanup"]["server_after"] = proc_snapshot(server.pid)
+                if args.cleanup_settle:
+                    time.sleep(args.cleanup_settle)
+                    result["cleanup"]["server_settled"] = proc_snapshot(server.pid)
             except (OSError, RuntimeError) as error:
                 result["cleanup"].setdefault("errors", []).append(str(error))
         for _, process, _, _ in reversed(processes):
