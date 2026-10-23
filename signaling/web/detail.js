@@ -133,7 +133,7 @@ export function mountDetail(root, ctx, kind, id) {
       content = h("ul", { class: "channel-list" }, channels.map(channel => channelRow(device, channel)));
     }
     return h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", {}, "通道"), device.channels ? h("span", { class: "muted" }, String(channels.length)) : null),
+      h("div", { class: "card-head" }, h("h2", {}, "通道"), device.raw.online && device.channels ? h("span", { class: "muted" }, String(channels.length)) : null),
       content);
   }
 
