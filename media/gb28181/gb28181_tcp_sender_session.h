@@ -4,6 +4,7 @@
 #include <span>
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
 
@@ -50,6 +51,7 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
     boost::asio::ip::tcp::socket socket_;
     std::unique_ptr<tcp_listener> listener_;
     std::shared_ptr<tcp_transport> transport_;
+    std::vector<std::uint8_t> output_;
     std::shared_ptr<gb28181_rtp_sender> sender_;
 };
 
