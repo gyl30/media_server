@@ -94,7 +94,8 @@ def proc_snapshot(pid, netns_queues=None, sockets=True):
         for names, values in zip(lines[::2], lines[1::2]):
             prefix = names.split()[0].rstrip(":")
             for key, value in zip(names.split()[1:], values.split()[1:]):
-                if key in {"RetransSegs", "InErrors", "RcvbufErrors", "SndbufErrors", "ListenOverflows", "ListenDrops"}:
+                if key in {"RetransSegs", "InErrors", "RcvbufErrors", "SndbufErrors", "ListenOverflows", "ListenDrops", "TCPLossProbes",
+                           "TCPTimeouts", "TCPSpuriousRTOs", "TCPFastRetrans", "TCPBacklogDrop", "TCPRcvQDrop", "TCPZeroWindowDrop", "PruneCalled", "RcvPruned"}:
                     snmp[prefix + key] = int(value)
     status = proc_status(pid)
     if "VmRSS" not in status:
