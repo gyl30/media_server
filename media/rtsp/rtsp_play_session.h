@@ -88,6 +88,7 @@ class rtsp_play_session final : public media_sink, public std::enable_shared_fro
     std::string path_;
     boost::asio::ip::address local_address_;
     write_handler write_handler_;
+    std::vector<std::uint8_t> output_;
     std::function<void()> shutdown_handler_;
     std::shared_ptr<media_stream> stream_;
     std::map<track_id, track_state> track_states_;

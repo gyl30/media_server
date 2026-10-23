@@ -2,7 +2,6 @@
 #include <memory>
 #include <random>
 #include <vector>
-#include <cstring>
 #include <sstream>
 #include <utility>
 #include <algorithm>
@@ -131,6 +130,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     const auto rtcp_bytes = rtsp_muxer_rtcp(muxer_, state.payload_index, rtcp.data(), static_cast<int>(rtcp.size()));
     if (rtcp_bytes <= 0)
     {
+        write_handler_(std::exchange(output_, {}));
         return;
     }
     std::uint16_t sequence{};
@@ -155,6 +155,7 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     timestamp += static_cast<std::uint32_t>(rtcp_sync_->pts * state.clock_rate / 1'000 + elapsed_ticks - pts * state.clock_rate / 1'000);
     boost::endian::store_big_u32(rtcp.data() + 16, timestamp);
     write_interleaved(static_cast<std::uint8_t>(state.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));
+    write_handler_(std::exchange(output_, {}));
 }
 
 void rtsp_play_session::on_end()
@@ -217,6 +218,7 @@ void rtsp_play_session::safe_shutdown()
         rtsp_muxer_destroy(muxer_);
         muxer_ = nullptr;
     }
+    output_.clear();
     write_handler_ = {};
     shutdown_handler_ = {};
 }
@@ -440,13 +442,9 @@ int rtsp_play_session::on_muxer_packet(int payload_index, const void* data, int 
 
 void rtsp_play_session::write_interleaved(std::uint8_t channel, const void* data, std::size_t bytes)
 {
-    std::vector<std::uint8_t> packet(4U + bytes);
-    packet[0] = 0x24;
-    packet[1] = channel;
-    const auto network_bytes = htons(static_cast<std::uint16_t>(bytes));
-    std::memcpy(packet.data() + 2U, &network_bytes, sizeof(network_bytes));
-    std::memcpy(packet.data() + 4U, data, bytes);
-    write_handler_(std::move(packet));
+    const auto* begin = static_cast<const std::uint8_t*>(data);
+    output_.insert(output_.end(), {0x24, channel, static_cast<std::uint8_t>(bytes >> 8U), static_cast<std::uint8_t>(bytes)});
+    output_.insert(output_.end(), begin, begin + bytes);
 }
 
 bool rtsp_play_session::stream_current() const
