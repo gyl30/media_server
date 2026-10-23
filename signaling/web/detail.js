@@ -56,7 +56,7 @@ export function mountDetail(root, ctx, kind, id) {
     }
     ctx.setTitle(device.name);
     if (kind === "gb" && !device.raw.online) void talk.stop("设备已离线");
-    if (kind === "gb" && device.raw.online) {
+    if (kind === "gb" && (device.raw.online || player)) {
       syncChannels([id]);
     }
     replaceKeepingFocus(head, headContent(device));
