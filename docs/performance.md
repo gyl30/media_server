@@ -42,7 +42,7 @@ python3 bench/perf_run.py \
   --min-free-disk-mib 4096 --max-server-pss-mib 4096
 ```
 
-outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
+outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`。GB TCP 输出和输入从 `--gb-port-base` 起为每个 sender/源占用一个端口；该范围与本机临时端口范围或服务端、上游实例的 RTMP/RTSP/HTTP 端口重叠时，runner 拒绝运行。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
 
 input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、GB UDP/TCP 和 existing。拉流与 GB 输入先在客户端核上启动一个上游实例，再通过 `POST /pull/create` 或 GB sender/receiver 接口接入被测服务。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
 
@@ -56,9 +56,9 @@ input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、G
 
 每组需要正常退出、ready/progressing 等于请求数，且实际窗口覆盖率至少 0.99；同时检查服务端退出、队列、UDP drops、客户端资源与清理。结果可能是 PASS、FAIL、INCONCLUSIVE、BLOCKED 或 UNSUPPORTED，必须同时读取 `capacity_boundary`、errors 和 cleanup，不能只看总字节数。
 
-progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱和时帧会在内部队列中累积，viewer 仍然 progressing，但媒体逐渐落后于实时。原生客户端因此按视频媒体时间戳在窗口内的推进量除以窗口时长，输出 `viewer_realtime_min/p10/p50/max`。窗口内服务端核合计繁忙率达到 90%、单核达到 98% 或服务端单线程达到 0.95 核时视为饱和；饱和且任一组最小值低于 `--min-realtime-ratio`（默认 0.98）或已经失败，判为 `SERVER_SATURATED`，未饱和时的落后判为 FAIL/`UNCONFIRMED`。准备阶段失败时，如果服务端核在某秒的合计繁忙率达到 95% 或单核达到 98%，且客户端核未饱和、失败原因不是客户端资源或启动，也判为 `SERVER_SATURATED`。授权失败只有在签名桩没有拒绝、最长处理时间低于 1 s 时才视为服务端侧（服务端等待鉴权有截止时间），否则视为工具问题。`perf_capacity.py` 把 `SERVER_UNSTABLE` 与 `SERVER_SATURATED` 都作为失败边界。
+progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱和时帧会在内部队列中累积，viewer 仍然 progressing，但媒体逐渐落后于实时。原生客户端因此按视频媒体时间戳在窗口内的推进量除以窗口时长，输出 `viewer_realtime_min/p10/p50/max`。窗口内服务端核合计繁忙率达到 90%、单核达到 98% 或服务端单线程达到 0.95 核时视为饱和；饱和且任一组最小值低于 `--min-realtime-ratio`（默认 0.98）或已经失败，判为 `SERVER_SATURATED`，未饱和时的落后判为 FAIL/`UNCONFIRMED`。原生客户端同时输出 `viewer_lag_span_ms_p50/p90/max`：每个 viewer 在窗口内“墙钟减视频媒体时间”的最大值与最小值之差。服务端靠合并写出维持实时比例时，它仍会随积压增大。准备阶段的就绪超时按失败处理，不归为环境阻断；播放票据有效期为 `--ready-timeout` 加 60 s。准备阶段失败时，如果服务端核在某秒的合计繁忙率达到 95% 或单核达到 98%，且客户端核未饱和、失败原因不是客户端资源或启动，也判为 `SERVER_SATURATED`。授权失败只有在签名桩没有拒绝、最长处理时间低于 1 s 时才视为服务端侧（服务端等待鉴权有截止时间），否则视为工具问题。`perf_capacity.py` 把 `SERVER_UNSTABLE` 与 `SERVER_SATURATED` 都作为失败边界。
 
-`cpu_busy` 记录窗口内服务端核、其 SMT 兄弟核和客户端核在 `/proc/stat` 中的繁忙核数与 softirq，以及服务端核的 APERF/MPERF 平均工作频率、C0 驻留率和每秒周期数（需要 root 读取 `/dev/cpu/*/msr`）。调频策略会随负载改变频率，低负载下的 CPU 时间不能直接按线性外推到饱和点，比较成本时应结合周期数。`--perf-stat` 在窗口内对服务端核运行 `perf stat`，把 cycles、instructions、ref-cycles 和 IPC 写入 `perf_stat`；指令数不随频率变化，适合跨负载比较。
+`cpu_busy` 记录窗口内服务端核、其 SMT 兄弟核和客户端核在 `/proc/stat` 中的繁忙核数与 softirq，以及服务端核的 APERF/MPERF 平均工作频率、C0 驻留率和每秒周期数（需要 root 读取 `/dev/cpu/*/msr`）。调频策略会随负载改变频率，低负载下的 CPU 时间不能直接按线性外推到饱和点，比较成本时应结合周期数。`--perf-stat` 在窗口内对服务端核运行 `perf stat`，把 cycles、instructions、ref-cycles、page-faults、context-switches 和 IPC 写入 `perf_stat`；指令数不随频率变化，适合跨负载比较。
 
 进程 CPU、PSS 和 FD 每秒采样，套接字队列每 5 次采样读取一次，避免 runner 在上万连接时自身成为瓶颈；runner 的有效采样少于窗口秒数的 80% 时结果为 INCONCLUSIVE/`RUNNER_RESOURCE`。`namespace_tcp_delta` 是窗口前后 namespace 内 TCP/UDP 重传、错误和 listen 溢出计数的差值；`verification` 记录签名桩的调用数、拒绝数和处理耗时 p99/最大值。
 
