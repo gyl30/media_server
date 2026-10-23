@@ -18,6 +18,7 @@ namespace
 
 constexpr std::int64_t ns_per_second = 1'000'000'000;
 constexpr std::int64_t ns_per_millisecond = 1'000'000;
+constexpr std::size_t min_length_prefixed_nalu_bytes = 2;
 
 }    // namespace
 
@@ -32,7 +33,9 @@ std::span<const std::uint8_t> length_prefixed_payload::get(std::span<const std::
                            annex_b.size(),
                            [](void* param, const std::uint8_t* nalu, std::size_t bytes)
                            {
-                               auto& data = *static_cast<std::vector<std::uint8_t>*>(param);
+                               auto& self = *static_cast<length_prefixed_payload*>(param);
+                               self.short_nalu_ = self.short_nalu_ || bytes < min_length_prefixed_nalu_bytes;
+                               auto& data = self.data_;
                                const auto length = static_cast<std::uint32_t>(bytes);
                                data.insert(data.end(),
                                            {static_cast<std::uint8_t>(length >> 24U),
@@ -41,8 +44,12 @@ std::span<const std::uint8_t> length_prefixed_payload::get(std::span<const std::
                                             static_cast<std::uint8_t>(length)});
                                data.insert(data.end(), nalu, nalu + bytes);
                            },
-                           &data_);
+                           this);
                    });
+    if (short_nalu_)
+    {
+        return annex_b;
+    }
     return data_;
 }
 

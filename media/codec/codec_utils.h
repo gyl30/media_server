@@ -28,6 +28,7 @@ class length_prefixed_payload final
    private:
     std::once_flag converted_;
     std::vector<std::uint8_t> data_;
+    bool short_nalu_{};
 };
 
 [[nodiscard]] std::vector<std::uint8_t> h264_avcc_to_annex_b(std::span<const std::uint8_t> avcc);
