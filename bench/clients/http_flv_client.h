@@ -40,12 +40,14 @@ class http_flv_client final
     boost::asio::awaitable<boost::system::error_code> read_exact(std::span<std::uint8_t> data);
     static int media_callback(void* param, int codec, const void* data, std::size_t bytes, std::uint32_t pts, std::uint32_t dts, int flags);
 
+    static constexpr std::size_t read_buffer_bytes = 64U * 1024U;
+
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;
     std::string path_;
     boost::beast::flat_buffer http_buffer_;
     boost::beast::http::response_parser<boost::beast::http::buffer_body> response_;
-    std::array<std::uint8_t, 8192> body_buffer_{};
+    std::array<std::uint8_t, read_buffer_bytes> body_buffer_{};
     std::size_t body_size_{};
     std::size_t body_offset_{};
     std::vector<std::uint8_t> tag_body_;

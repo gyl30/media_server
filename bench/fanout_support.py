@@ -32,7 +32,17 @@ def proc_identity(pid):
             "netns": str(Path(f"/proc/{pid}/ns/net").readlink())}
 
 
-def proc_snapshot(pid):
+def socket_queues(pid):
+    queues = {}
+    for family in ("tcp", "tcp6", "udp", "udp6"):
+        for line in Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]:
+            fields = line.split()
+            tx, rx = fields[4].split(":")
+            queues[fields[9]] = (family[:3], int(tx, 16), int(rx, 16), int(fields[-1]) if family.startswith("udp") else 0)
+    return queues
+
+
+def proc_snapshot(pid, netns_queues=None, sockets=True):
     identity = proc_identity(pid)
     tasks = {}
     for task in Path(f"/proc/{pid}/task").iterdir():
@@ -56,31 +66,28 @@ def proc_snapshot(pid):
         if line.startswith("Pss:"):
             pss_kib = int(line.split()[1])
             break
-    sockets = set()
-    for fd in Path(f"/proc/{pid}/fd").iterdir():
-        try:
-            target = fd.readlink().name
+    descriptors = os.listdir(f"/proc/{pid}/fd")
+    queues_by_family = {}
+    if sockets:
+        inodes = set()
+        for descriptor in descriptors:
+            try:
+                target = os.readlink(f"/proc/{pid}/fd/{descriptor}")
+            except FileNotFoundError:
+                continue
             if target.startswith("socket:["):
-                sockets.add(target[8:-1])
-        except FileNotFoundError:
-            pass
-    udp_tx_queue = udp_rx_queue = udp_drops = 0
-    for family in ("udp", "udp6"):
-        for line in Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]:
-            fields = line.split()
-            if fields[9] in sockets:
-                tx, rx = fields[4].split(":")
-                udp_tx_queue += int(tx, 16)
-                udp_rx_queue += int(rx, 16)
-                udp_drops += int(fields[-1])
-    tcp_tx_queue = tcp_rx_queue = 0
-    for family in ("tcp", "tcp6"):
-        for line in Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]:
-            fields = line.split()
-            if fields[9] in sockets:
-                tx, rx = fields[4].split(":")
-                tcp_tx_queue += int(tx, 16)
-                tcp_rx_queue += int(rx, 16)
+                inodes.add(target[8:-1])
+        netns_queues = {} if netns_queues is None else netns_queues
+        if identity["netns"] not in netns_queues:
+            netns_queues[identity["netns"]] = socket_queues(pid)
+        queues = netns_queues[identity["netns"]]
+        queues_by_family = {"udp_tx_queue_bytes": 0, "udp_rx_queue_bytes": 0, "udp_drops": 0, "tcp_tx_queue_bytes": 0, "tcp_rx_queue_bytes": 0}
+        for socket_inode in inodes:
+            family, tx, rx, drops = queues.get(socket_inode, ("", 0, 0, 0))
+            if family:
+                queues_by_family[f"{family}_tx_queue_bytes"] += tx
+                queues_by_family[f"{family}_rx_queue_bytes"] += rx
+                queues_by_family["udp_drops"] += drops
     snmp = {}
     lines = Path(f"/proc/{pid}/net/snmp").read_text().splitlines()
     for names, values in zip(lines[::2], lines[1::2]):
@@ -98,18 +105,14 @@ def proc_snapshot(pid):
         "monotonic_ns": time.monotonic_ns(),
         "cpu_affinity": sorted(os.sched_getaffinity(pid)),
         "cpu": proc_cpu(pid),
-        "tcp_tx_queue_bytes": tcp_tx_queue,
-        "tcp_rx_queue_bytes": tcp_rx_queue,
         "namespace_snmp": snmp,
         "rss_kib": status["VmRSS"],
         "vmsize_kib": status["VmSize"],
         "thread_count": status["Threads"],
-        "udp_tx_queue_bytes": udp_tx_queue,
-        "udp_rx_queue_bytes": udp_rx_queue,
-        "udp_drops": udp_drops,
         "pss_kib": pss_kib,
-        "fd": len(list(Path(f"/proc/{pid}/fd").iterdir())),
+        "fd": len(descriptors),
         "threads": tasks,
+        **queues_by_family,
     }
 
 

@@ -1,6 +1,7 @@
 #ifndef MEDIA_SERVER_BENCH_CLIENTS_RTMP_CLIENT_H
 #define MEDIA_SERVER_BENCH_CLIENTS_RTMP_CLIENT_H
 
+#include <array>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -46,11 +47,14 @@ class rtmp_client final
     boost::asio::awaitable<boost::system::error_code> flush();
 
    private:
+    static constexpr std::size_t read_buffer_bytes = 64U * 1024U;
+
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;
     std::string app_;
     std::string stream_;
     std::vector<std::vector<std::uint8_t>> writes_;
+    std::array<std::uint8_t, read_buffer_bytes> read_buffer_{};
     timestamp_health video_timestamps_;
     timestamp_health audio_timestamps_;
     std::uint64_t received_bytes_{};

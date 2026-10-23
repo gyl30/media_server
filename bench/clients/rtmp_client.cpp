@@ -69,7 +69,6 @@ boost::asio::awaitable<boost::system::error_code> rtmp_client::play(std::string 
         co_return boost::asio::error::operation_aborted;
     }
 
-    std::array<std::uint8_t, 8192> read_buffer{};
     while (received_messages_ == 0 || (expect_audio && received_audio_messages_ == 0))
     {
         error = co_await flush();
@@ -78,8 +77,8 @@ boost::asio::awaitable<boost::system::error_code> rtmp_client::play(std::string 
             co_return error;
         }
         const auto bytes =
-            co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
-        if (error || rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
+            co_await socket_.async_read_some(boost::asio::buffer(read_buffer_), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        if (error || rtmp_client_input(client_, read_buffer_.data(), bytes) != 0)
         {
             co_return error ? error : boost::asio::error::operation_aborted;
         }
@@ -95,14 +94,13 @@ boost::asio::awaitable<boost::system::error_code> rtmp_client::consume_one()
         co_return error;
     }
 
-    std::array<std::uint8_t, 8192> read_buffer{};
     const auto bytes =
-        co_await socket_.async_read_some(boost::asio::buffer(read_buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        co_await socket_.async_read_some(boost::asio::buffer(read_buffer_), boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
     {
         co_return error;
     }
-    if (rtmp_client_input(client_, read_buffer.data(), bytes) != 0)
+    if (rtmp_client_input(client_, read_buffer_.data(), bytes) != 0)
     {
         co_return boost::asio::error::operation_aborted;
     }

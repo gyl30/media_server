@@ -17,13 +17,6 @@ extern "C"
 namespace media_server::bench
 {
 
-namespace
-{
-
-constexpr std::size_t read_buffer_bytes = 64U * 1024U;
-
-}
-
 http_flv_client::http_flv_client(boost::asio::io_context& io, std::string path)
     : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path)
 {

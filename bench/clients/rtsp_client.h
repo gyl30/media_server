@@ -1,6 +1,7 @@
 #ifndef MEDIA_SERVER_BENCH_CLIENTS_RTSP_CLIENT_H
 #define MEDIA_SERVER_BENCH_CLIENTS_RTSP_CLIENT_H
 
+#include <array>
 #include <string>
 #include <vector>
 #include <cstddef>
@@ -57,12 +58,15 @@ class rtsp_client final
     boost::asio::awaitable<boost::system::error_code> start(std::string host, std::uint16_t port);
 
    private:
+    static constexpr std::size_t read_buffer_bytes = 64U * 1024U;
+
     boost::asio::ip::tcp::resolver resolver_;
     boost::asio::ip::tcp::socket socket_;
     std::string path_;
     std::string uri_;
     std::string sdp_;
     std::vector<std::vector<std::uint8_t>> writes_;
+    std::array<std::uint8_t, read_buffer_bytes> read_buffer_{};
     std::vector<bool> audio_channels_;
     std::vector<rtp_health> packet_health_;
     std::uint64_t invalid_packets_{};

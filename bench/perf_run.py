@@ -181,6 +181,8 @@ def parse_arguments():
     parser.add_argument("--min-free-disk-mib", type=int, default=0)
     parser.add_argument("--max-server-pss-mib", type=int, default=0)
     parser.add_argument("--decode-probe", action="store_true", help="decode six seconds of each RTMP/RTSP/FLV/HLS output with ffprobe during the window")
+    parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
+    parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
     args = parser.parse_args()
@@ -192,6 +194,11 @@ def parse_arguments():
         parser.error("counts, duration, timeouts and rate must be positive; warmup nonnegative")
     if not 0 < args.min_realtime_ratio <= 1:
         parser.error("min-realtime-ratio must be in (0, 1]")
+    if args.churn:
+        protocol, _, count = args.churn.partition(":")
+        if protocol not in OUTPUTS or protocol == "hls" or not count.isdigit() or int(count) <= 0 or args.churn_period < 12:
+            parser.error("churn requires PROTOCOL:COUNT for a native client and a period of at least 12 seconds")
+        args.churn = (protocol, int(count))
     if min(args.min_free_memory_mib, args.min_free_disk_mib, args.max_server_pss_mib) < 0:
         parser.error("resource budgets must be nonnegative")
     if "hls" in args.counts and args.duration < 6:
@@ -255,7 +262,7 @@ def run(args):
             raise RuntimeError(f"{name} PID {pid} identity changed; sampling another process is forbidden")
         return identity
 
-    def check_budget(force=False, phase="preparation", server_pid=None):
+    def check_budget(force=False, phase="preparation", server_pid=None, server_pss_kib=None):
         nonlocal next_budget_check
         now = time.monotonic()
         if not force and now < next_budget_check:
@@ -265,14 +272,20 @@ def run(args):
             check_identity(name, pid)
         for name, process, _, category in processes:
             if category in ("server", "publisher", "client") and process.poll() is None:
-                check_identity(name, process.pid)
+                try:
+                    check_identity(name, process.pid)
+                except (FileNotFoundError, ProcessLookupError):
+                    if process.poll() is None:
+                        raise
         if not (args.min_free_memory_mib or args.min_free_disk_mib or args.max_server_pss_mib):
             return
         memory = next(int(line.split()[1]) for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
         disk = shutil.disk_usage(args.output).free
         pid = server_pid or (server.pid if server else args.server_pid)
         pss = None
-        if args.max_server_pss_mib and pid is not None:
+        if args.max_server_pss_mib and server_pss_kib is not None:
+            pss = server_pss_kib
+        elif args.max_server_pss_mib and pid is not None:
             check_identity("server", pid)
             pss = next(int(line.split()[1]) for line in Path(f"/proc/{pid}/smaps_rollup").read_text().splitlines() if line.startswith("Pss:"))
         sample = {"phase": phase, "monotonic_ns": time.monotonic_ns(), "memory_available_kib": memory,
@@ -296,6 +309,36 @@ def run(args):
         process_startticks[process.pid] = proc_identity(process.pid)["starttick"]
         check_budget(force=True, server_pid=process.pid if name == "server" else None)
         return process
+
+    def client_command(protocol, group_name, selected, gb_listen_port, warmup, duration, ready_timeout, start_file):
+        credentials = args.output / f"{group_name}.credentials"
+        common = ["--viewers", len(selected), "--warmup", warmup, "--duration", duration,
+                  "--ramp-per-second", args.ramp_per_second, "--ready-timeout", ready_timeout, "--start-file", start_file]
+        if protocol.startswith("gb_"):
+            token_file = args.output / "control.token"
+            if not token_file.exists():
+                token_file.write_text(control_token + "\n")
+                token_file.chmod(0o600)
+            senders = [{"stream_id": item["stream_id"], "sender_id": str(uuid.uuid4())} for item in selected]
+            gb_senders.extend(senders)
+            credentials.write_text("\n".join(f"{item['stream_id']}/{item['sender_id']}" for item in senders) + "\n")
+            return [args.client_dir / "gb_fanout", "--play-paths-file", credentials, "--media-host", args.host,
+                    "--media-port", args.http_port, "--control-token-file", token_file, "--transport", protocol[3:],
+                    "--bind-address", args.client_address, "--listen-port", gb_listen_port,
+                    "--progress-interval", args.progress_interval, *common]
+        urls = [play_value(source, protocol, stub) for source in selected]
+        if protocol in ("rtmp", "rtsp", "flv"):
+            credentials.write_text("\n".join(urlsplit(url).path.lstrip("/") for url in urls) + "\n")
+            tool = {"flv": "http_flv"}.get(protocol, protocol)
+            return [args.client_dir / f"{tool}_fanout", "--play-paths-file", credentials, "--media-host", args.host,
+                    "--media-port", {"rtmp": args.rtmp_port, "rtsp": args.rtsp_port, "flv": args.http_port}[protocol],
+                    "--progress-interval", args.progress_interval, *common]
+        credentials.write_text("\n".join(urls) + "\n")
+        if protocol == "hls":
+            return [sys.executable, script_dir / "hls_client.py", "--hls-urls-file", credentials,
+                    "--persistent", "--progress-interval", 6, "--output", args.output / f"{group_name}.json", *common]
+        return [args.client_dir / "whep_fanout", "--whep-urls-file", credentials,
+                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *common]
 
     def receiver_list(base):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
@@ -486,50 +529,6 @@ def run(args):
             if set(result["baseline"]["cpu_affinity"]) & os.sched_getaffinity(0):
                 raise ValueError("server and client CPU affinity overlap")
             counts = args.counts or {"flv": args.sources}
-            next_client_start = time.monotonic()
-            for protocol, count in counts.items():
-                for offset in range(0, count, args.group_size):
-                    size = min(args.group_size, count - offset)
-                    while time.monotonic() < next_client_start:
-                        check_budget()
-                        time.sleep(min(1, max(0, next_client_start - time.monotonic())))
-                    group_name = f"{protocol}-{offset}"
-                    credentials = args.output / f"{group_name}.credentials"
-                    common = ["--viewers", size, "--warmup", args.warmup, "--duration", args.duration,
-                              "--ramp-per-second", args.ramp_per_second, "--ready-timeout", timeout, "--start-file", barrier]
-                    selected = [sources[index % len(sources)] for index in range(offset, offset + size)]
-                    if protocol.startswith("gb_"):
-                        token_file = args.output / "control.token"
-                        if not token_file.exists():
-                            token_file.write_text(control_token + "\n")
-                            token_file.chmod(0o600)
-                        senders = [{"stream_id": item["stream_id"], "sender_id": str(uuid.uuid4())} for item in selected]
-                        gb_senders.extend(senders)
-                        credentials.write_text("\n".join(f"{item['stream_id']}/{item['sender_id']}" for item in senders) + "\n")
-                        command = [args.client_dir / "gb_fanout", "--play-paths-file", credentials, "--media-host", args.host,
-                                   "--media-port", args.http_port, "--control-token-file", token_file, "--transport", protocol[3:],
-                                   "--bind-address", args.client_address, "--listen-port", args.gb_port_base + args.sources + offset,
-                                   "--progress-interval", args.progress_interval, *common]
-                    else:
-                        urls = [play_value(source, protocol, stub) for source in selected]
-                        if protocol in ("rtmp", "rtsp", "flv"):
-                            credentials.write_text("\n".join(urlsplit(url).path.lstrip("/") for url in urls) + "\n")
-                            tool = {"flv": "http_flv"}.get(protocol, protocol)
-                            command = [args.client_dir / f"{tool}_fanout", "--play-paths-file", credentials, "--media-host", args.host,
-                                       "--media-port", {"rtmp": args.rtmp_port, "rtsp": args.rtsp_port, "flv": args.http_port}[protocol],
-                                       "--progress-interval", args.progress_interval, *common]
-                        else:
-                            credentials.write_text("\n".join(urls) + "\n")
-                            if protocol == "hls":
-                                command = [sys.executable, script_dir / "hls_client.py", "--hls-urls-file", credentials,
-                                           "--persistent", "--progress-interval", 6, "--output", args.output / f"{group_name}.json", *common]
-                            else:
-                                command = [args.client_dir / "whep_fanout", "--whep-urls-file", credentials,
-                                           "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *common]
-                    process = launch(group_name, command, args.client_cpus, "client")
-                    clients.append((group_name, process, size))
-                    next_client_start = time.monotonic() + size / args.ramp_per_second
-            deadline = time.monotonic() + timeout
             preparation_sample = {"cpu": cpu_times(), "monotonic_ns": time.monotonic_ns()}
             result["preparation_cpu"] = {"server_busy_max": 0.0, "server_max_cpu_busy": 0.0, "client_busy_max": 0.0, "client_max_cpu_busy": 0.0}
 
@@ -543,6 +542,22 @@ def run(args):
                     result["preparation_cpu"][f"{prefix}_max_cpu_busy"] = max(result["preparation_cpu"][f"{prefix}_max_cpu_busy"], usage["max_cpu_busy"])
                 preparation_sample.update(cpu=current, monotonic_ns=time.monotonic_ns())
 
+            next_client_start = time.monotonic()
+            for protocol, count in counts.items():
+                for offset in range(0, count, args.group_size):
+                    size = min(args.group_size, count - offset)
+                    while time.monotonic() < next_client_start:
+                        check_budget()
+                        sample_preparation()
+                        time.sleep(min(1, max(0, next_client_start - time.monotonic())))
+                    group_name = f"{protocol}-{offset}"
+                    selected = [sources[index % len(sources)] for index in range(offset, offset + size)]
+                    command = client_command(protocol, group_name, selected, args.gb_port_base + args.sources + offset,
+                                             args.warmup, args.duration, timeout, barrier)
+                    process = launch(group_name, command, args.client_cpus, "client")
+                    clients.append((group_name, process, size))
+                    next_client_start = time.monotonic() + size / args.ramp_per_second
+            deadline = time.monotonic() + timeout
             while True:
                 check_budget()
                 sample_preparation()
@@ -583,6 +598,20 @@ def run(args):
             monitored += [(f"external-publisher-{pid}", pid) for pid in external_publishers]
             next_sample = start_ns
             stopped_source = False
+            churn_process = None
+            churn_next_ns = start_ns
+            churn_rounds = []
+
+            def finish_churn(process):
+                round_result = churn_rounds[-1]
+                lines = (args.output / f"{round_result['name']}.log").read_text().splitlines()
+                measurements = [parse_phase(line) for line in lines if line.startswith("phase=measurement ")]
+                measurement = measurements[-1] if measurements else {}
+                round_result.update(exit_code=process.returncode, ready=measurement.get("ready"), progressing=measurement.get("progressing"),
+                                    finished_monotonic_ns=time.monotonic_ns())
+                round_result["ok"] = (process.returncode == 0 and measurement.get("ready") == round_result["requested"] and
+                                      measurement.get("progressing") == round_result["requested"])
+
             sibling_cpus = set()
             for cpu in server_cpus:
                 with contextlib.suppress(OSError, ValueError):
@@ -591,13 +620,15 @@ def run(args):
             cpu_start = previous_cpu = cpu_times()
             previous_cpu_ns = time.monotonic_ns()
             server_interval_busy_max = 0.0
-            counters_start = cpu_counters(server_cpus)
+            counters_start = {"server": cpu_counters(server_cpus), "client": cpu_counters(client_cpus)}
             while time.monotonic_ns() < deadline_ns:
                 snapshots = {}
+                netns_queues = {}
+                socket_round = len(result["samples"]) % 5 == 0
                 for name, pid in monitored:
                     try:
                         check_identity(name, pid)
-                        snapshots[name] = proc_snapshot(pid)
+                        snapshots[name] = proc_snapshot(pid, netns_queues, sockets=socket_round)
                         check_identity(name, pid, snapshots[name]["identity"])
                     except (FileNotFoundError, ProcessLookupError):
                         snapshots[name] = {"exited": True, "monotonic_ns": time.monotonic_ns()}
@@ -611,7 +642,24 @@ def run(args):
                     server_interval_busy_max = max(server_interval_busy_max, cpu_usage(previous_cpu, current_cpu, server_cpus)["busy"])
                     previous_cpu, previous_cpu_ns = current_cpu, time.monotonic_ns()
                 result.setdefault("system_samples", []).append(system)
-                check_budget(force=True, phase="measurement")
+                check_budget(force=True, phase="measurement", server_pss_kib=snapshots.get("server", {}).get("pss_kib"))
+                if args.churn:
+                    if churn_process is not None and churn_process.poll() is not None:
+                        finish_churn(churn_process)
+                        churn_process = None
+                    now_ns = time.monotonic_ns()
+                    if churn_process is None and now_ns >= churn_next_ns and now_ns + args.churn_period * 1000000000 <= deadline_ns:
+                        protocol, count = args.churn
+                        name = f"churn-{len(churn_rounds)}"
+                        churn_start = args.output / f"{name}.start"
+                        churn_start.write_text(str(now_ns + (math.ceil(count / args.ramp_per_second) + 3) * 1000000000) + "\n")
+                        command = client_command(protocol, name, [sources[index % len(sources)] for index in range(count)],
+                                                 args.gb_port_base + args.sources + sum(counts.values()), 0, args.churn_period - 8,
+                                                 math.ceil(count / args.ramp_per_second) + 10, churn_start)
+                        churn_rounds.append({"name": name, "requested": count, "launched_monotonic_ns": now_ns,
+                                             "server_fd_before": snapshots.get("server", {}).get("fd")})
+                        churn_process = launch(name, command, args.client_cpus, "churn")
+                        churn_next_ns = now_ns + args.churn_period * 1000000000
                 if args.fault == "source_stop" and not stopped_source and time.monotonic_ns() >= start_ns + args.duration * 500000000:
                     result["fault_evidence"] = {"kind": "source_stop", "requested_monotonic_ns": time.monotonic_ns(), "media_ready_groups": len(clients)}
                     for process in publishers:
@@ -625,11 +673,21 @@ def run(args):
                     stopped_source = True
                 next_sample += 1000000000
                 time.sleep(max(0, (min(next_sample, deadline_ns) - time.monotonic_ns()) / 1e9))
+            if churn_process is not None:
+                try:
+                    churn_process.wait(timeout=args.churn_period)
+                except subprocess.TimeoutExpired:
+                    stop_process(churn_process)
+                finish_churn(churn_process)
+            if args.churn:
+                result["churn"] = {"protocol": args.churn[0], "viewers_per_round": args.churn[1], "period_seconds": args.churn_period,
+                                   "rounds": churn_rounds, "failed_rounds": sum(not item["ok"] for item in churn_rounds)}
             final = {}
+            netns_queues = {}
             for name, pid in monitored:
                 try:
                     check_identity(name, pid)
-                    final[name] = proc_snapshot(pid)
+                    final[name] = proc_snapshot(pid, netns_queues)
                     check_identity(name, pid, final[name]["identity"])
                 except (FileNotFoundError, ProcessLookupError):
                     final[name] = {"exited": True, "monotonic_ns": time.monotonic_ns()}
@@ -648,14 +706,14 @@ def run(args):
                 result.setdefault("decode_probe", {})[protocol] = {"exit_code": process.returncode, "streams": streams,
                     "ok": process.returncode == 0 and frames.get("video", 0) > 0 and all(frames.values())}
             cpu_end = cpu_times()
-            frequency = cpu_frequency(counters_start, cpu_counters(server_cpus))
+            frequency = {prefix: cpu_frequency(counters_start[prefix], cpu_counters(cpus)) or {} for prefix, cpus in (("server", server_cpus), ("client", client_cpus))}
             result["cpu_busy"] = {
                 "server_cpus": sorted(server_cpus), "server_sibling_cpus": sorted(sibling_cpus), "client_cpus": sorted(client_cpus),
                 **{f"server_{key}": value for key, value in cpu_usage(cpu_start, cpu_end, server_cpus).items()},
                 "server_interval_busy_max": server_interval_busy_max,
                 **{f"sibling_{key}": value for key, value in cpu_usage(cpu_start, cpu_end, sibling_cpus).items()},
                 **{f"client_{key}": value for key, value in cpu_usage(cpu_start, cpu_end, client_cpus).items()},
-                **{f"server_{key}": value for key, value in (frequency or {}).items()}}
+                **{f"{prefix}_{key}": value for prefix, values in frequency.items() for key, value in values.items()}}
             if server_log_path:
                 with server_log_path.open() as log:
                     log.seek(server_log_offset)
@@ -687,6 +745,7 @@ def run(args):
                           item["measurement"].get("progressing") == item["requested"] and item["window"]["coverage"] >= 0.99
                           for item in result["groups"])
             success = success and all(probe["ok"] for probe in result.get("decode_probe", {}).values())
+            success = success and not result.get("churn", {}).get("failed_rounds")
             result["status"] = "PASS" if success else "FAIL"
             result["capacity_boundary"] = "HEALTHY" if success else "UNCONFIRMED"
             if server is not None and server.poll() is not None:
@@ -721,21 +780,27 @@ def run(args):
                     "thread_cpu_cores": {tid: (state["cpu"] - begin["threads"].get(tid, state)["cpu"]) / elapsed for tid, state in end["threads"].items()},
                     "thread_sample_window": {"start": begin["monotonic_ns"], "end": end["monotonic_ns"]}}
                 hot_thread = max(result["process_metrics"][name]["thread_cpu_cores"].values(), default=0) >= 0.9
-                if name != "server" and (hot_thread or end["udp_drops"] > begin["udp_drops"] or cores >= 0.9 * min(1 if name.startswith(tuple(OUTPUTS)) else len(end["cpu_affinity"]), len(end["cpu_affinity"])) or
+                if name not in ("server", "runner") and (hot_thread or end["udp_drops"] > begin["udp_drops"] or cores >= 0.9 * min(1 if name.startswith(tuple(OUTPUTS)) else len(end["cpu_affinity"]), len(end["cpu_affinity"])) or
                                          end["fd"] >= resource.getrlimit(resource.RLIMIT_NOFILE)[0] * 0.8):
                     result["status"] = "BLOCKED" if not success else "INCONCLUSIVE"
                     result["capacity_boundary"] = "CLIENT_RESOURCE"
+            if result["status"] == "PASS" and len(result["samples"]) < 0.8 * args.duration:
+                result["status"] = "INCONCLUSIVE"
+                result["capacity_boundary"] = "RUNNER_RESOURCE"
             lagging = [group["name"] for group in result["groups"] if group["measurement"].get("measurement_started") and
                        group["measurement"].get("viewer_realtime_min", args.min_realtime_ratio) < args.min_realtime_ratio]
             if lagging:
                 result["realtime_lagging_groups"] = lagging
-                busy = result.get("cpu_busy", {})
-                server_hot_thread = max(result.get("process_metrics", {}).get("server", {}).get("thread_cpu_cores", {}).values(), default=0)
-                saturated = (busy.get("server_interval_busy_max", 0) >= 0.95 * len(server_cpus) or busy.get("server_max_cpu_busy", 0) >= 0.98 or
-                             server_hot_thread >= 0.95)
-                if result["status"] == "PASS":
-                    result["status"] = "FAIL"
-                    result["capacity_boundary"] = "SERVER_SATURATED" if saturated else "UNCONFIRMED"
+            busy = result.get("cpu_busy", {})
+            server_hot_thread = max(result.get("process_metrics", {}).get("server", {}).get("thread_cpu_cores", {}).values(), default=0)
+            saturated = (busy.get("server_busy", 0) >= 0.9 * len(server_cpus) or busy.get("server_max_cpu_busy", 0) >= 0.98 or
+                         server_hot_thread >= 0.95)
+            if saturated and (lagging or result["status"] == "FAIL") and result["capacity_boundary"] in ("HEALTHY", "UNCONFIRMED"):
+                result["status"] = "FAIL"
+                result["capacity_boundary"] = "SERVER_SATURATED"
+            elif lagging and result["status"] == "PASS":
+                result["status"] = "FAIL"
+                result["capacity_boundary"] = "UNCONFIRMED"
             client_cores = sum(value["cpu_cores"] for name, value in result.get("process_metrics", {}).items() if name != "server")
             if client_cores >= 0.9 * len(os.sched_getaffinity(0)):
                 result["status"] = "BLOCKED" if result["status"] != "PASS" else "INCONCLUSIVE"

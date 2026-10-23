@@ -385,7 +385,8 @@ class media_fanout final
                 consume_error = co_await client->consume_one();
                 if (consume_error)
                 {
-                    if ((state->measurement_finished || progress->stalled) && consume_error == boost::asio::error::operation_aborted)
+                    if ((state->measurement_finished || progress->stalled) &&
+                        (consume_error == boost::asio::error::operation_aborted || consume_error == boost::asio::error::bad_descriptor))
                     {
                         consume_error.clear();
                     }
