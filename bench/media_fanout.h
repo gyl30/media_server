@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <utility>
 #include <iostream>
 #include <algorithm>
@@ -73,6 +74,7 @@ class media_fanout final
         std::vector<std::uint64_t> viewer_video_bytes;
         std::vector<std::uint64_t> viewer_audio_bytes;
         std::vector<std::uint64_t> viewer_video_media_ms;
+        std::vector<std::uint64_t> viewer_lag_span_ms;
         std::uint64_t measurement_start_unix_ns{};
         std::uint64_t measurement_end_unix_ns{};
         std::uint64_t measurement_start_monotonic_ns{};
@@ -364,6 +366,9 @@ class media_fanout final
             auto progress_timer = std::make_shared<boost::asio::steady_timer>(state->io);
             auto progress = std::make_shared<media_server::bench::media_progress>();
             boost::system::error_code consume_error;
+            auto lag_media_ms = client->video_media_ms();
+            auto lag_min = std::numeric_limits<std::int64_t>::max();
+            auto lag_max = std::numeric_limits<std::int64_t>::min();
             while (!state->pre_measurement_abort)
             {
                 if (!measurement_snapshot_taken && state->measurement_started)
@@ -392,6 +397,15 @@ class media_fanout final
                     }
                     break;
                 }
+                const auto media_ms = client->video_media_ms();
+                if (measurement_snapshot_taken && media_ms != lag_media_ms)
+                {
+                    const auto lag = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() -
+                                     static_cast<std::int64_t>(media_ms);
+                    lag_min = std::min(lag_min, lag);
+                    lag_max = std::max(lag_max, lag);
+                }
+                lag_media_ms = media_ms;
             }
             const auto after = state->measurement_finished ? state->media_after[index] : media_server::bench::sample_media(*client);
             if (consume_error && !measurement_snapshot_taken)
@@ -439,6 +453,10 @@ class media_fanout final
                     state->result.viewer_video_bytes[index] = video_bytes;
                     state->result.viewer_audio_bytes[index] = audio_bytes;
                     state->result.viewer_video_media_ms.push_back(after.video_media_ms - before.video_media_ms);
+                    if (lag_max >= lag_min)
+                    {
+                        state->result.viewer_lag_span_ms.push_back(static_cast<std::uint64_t>(lag_max - lag_min));
+                    }
                 }
             }
             state->result.received_video_bytes += client->received_bytes();
@@ -519,6 +537,9 @@ class media_fanout final
                   << " viewer_audio_bytes_max=" << percentile(result.viewer_audio_bytes, 1.0)
                   << " viewer_realtime_min=" << realtime_ratio(result, 0.0) << " viewer_realtime_p10=" << realtime_ratio(result, 0.1)
                   << " viewer_realtime_p50=" << realtime_ratio(result, 0.5) << " viewer_realtime_max=" << realtime_ratio(result, 1.0)
+                  << " viewer_lag_span_ms_p50=" << percentile(result.viewer_lag_span_ms, 0.5)
+                  << " viewer_lag_span_ms_p90=" << percentile(result.viewer_lag_span_ms, 0.9)
+                  << " viewer_lag_span_ms_max=" << percentile(result.viewer_lag_span_ms, 1.0)
                   << " measurement_start_unix_ns=" << result.measurement_start_unix_ns
                   << " measurement_start_monotonic_ns=" << result.measurement_start_monotonic_ns
                   << " measurement_end_monotonic_ns=" << result.measurement_end_monotonic_ns
