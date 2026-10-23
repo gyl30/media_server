@@ -233,10 +233,11 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
         return -1;
     }
     play_ = std::move(player);
-    if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0 || !play_->startup())
+    if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0)
     {
         return -1;
     }
+    play_->startup();
     idle_timer_.stop();
     spdlog::info("rtmp play stream_id {} token {}", app, stream);
     return RTMP_SERVER_ASYNC_START;

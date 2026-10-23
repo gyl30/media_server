@@ -9,7 +9,7 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
 | 服务与执行 | `main.cpp`、`config.cpp`、`service.cpp` 创建监听器和 worker；`media/net/` 管理 I/O、取消、端口和传输队列 |
 | 媒体核心 | `media/core/` 管理固定轨道、源注册、session 注册及 sink 分发 |
 | 协议边界 | `media/rtmp/`、`media/rtsp/`、`media/webrtc/`、`media/gb28181/` 负责协商、解析、封装与各自生命周期；`media/http/` 分派控制和媒体请求 |
-| 派生输出 | `media/flv/` 封装 FLV；`media/hls/` 生成 TS 分片；`media/ps/` 共享 PS 封装；`whep_audio_egress` 共享 AAC→Opus 转码 |
+| 派生输出 | `media/flv/` 共享 FLV tag 封装；`media/hls/` 生成 TS 分片；`media/ps/` 共享 PS 封装；`whep_audio_egress` 共享 AAC→Opus 转码 |
 | 信令 | `signaling/` 管理 SQLite 配置、SIP 设备、源运行实例、授权和媒体状态对账；静态控制台由 `web.go` 嵌入二进制 |
 | 桌面端 | `desktop/` 使用信令 API，实时播放走 RTSP/TCP，历史回放走有限 HTTP PS；FFmpeg 解码、Qt 呈现、SDL 音频 |
 | 工具 | `bench/` 提供负载、容量搜索、采样及运行包工具；`signaling/simulator/` 是独立 GB 设备/媒体模拟器 |
@@ -20,7 +20,8 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
 发布 / 主动拉流 / GB PS-RTP
   → 协议解析与轨道收集
   → 固定 tracks 的 media_stream
-      ├─ RTMP / RTSP / HTTP-FLV / WHEP sink
+      ├─ RTSP / WHEP sink
+      ├─ 共享 FLV tag → 各 RTMP / HTTP-FLV viewer
       ├─ HLS segmenter → playlist / TS
       ├─ 共享 AAC→Opus → 内部派生 media_stream → WHEP
       └─ 共享 MPEG-PS → 各 GB sender 独立 RTP / 网络传输
@@ -38,7 +39,7 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
 
 TCP/UDP transport 负责 socket、串行写入和在途 buffer，上层 session 决定错误后的关闭策略。HTTP-FLV 的 HTTP 输出队列、HLS 的片段保留分别具有协议职责。
 
-共享派生计算不共享连接身份：AAC→Opus 以源对象及音频参数为键；PS 输出由源对象持有弱引用并按需创建。每个 viewer/sender 的 RTP sequence、SSRC、DTLS/SRTP、端点和网络状态独立。
+共享派生计算不共享连接身份：AAC→Opus 以源对象及音频参数为键；PS、FLV tag 输出由源对象持有弱引用并按需创建。FLV tag 携带当时的 sequence header，viewer 从起播点先补发它们。每个 viewer/sender 的 RTMP chunk、RTP sequence、SSRC、DTLS/SRTP、端点和网络状态独立。
 
 ## 有限媒体与控制面
 

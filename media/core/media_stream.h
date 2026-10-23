@@ -1,6 +1,7 @@
 #ifndef MEDIA_CORE_MEDIA_STREAM_H
 #define MEDIA_CORE_MEDIA_STREAM_H
 
+#include <mutex>
 #include <memory>
 #include <string>
 #include <vector>
@@ -11,6 +12,7 @@
 namespace media_server
 {
 class mpeg_ps_output;
+class flv_tag_output;
 
 class media_stream final : public std::enable_shared_from_this<media_stream>
 {
@@ -29,6 +31,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     void end();
 
     [[nodiscard]] std::shared_ptr<mpeg_ps_output> ps_output();
+    [[nodiscard]] std::shared_ptr<flv_tag_output> flv_output();
 
    private:
     std::string stream_id_;
@@ -36,6 +39,8 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     std::vector<media_track> tracks_;
     worker_sink_dispatcher<media_frame, media_sink, &media_sink::on_frame> dispatcher_;
     std::weak_ptr<mpeg_ps_output> ps_output_;
+    std::mutex flv_output_mutex_;
+    std::weak_ptr<flv_tag_output> flv_output_;
     bool ended_{};
 };
 

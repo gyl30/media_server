@@ -242,7 +242,7 @@ add_library(media_core STATIC
     media/net/udp_transport.cpp
     media/net/tcp_listener.cpp
     media/net/idle_timer.cpp
-    media/flv/flv_muxer.cpp
+    media/flv/flv_tag_output.cpp
     media/hls/hls_play_session.cpp
     media/hls/hls_segmenter.cpp
     media/hls/hls.cpp

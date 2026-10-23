@@ -1,56 +1,45 @@
 #ifndef MEDIA_RTMP_RTMP_PLAY_SESSION_H
 #define MEDIA_RTMP_RTMP_PLAY_SESSION_H
 
+#include <span>
 #include <memory>
-#include <vector>
-#include <optional>
+#include <cstdint>
 #include <functional>
 
-#include "media/flv/flv_muxer.h"
-#include "media/core/media_sink.h"
 #include "media/core/media_stream.h"
+#include "media/flv/flv_tag_output.h"
 
 namespace media_server
 {
 
 class worker_context;
-class rtmp_play_session final : public media_sink, public std::enable_shared_from_this<rtmp_play_session>
+class rtmp_play_session final : public flv_sink, public std::enable_shared_from_this<rtmp_play_session>
 {
    public:
+    using packet_handler = std::function<int(int, std::span<const std::uint8_t>, std::uint32_t)>;
     using end_handler = std::function<void()>;
 
-    rtmp_play_session(worker_context& worker,
-                      std::shared_ptr<media_stream> stream,
-                      flv_muxer::packet_handler packet_handler,
-                      end_handler handle_source_end);
+    rtmp_play_session(worker_context& worker, std::shared_ptr<media_stream> stream, packet_handler on_packet, end_handler handle_source_end);
 
    public:
     [[nodiscard]] bool prepare();
-    [[nodiscard]] bool startup();
+    void startup();
     void shutdown();
 
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
-    void on_frame(const media_frame& frame) override;
+    void on_flv_tag(const flv_tag& tag) override;
     void on_end() override;
 
    private:
     void safe_shutdown();
 
    private:
-    struct packet
-    {
-        int type;
-        std::vector<std::uint8_t> data;
-        std::uint32_t timestamp;
-    };
-
     worker_context& worker_;
     std::shared_ptr<media_stream> stream_;
-    flv_muxer::packet_handler packet_handler_;
-    std::optional<std::vector<packet>> initial_packets_{std::in_place};
-    flv_muxer muxer_;
+    packet_handler packet_handler_;
     end_handler end_handler_;
-    std::optional<track_id> waiting_video_track_;
+    std::shared_ptr<flv_tag_output> output_;
+    bool started_{};
 };
 
 }    // namespace media_server

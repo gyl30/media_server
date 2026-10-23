@@ -44,7 +44,7 @@ WHIP/WHEP 使用 `Content-Type: application/sdp` 提交完整 offer，成功返�
 - HLS 使用 MPEG-TS 分片，支持 H.264/H.265、AAC 及符合参数限制的 G.711 分支，拒绝 Opus。实际播放器能否解码应单独验证。
 - Qt 客户端视频只接受 H.264，音频接受 AAC、PCMA、PCMU；不因服务器支持 H.265 就宣称桌面支持 H.265。
 
-具体校验位于 `media/rtmp/rtmp_publish_session.cpp`、`media/rtsp/rtsp_play_session.cpp`、`media/webrtc/webrtc_sdp.cpp`、`media/webrtc/whip_media_receiver.cpp`、`media/flv/flv_muxer.cpp`、`media/hls/hls_segmenter.cpp` 和 `media/ps/mpeg_ps_output.cpp`。
+具体校验位于 `media/rtmp/rtmp_publish_session.cpp`、`media/rtsp/rtsp_play_session.cpp`、`media/webrtc/webrtc_sdp.cpp`、`media/webrtc/whip_media_receiver.cpp`、`media/flv/flv_tag_output.cpp`、`media/hls/hls_segmenter.cpp` 和 `media/ps/mpeg_ps_output.cpp`。
 
 ## 媒体控制 API
 

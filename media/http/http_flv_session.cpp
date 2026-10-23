@@ -1,4 +1,3 @@
-#include <span>
 #include <array>
 #include <utility>
 #include <algorithm>
@@ -13,6 +12,11 @@
 #include "media/core/stream_registry.h"
 #include "media/http/http_flv_session.h"
 #include "media/http/signaling_verify.h"
+
+extern "C"
+{
+#include "flv-proto.h"
+}
 
 namespace media_server
 {
@@ -107,19 +111,11 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
         send_text_response(boost::beast::http::status::internal_server_error, "text/plain", "flv writer unavailable\n", yield);
         return;
     }
-    muxer_.emplace([this](int type, std::span<const std::uint8_t> data, std::uint32_t timestamp)
-                   { return flv_writer_input(writer_, type, data.data(), data.size(), timestamp); });
-    for (const auto& track : media_stream->tracks())
+    auto output = media_stream->flv_output();
+    if (!output)
     {
-        if (track.kind == media_kind::video)
-        {
-            waiting_video_track_ = track.id;
-        }
-        if (!muxer_->on_track(track))
-        {
-            send_text_response(boost::beast::http::status::bad_request, "text/plain", "unsupported flv track\n", yield);
-            return;
-        }
+        send_text_response(boost::beast::http::status::bad_request, "text/plain", "unsupported flv track\n", yield);
+        return;
     }
     stream_.expires_never();
     {
@@ -142,8 +138,8 @@ void http_flv_session::handle_request(boost::asio::yield_context& yield)
     {
         return;
     }
-    source_ = media_stream;
-    media_stream->add_sink(shared_from_this());
+    output_ = std::move(output);
+    output_->add_sink(shared_from_this());
 
     std::array<std::uint8_t, 1> read_buffer{};
     for (;;)
@@ -229,33 +225,35 @@ void http_flv_session::start_write()
 
 void http_flv_session::on_end()
 {
-    if (source_)
+    if (output_)
     {
         shutdown();
     }
 }
 
-void http_flv_session::on_frame(const media_frame& entry)
+void http_flv_session::on_flv_tag(const flv_tag& tag)
 {
-    if (!source_)
+    if (!output_)
     {
         return;
     }
-    if (waiting_video_track_)
+    output_buffer_.clear();
+    if (!started_)
     {
-        if (entry.track != *waiting_video_track_ || !entry.key_frame)
+        if (!tag.key_frame)
         {
             return;
         }
-        waiting_video_track_.reset();
+        started_ = true;
+        const auto& headers = *tag.headers;
+        if ((headers.video && flv_writer_input(writer_, FLV_TYPE_VIDEO, headers.video->data(), headers.video->size(), tag.timestamp) != 0) ||
+            (headers.audio && flv_writer_input(writer_, FLV_TYPE_AUDIO, headers.audio->data(), headers.audio->size(), tag.timestamp) != 0))
+        {
+            shutdown();
+            return;
+        }
     }
-    output_buffer_.clear();
-    if (!muxer_->on_frame(entry))
-    {
-        shutdown();
-        return;
-    }
-    if (!enqueue(std::move(output_buffer_)))
+    if (flv_writer_input(writer_, tag.type, tag.data->data(), tag.data->size(), tag.timestamp) != 0 || !enqueue(std::move(output_buffer_)))
     {
         shutdown();
     }
@@ -299,22 +297,12 @@ void http_flv_session::shutdown()
 
 void http_flv_session::safe_shutdown()
 {
-    if (source_)
-    {
-        source_->remove_sink(this);
-        source_.reset();
-    }
-    if (muxer_)
-    {
-        muxer_->shutdown();
-        muxer_.reset();
-    }
+    output_.reset();
     if (writer_ != nullptr)
     {
         flv_writer_destroy(writer_);
         writer_ = nullptr;
     }
-    waiting_video_track_.reset();
     output_buffer_.clear();
     boost::system::error_code error;
     stream_.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, error);

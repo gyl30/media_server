@@ -18,10 +18,10 @@
 
 ## D03：按源共享派生媒体，保留 viewer 身份
 
-- 背景：多个 WHEP viewer 重复 AAC→Opus 转码，多个 GB sender 重复 PS 封装会增加同源固定成本。
-- 决定：AAC→Opus 按源代及音频参数共享，MPEG-PS 按源代共享；viewer/sender 的 RTP、SSRC、sequence、DTLS/SRTP 和网络状态仍独立。
+- 背景：多个 WHEP viewer 重复 AAC→Opus 转码，多个 GB sender 重复 PS 封装，多个 RTMP/HTTP-FLV viewer 重复 Annex-B→AVCC 的 FLV 封装，会增加同源固定成本。
+- 决定：AAC→Opus 按源代及音频参数共享，MPEG-PS、FLV tag 按源代共享；viewer/sender 的 RTP、SSRC、sequence、DTLS/SRTP 和网络状态仍独立。
 - 原因：复用相同的媒体计算，不混合不同连接的加密密钥、序列和生命周期。HLS 的片段 retention 是独立业务需求，不是被删除的通用媒体历史。
-- 相关历史：`cae4010`「按源代共享 GB28181 MPEG-PS 封装」、`80b5295`「接入 MPEG-PS 统一分发」；当前 `whep_audio_egress.cpp`、`media_stream::ps_output()`、`media/ps/`。
+- 相关历史：`cae4010`「按源代共享 GB28181 MPEG-PS 封装」、`80b5295`「接入 MPEG-PS 统一分发」；当前 `whep_audio_egress.cpp`、`media_stream::{ps_output,flv_output}()`、`media/ps/`、`media/flv/`。
 
 ## D04：网络所有权下沉，错误策略上移
 
@@ -67,8 +67,8 @@
 
 ## D10：RTMP 初始化媒体服从 Play.Start 顺序
 
-- 背景：muxer 在注册轨道时立即生成 codec config，而 RTMP 要先发 Play.Start。
-- 决定：保留 prepare 阶段的 `initial_packets_`，Play.Start 成功后再 startup 输出初始化包并订阅媒体；输入元数据和初始音视频配置用于收集完整固定 tracks。
+- 背景：RTMP 要先发 Play.Start，codec config 不能先于它输出。
+- 决定：prepare 阶段获取共享 FLV tag 输出并完成轨道校验，Play.Start 成功后 startup 才订阅；sequence header 随首个起播 tag 补发；输入元数据和初始音视频配置用于收集完整固定 tracks。
 - 原因：这些成员表达真实协议阶段，不能只为统一 startup 形式删除。Publish/Play 仍由连接的角色对象区分。
 - 相关历史：`f0f3099`「收口 RTMP 播放授权后初始化时序」、`0c9de93`；当前 `rtmp_session.cpp` 的 `rtmp_server_start()` 与 `rtmp_play_session::{prepare,startup}`。
 

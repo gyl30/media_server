@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <cstdint>
-#include <optional>
 #include <string_view>
 
 #include <boost/asio/spawn.hpp>
@@ -14,8 +13,7 @@
 #include <boost/beast/http.hpp>
 
 #include "config.h"
-#include "media/flv/flv_muxer.h"
-#include "media/core/media_sink.h"
+#include "media/flv/flv_tag_output.h"
 
 extern "C"
 {
@@ -25,8 +23,7 @@ extern "C"
 namespace media_server
 {
 class worker_context;
-class media_stream;
-class http_flv_session final : public media_sink, public std::enable_shared_from_this<http_flv_session>
+class http_flv_session final : public flv_sink, public std::enable_shared_from_this<http_flv_session>
 {
    public:
     using request_type = boost::beast::http::request<boost::beast::http::string_body>;
@@ -59,16 +56,15 @@ class http_flv_session final : public media_sink, public std::enable_shared_from
     const config& config_;
     std::deque<std::vector<std::uint8_t>> output_queue_;
     std::size_t queued_output_bytes_{};
-    std::optional<track_id> waiting_video_track_;
     std::vector<std::uint8_t> output_buffer_;
     void* writer_ = nullptr;
-    std::optional<flv_muxer> muxer_;
-    std::shared_ptr<media_stream> source_;
+    std::shared_ptr<flv_tag_output> output_;
+    bool started_{};
     static constexpr std::size_t max_queued_output_bytes_ = 4U * 1024U * 1024U;
 
    public:
     [[nodiscard]] worker_context& worker() noexcept override { return worker_; }
-    void on_frame(const media_frame& frame) override;
+    void on_flv_tag(const flv_tag& tag) override;
     void on_end() override;
 };
 

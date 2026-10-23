@@ -7,6 +7,7 @@
 
 #include "media/core/media_stream.h"
 #include "media/ps/mpeg_ps_output.h"
+#include "media/flv/flv_tag_output.h"
 #include "media/net/worker_context.h"
 
 namespace media_server
@@ -104,6 +105,22 @@ std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
         return {};
     }
     ps_output_ = output;
+    return output;
+}
+
+std::shared_ptr<flv_tag_output> media_stream::flv_output()
+{
+    std::scoped_lock lock(flv_output_mutex_);
+    if (auto output = flv_output_.lock())
+    {
+        return output;
+    }
+    auto output = std::make_shared<flv_tag_output>(worker_);
+    if (!output->startup(shared_from_this()))
+    {
+        return {};
+    }
+    flv_output_ = output;
     return output;
 }
 
