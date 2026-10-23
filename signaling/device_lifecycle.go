@@ -5,42 +5,44 @@ import (
 	"errors"
 )
 
+type deviceStopSnapshot struct {
+	sessions  []*liveSession
+	broadcast *broadcastSession
+}
+
 // Caller holds mu: the fence and session snapshot must precede new play or REGISTER.
-func (s *liveService) beginDeviceStopLocked(deviceID string) []*liveSession {
+func (s *liveService) beginDeviceStopLocked(deviceID string) deviceStopSnapshot {
 	s.stoppingDevices[deviceID] = struct{}{}
-	if session := s.broadcasts[deviceID]; session != nil {
-		session.cancel(errDeviceOffline)
+	stopped := deviceStopSnapshot{broadcast: s.broadcasts[deviceID]}
+	if stopped.broadcast != nil {
+		stopped.broadcast.cancel(errDeviceOffline)
 	}
 	for key, cancel := range s.ptzOwners {
 		if key.deviceID == deviceID {
 			cancel()
 		}
 	}
-	var sessions []*liveSession
 	for _, session := range s.sessions {
 		if session.key.deviceID == deviceID {
 			s.tokens.revokeStream(session.streamID)
-			sessions = append(sessions, session)
+			stopped.sessions = append(stopped.sessions, session)
 		}
 	}
-	return sessions
+	return stopped
 }
 
-func (s *liveService) stopDeviceSessions(ctx context.Context, deviceID string, sessions []*liveSession) error {
+func (s *liveService) stopDeviceSessions(ctx context.Context, stopped deviceStopSnapshot) error {
 	var result error
-	for _, session := range sessions {
+	for _, session := range stopped.sessions {
 		s.mu.Lock()
 		if err := s.stopSessionLocked(ctx, session); err != nil {
 			result = errors.Join(result, err)
 		}
 	}
-	s.mu.Lock()
-	broadcast := s.broadcasts[deviceID]
-	s.mu.Unlock()
-	if broadcast != nil {
+	if stopped.broadcast != nil {
 		select {
-		case <-broadcast.done:
-			result = errors.Join(result, broadcast.cleanupErr)
+		case <-stopped.broadcast.done:
+			result = errors.Join(result, stopped.broadcast.cleanupErr)
 		case <-ctx.Done():
 			result = errors.Join(result, ctx.Err())
 		}
@@ -48,8 +50,8 @@ func (s *liveService) stopDeviceSessions(ctx context.Context, deviceID string, s
 	return result
 }
 
-func (s *liveService) finishDeviceOffline(deviceID string, sessions []*liveSession) {
-	if err := s.stopDeviceSessions(context.Background(), deviceID, sessions); err != nil {
+func (s *liveService) finishDeviceOffline(deviceID string, stopped deviceStopSnapshot) {
+	if err := s.stopDeviceSessions(context.Background(), stopped); err != nil {
 		s.logger.Warn("offline device cleanup failed", "device_id", deviceID, "error", err)
 	}
 	s.mu.Lock()
@@ -67,10 +69,10 @@ func (s *liveService) deleteDevice(ctx context.Context, deviceID string) error {
 		s.mu.Unlock()
 		return errDeviceStopping
 	}
-	sessions := s.beginDeviceStopLocked(deviceID)
+	stopped := s.beginDeviceStopLocked(deviceID)
 	s.mu.Unlock()
 	// HTTP 取消不能提前撤销设备 fence；SIP/媒体清理各自有界，完成后才恢复注册入口。
-	err := s.stopDeviceSessions(context.WithoutCancel(ctx), deviceID, sessions)
+	err := s.stopDeviceSessions(context.WithoutCancel(ctx), stopped)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer delete(s.stoppingDevices, deviceID)

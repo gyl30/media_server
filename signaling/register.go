@@ -45,7 +45,7 @@ func (s *sipServer) handleRegister(req *sip.Request, tx sip.ServerTransaction) {
 
 	now := s.now()
 	shouldQuery := false
-	var stopped []*liveSession
+	var stopped deviceStopSnapshot
 	becameOffline := false
 	if registration.expires == 0 {
 		if s.devices.unregister(registration.deviceID) {

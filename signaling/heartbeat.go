@@ -106,7 +106,7 @@ func (s *sipServer) expireDevices(now time.Time) {
 	s.live.mu.Lock()
 	s.auth.expire(now)
 	s.channels.expire(now)
-	offline := make(map[string][]*liveSession)
+	offline := make(map[string]deviceStopSnapshot)
 	for _, deviceID := range s.devices.expire(now, s.cfg.heartbeatTimeout) {
 		s.channels.removeDevice(deviceID)
 		if _, stopping := s.live.stoppingDevices[deviceID]; stopping {
