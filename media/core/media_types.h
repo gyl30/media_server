@@ -12,6 +12,8 @@ namespace media_server
 using track_id = std::uint32_t;
 using byte_buffer = std::shared_ptr<const std::vector<std::uint8_t>>;
 
+class length_prefixed_payload;
+
 enum class media_kind
 {
     audio,
@@ -47,6 +49,7 @@ struct media_frame
     bool key_frame{};
 
     byte_buffer payload;
+    std::shared_ptr<length_prefixed_payload> length_prefixed{};
 };
 
 [[nodiscard]] constexpr std::string_view to_string(media_kind kind) noexcept

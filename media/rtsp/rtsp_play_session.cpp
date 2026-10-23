@@ -115,12 +115,13 @@ void rtsp_play_session::on_frame(const media_frame& entry)
         }
     }
     output_.reserve(entry.payload->size() + entry.payload->size() / packet_header_reserve_divisor + rtcp_reserve_bytes);
+    const auto payload = entry.length_prefixed ? entry.length_prefixed->get(*entry.payload) : std::span<const std::uint8_t>{*entry.payload};
     const auto mux_result = rtsp_muxer_input(muxer_,
                                              state.media_index,
                                              ns_to_milliseconds(entry.pts_ns),
                                              ns_to_milliseconds(entry.dts_ns),
-                                             entry.payload->data(),
-                                             static_cast<int>(entry.payload->size()),
+                                             payload.data(),
+                                             static_cast<int>(payload.size()),
                                              entry.key_frame ? 1 : 0);
     if (mux_result < 0)
     {

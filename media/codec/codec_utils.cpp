@@ -21,6 +21,31 @@ constexpr std::int64_t ns_per_millisecond = 1'000'000;
 
 }    // namespace
 
+std::span<const std::uint8_t> length_prefixed_payload::get(std::span<const std::uint8_t> annex_b)
+{
+    std::call_once(converted_,
+                   [this, annex_b]()
+                   {
+                       data_.reserve(annex_b.size());
+                       mpeg4_h264_annexb_nalu(
+                           annex_b.data(),
+                           annex_b.size(),
+                           [](void* param, const std::uint8_t* nalu, std::size_t bytes)
+                           {
+                               auto& data = *static_cast<std::vector<std::uint8_t>*>(param);
+                               const auto length = static_cast<std::uint32_t>(bytes);
+                               data.insert(data.end(),
+                                           {static_cast<std::uint8_t>(length >> 24U),
+                                            static_cast<std::uint8_t>(length >> 16U),
+                                            static_cast<std::uint8_t>(length >> 8U),
+                                            static_cast<std::uint8_t>(length)});
+                               data.insert(data.end(), nalu, nalu + bytes);
+                           },
+                           &data_);
+                   });
+    return data_;
+}
+
 std::vector<std::uint8_t> h264_avcc_to_annex_b(std::span<const std::uint8_t> avcc)
 {
     mpeg4_avc_t configuration{};

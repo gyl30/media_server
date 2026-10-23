@@ -27,7 +27,7 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
       └─ 共享 MPEG-PS → 各 GB sender 独立 RTP / 网络传输
 ```
 
-内部数据定义见 [`media_types.h`](../media/core/media_types.h)：H.264/H.265 为 Annex-B access unit，AAC 为完整 ADTS frame，Opus 为单 packet；DTS/PTS 使用纳秒，payload 是共享只读 buffer。轨道保存 codec、时钟、声道及固定 codec config。协议支持范围见 [协议](protocols.md)。
+内部数据定义见 [`media_types.h`](../media/core/media_types.h)：H.264/H.265 为 Annex-B access unit，AAC 为完整 ADTS frame，Opus 为单 packet；DTS/PTS 使用纳秒，payload 是共享只读 buffer。视频帧另带按需转换一次的长度前缀副本，供 RTSP/WHEP 的 RTP 打包共享，避免每个 viewer 重复扫描起始码。轨道保存 codec、时钟、声道及固定 codec config。协议支持范围见 [协议](protocols.md)。
 
 输入必须先收集完整轨道，再调用 `set_tracks()` 和注册源。一个 `media_stream` 对象只代表一代源，轨道不能在运行中更新。媒体核心按源推送，不保存 GOP/history，也不反向要求关键帧；新 viewer 等待自然关键帧。
 

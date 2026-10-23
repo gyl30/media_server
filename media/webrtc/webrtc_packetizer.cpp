@@ -246,12 +246,13 @@ bool webrtc_packetizer::emit_rtcp(int payload_index)
 
 bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
 {
+    const auto payload = frame.length_prefixed ? frame.length_prefixed->get(*frame.payload) : std::span<const std::uint8_t>{*frame.payload};
     const auto result = rtsp_muxer_input(muxer_,
                                          state.media_index,
                                          ns_to_milliseconds(frame.pts_ns),
                                          ns_to_milliseconds(frame.dts_ns),
-                                         frame.payload->data(),
-                                         static_cast<int>(frame.payload->size()),
+                                         payload.data(),
+                                         static_cast<int>(payload.size()),
                                          frame.key_frame ? 1 : 0);
     if (result < 0)
     {

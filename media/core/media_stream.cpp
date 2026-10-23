@@ -9,6 +9,7 @@
 #include "media/ps/mpeg_ps_output.h"
 #include "media/flv/flv_tag_output.h"
 #include "media/net/worker_context.h"
+#include "media/codec/codec_utils.h"
 
 namespace media_server
 {
@@ -75,6 +76,10 @@ void media_stream::publish(media_frame frame)
     if (track == tracks_.end())
     {
         return;
+    }
+    if ((track->codec == codec_id::h264 || track->codec == codec_id::h265) && !frame.length_prefixed)
+    {
+        frame.length_prefixed = std::make_shared<length_prefixed_payload>();
     }
     dispatcher_.publish(frame);
 }

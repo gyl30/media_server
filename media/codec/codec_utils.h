@@ -2,6 +2,7 @@
 #define MEDIA_CODEC_CODEC_UTILS_H
 
 #include <span>
+#include <mutex>
 #include <vector>
 #include <cstdint>
 #include <optional>
@@ -17,6 +18,16 @@ struct aac_config
 {
     std::uint32_t sample_rate{};
     std::uint16_t channel_count{};
+};
+
+class length_prefixed_payload final
+{
+   public:
+    [[nodiscard]] std::span<const std::uint8_t> get(std::span<const std::uint8_t> annex_b);
+
+   private:
+    std::once_flag converted_;
+    std::vector<std::uint8_t> data_;
 };
 
 [[nodiscard]] std::vector<std::uint8_t> h264_avcc_to_annex_b(std::span<const std::uint8_t> avcc);
