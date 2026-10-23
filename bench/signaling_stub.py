@@ -10,10 +10,13 @@ class SignalingStub:
         self.lock = threading.Lock()
         self.tokens = {}
         self.calls = []
+        self.handle_seconds = []
+        self.rejected = 0
         stub = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
+                started = time.monotonic()
                 try:
                     body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
                 except (ValueError, TypeError):
@@ -33,6 +36,9 @@ class SignalingStub:
                     self.end_headers()
                 except (BrokenPipeError, ConnectionResetError):
                     pass
+                with stub.lock:
+                    stub.handle_seconds.append(time.monotonic() - started)
+                    stub.rejected += not accepted
 
             def log_message(self, *_):
                 pass
@@ -54,6 +60,13 @@ class SignalingStub:
     def count(self):
         with self.lock:
             return len(self.calls)
+
+    def summary(self):
+        with self.lock:
+            handled = sorted(self.handle_seconds)
+            return {"calls": len(self.calls), "rejected": self.rejected,
+                    "handle_ms_p99": handled[int(len(handled) * 0.99)] * 1000 if handled else None,
+                    "handle_ms_max": handled[-1] * 1000 if handled else None}
 
     def __enter__(self):
         self.thread.start()

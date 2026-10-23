@@ -420,6 +420,7 @@ def run(args):
             args.fault = old_fault
 
     owned = args.input != "existing"
+    stub = None
     try:
         if not owned:
             identity = proc_identity(args.server_pid)
@@ -846,6 +847,8 @@ def run(args):
                 else:
                     category = "CONNECTION_OR_PROTOCOL"
                 group["failure_category"] = category
+        if stub is not None:
+            result["verification"] = stub.summary()
         for _, process, _ in clients:
             stop_process(process)
         if owned and server is not None and server.poll() is None:
