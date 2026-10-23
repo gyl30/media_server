@@ -205,7 +205,18 @@ func (s *infrastructureServer) handlePushPublish(writer http.ResponseWriter, req
 	s.writePushDevice(writer, request, deviceID, http.StatusCreated)
 }
 
-func (s *infrastructureServer) stopPushDevice(ctx context.Context, deviceID string, remove bool) error {
+func (s *infrastructureServer) stopPushDevice(ctx context.Context, deviceID string, remove bool) (err error) {
+	operation := "stop"
+	if remove {
+		operation = "delete"
+	}
+	defer func() {
+		if err != nil {
+			s.logger.Warn("push device operation failed", "operation", operation, "device_id", deviceID, "error", err)
+		} else {
+			s.logger.Info("push device operation completed", "operation", operation, "device_id", deviceID)
+		}
+	}()
 	s.sourceOperationMu.Lock()
 	defer s.sourceOperationMu.Unlock()
 	s.tokens.mu.Lock()
@@ -213,30 +224,23 @@ func (s *infrastructureServer) stopPushDevice(ctx context.Context, deviceID stri
 		s.tokens.mu.Unlock()
 		return err
 	}
-	run, exists := s.tokens.pushRuns[deviceID]
-	if !exists {
-		var err error
-		if remove {
-			_, err = s.sources.db.ExecContext(ctx, `DELETE FROM push_devices WHERE device_id = ?`, deviceID)
-		}
-		s.tokens.mu.Unlock()
-		return err
-	}
-	delete(s.tokens.pushRuns, deviceID)
-	maps.DeleteFunc(s.tokens.tokens, func(_ string, token streamToken) bool { return token.streamID == run.streamID })
-	s.tokens.mu.Unlock()
-	s.logger.Info("push run stopping", "device_id", deviceID, "stream_id", run.streamID)
-	if err := s.media.deleteReceiver(ctx, run.streamID); err != nil && !isMediaServerNotFound(err) {
-		s.tokens.mu.Lock()
-		s.tokens.pushRuns[deviceID] = run
-		s.tokens.mu.Unlock()
-		return err
-	}
 	if remove {
-		s.tokens.mu.Lock()
-		_, err := s.sources.db.ExecContext(ctx, `DELETE FROM push_devices WHERE device_id = ?`, deviceID)
-		s.tokens.mu.Unlock()
-		return err
+		if _, err := s.sources.db.ExecContext(ctx, `DELETE FROM push_devices WHERE device_id = ?`, deviceID); err != nil {
+			s.tokens.mu.Unlock()
+			return err
+		}
+	}
+	run, exists := s.tokens.pushRuns[deviceID]
+	delete(s.tokens.pushRuns, deviceID)
+	if exists {
+		maps.DeleteFunc(s.tokens.tokens, func(_ string, token streamToken) bool { return token.streamID == run.streamID })
+	}
+	s.tokens.mu.Unlock()
+	if exists {
+		s.logger.Info("push run stopping", "device_id", deviceID, "stream_id", run.streamID)
+		if err := s.media.deleteReceiver(ctx, run.streamID); err != nil && !isMediaServerNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }
