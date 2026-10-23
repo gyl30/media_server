@@ -3,6 +3,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -61,6 +62,7 @@ class rtmp_session final : public session, public std::enable_shared_from_this<r
     worker_context& worker_;
     const config& config_;
     std::shared_ptr<tcp_transport> transport_;
+    std::vector<std::uint8_t> output_;
     rtmp_server_t* rtmp_context_{};
     std::unique_ptr<rtmp_publish_session> publish_;
     std::shared_ptr<rtmp_play_session> play_;

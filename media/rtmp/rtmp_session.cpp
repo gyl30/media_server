@@ -21,6 +21,10 @@ extern "C"
 
 namespace media_server
 {
+namespace
+{
+constexpr std::size_t chunk_header_reserve_bytes = 1024U;
+}
 
 rtmp_session::rtmp_session(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& application_config)
     : worker_(worker), config_(application_config), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
@@ -94,7 +98,9 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
             break;
         }
         idle_timer_.touch();
-        if (bytes != 0 && rtmp_server_input(context, buffer.data(), bytes) != 0)
+        const auto result = bytes != 0 ? rtmp_server_input(context, buffer.data(), bytes) : 0;
+        transport->write(std::exchange(output_, {}));
+        if (result != 0)
         {
             break;
         }
@@ -108,19 +114,16 @@ int rtmp_session::send_callback(void* param, const void* header, std::size_t hea
     {
         return -1;
     }
-    std::vector<std::uint8_t> data;
-    data.reserve(header_bytes + payload_bytes);
     if (header_bytes != 0)
     {
         const auto* first = static_cast<const std::uint8_t*>(header);
-        data.insert(data.end(), first, first + header_bytes);
+        self->output_.insert(self->output_.end(), first, first + header_bytes);
     }
     if (payload_bytes != 0)
     {
         const auto* first = static_cast<const std::uint8_t*>(payload);
-        data.insert(data.end(), first, first + payload_bytes);
+        self->output_.insert(self->output_.end(), first, first + payload_bytes);
     }
-    self->transport_->write(std::move(data));
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
@@ -216,15 +219,11 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
             {
                 return -1;
             }
-            if (type == FLV_TYPE_VIDEO)
-            {
-                return rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp);
-            }
-            if (type == FLV_TYPE_AUDIO)
-            {
-                return rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp);
-            }
-            return 0;
+            self->output_.reserve(data.size() + chunk_header_reserve_bytes);
+            const auto result = type == FLV_TYPE_VIDEO ? rtmp_server_send_video(self->rtmp_context_, data.data(), data.size(), timestamp)
+                                                       : rtmp_server_send_audio(self->rtmp_context_, data.data(), data.size(), timestamp);
+            self->transport_->write(std::exchange(self->output_, {}));
+            return result;
         },
         [self]() { self->shutdown(); });
     if (!player->prepare())
