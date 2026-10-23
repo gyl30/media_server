@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"mime"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -31,11 +30,10 @@ type liveState string
 const livePayloadType uint8 = 96
 
 const (
-	livePreparing      liveState = "preparing"
-	liveInviting       liveState = "inviting"
-	liveStreaming      liveState = "streaming"
-	liveStopping       liveState = "stopping"
-	liveCleanupPending liveState = "cleanup_pending"
+	livePreparing liveState = "preparing"
+	liveInviting  liveState = "inviting"
+	liveStreaming liveState = "streaming"
+	liveStopping  liveState = "stopping"
 )
 
 type liveKey struct {
@@ -57,7 +55,6 @@ type liveSession struct {
 	claimed          chan struct{}
 	established      chan struct{}
 	done             chan struct{}
-	cleanupErr       error
 	playbackDuration int64
 	dialog           sync.Mutex
 	cseq             uint32
@@ -138,7 +135,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	key := liveKey{deviceID: deviceID, channelID: channelID}
 	if existing, exists := s.sessions[key]; exists {
-		if existing.state == liveStopping || existing.state == liveCleanupPending {
+		if existing.state == liveStopping {
 			s.mu.Unlock()
 			return liveView{}, errLiveStopping
 		}
@@ -181,10 +178,7 @@ func (s *liveService) startLive(ctx context.Context, deviceID, channelID string)
 	}
 	rtpPort, err := s.prepareReceiver(operationContext, session)
 	if err != nil {
-		s.mu.Lock()
-		view := makeLiveView(session)
-		s.mu.Unlock()
-		return view, err
+		return liveView{}, err
 	}
 	s.mu.Lock()
 	session.rtpPort = rtpPort
@@ -212,31 +206,11 @@ func (s *liveService) prepareReceiver(ctx context.Context, session *liveSession)
 	rtpPort, err := s.media.createReceiver(ctx, gb28181ReceiverRequest{
 		streamID: session.streamID, payloadType: livePayloadType, ssrc: session.ssrc,
 	}, kind)
-	if err == nil {
-		return rtpPort, nil
-	}
-	_, rejected := errors.AsType[*mediaServerHTTPRejection](err)
-	networkError, networkFailure := errors.AsType[*net.OpError](err)
-	ambiguousCreate := !rejected && !(networkFailure && networkError.Op == "dial")
-	cleanupConfirmed := !ambiguousCreate
-	if ambiguousCreate {
-		cleanupContext, cleanupCancel := s.media.timeoutContext()
-		cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
-		cleanupCancel()
-		cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
-		if !cleanupConfirmed {
-			s.logger.Warn("live create compensation failed", "stream_id", session.streamID, "error", cleanupErr)
-		}
-	}
-	s.mu.Lock()
-	if s.sessions[session.key] == session && !cleanupConfirmed {
-		markCleanupPendingLocked(session, err)
-	}
-	s.mu.Unlock()
-	if cleanupConfirmed {
+	if err != nil {
 		s.remove(session)
+		return 0, err
 	}
-	return 0, err
+	return rtpPort, nil
 }
 
 func (s *liveService) invite(operationContext context.Context, session *liveSession, device registeredDevice, sdpBody []byte) (liveView, error) {
@@ -404,11 +378,7 @@ func (s *liveService) invite(operationContext context.Context, session *liveSess
 }
 
 func (s *liveService) finishFailedStart(session *liveSession, cause error, sendBye bool) (liveView, error) {
-	cleanupErr := s.cleanup(session, sendBye)
-	s.mu.Lock()
-	view := makeLiveView(session)
-	s.mu.Unlock()
-	return view, errors.Join(cause, cleanupErr)
+	return liveView{}, errors.Join(cause, s.cleanup(session, sendBye))
 }
 
 func (s *liveService) live(deviceID, channelID string) (liveView, bool) {
@@ -439,51 +409,18 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 		return nil
 	}
 	s.tokens.revokeStream(session.streamID)
-	if session.state == liveCleanupPending {
-		session.state = liveStopping
-		session.cleanupErr = nil
-		s.mu.Unlock()
-		return s.cleanup(session, false)
-	}
-	if session.state == livePreparing || session.state == liveInviting {
-		session.state = liveStopping
-		session.cancel()
-		established := session.established
-		s.mu.Unlock()
-		return s.waitForStop(ctx, session, established)
-	}
-	if session.state == liveStopping {
-		session.cancel()
-		done := session.done
-		s.mu.Unlock()
-		return s.waitForStop(ctx, session, done)
-	}
+	streaming := session.state == liveStreaming
 	session.state = liveStopping
 	session.cancel()
 	s.mu.Unlock()
-	return s.cleanup(session, true)
-}
-
-func (s *liveService) waitForStop(ctx context.Context, session *liveSession, wait <-chan struct{}) error {
-	for {
-		select {
-		case <-wait:
-			s.mu.Lock()
-			current, exists := s.sessions[session.key]
-			if !exists || current != session {
-				s.mu.Unlock()
-				return nil
-			}
-			if session.state == liveCleanupPending {
-				err := session.cleanupErr
-				s.mu.Unlock()
-				return err
-			}
-			wait = session.done
-			s.mu.Unlock()
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+	if streaming {
+		return s.cleanup(session, true)
+	}
+	select {
+	case <-session.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -535,17 +472,10 @@ func (s *liveService) cleanup(session *liveSession, sendBye bool) error {
 	cleanupContext, cancel := s.media.timeoutContext()
 	deleteErr := s.media.deleteReceiver(cleanupContext, session.streamID)
 	cancel()
-	mediaStopped := deleteErr == nil || isMediaServerNotFound(deleteErr)
-	s.mu.Lock()
-	if !mediaStopped {
-		if current, ok := s.sessions[session.key]; ok && current == session {
-			markCleanupPendingLocked(session, deleteErr)
-		}
-		s.mu.Unlock()
+	s.remove(session)
+	if deleteErr != nil && !isMediaServerNotFound(deleteErr) {
 		return deleteErr
 	}
-	s.mu.Unlock()
-	s.remove(session)
 	return nil
 }
 
@@ -561,13 +491,6 @@ func (s *liveService) sendBye(session *liveSession) {
 	if err != nil {
 		s.logger.Warn("live BYE failed", "stream_id", session.streamID, "error", err)
 	}
-}
-
-func markCleanupPendingLocked(session *liveSession, err error) {
-	session.state = liveCleanupPending
-	session.cleanupErr = err
-	close(session.done)
-	session.done = make(chan struct{})
 }
 
 func (s *liveService) remove(session *liveSession) {
@@ -645,12 +568,8 @@ func (s *liveService) handleRemoteBye(request *sip.Request, transaction sip.Serv
 }
 
 func makeLiveView(session *liveSession) liveView {
-	state := session.state
-	if state == liveCleanupPending {
-		state = liveStopping
-	}
 	return liveView{
-		streamID: session.streamID, state: state,
+		streamID: session.streamID, state: session.state,
 		ssrc: session.ssrc, rtpPort: session.rtpPort,
 	}
 }

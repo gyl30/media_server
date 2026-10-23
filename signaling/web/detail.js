@@ -10,7 +10,7 @@ import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/pl
 import { TalkCapture } from "/talk.js";
 
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
-const LIVE_LABEL = { preparing: "正在点播", inviting: "正在点播", stopping: "正在停止", cleanup_pending: "正在清理" };
+const LIVE_LABEL = { preparing: "正在点播", inviting: "正在点播", stopping: "正在停止" };
 
 export function mountDetail(root, ctx, kind, id) {
   let mounted = true;

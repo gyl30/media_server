@@ -77,13 +77,7 @@ func (s *infrastructureServer) handleHistoryCreate(writer http.ResponseWriter, r
 			writeHTTPError(writer, http.StatusConflict, "device_stopping")
 		default:
 			s.logger.Error("playback prepare failed", "playback_id", result.PlaybackID, "error", err)
-			failure := map[string]string{"error": "playback_start_failed"}
-			s.live.mu.Lock()
-			if session := s.live.sessions[liveKey{deviceID: deviceID, channelID: channelID, historyID: result.PlaybackID}]; session != nil && session.state == liveCleanupPending {
-				failure["playback_id"] = result.PlaybackID
-			}
-			s.live.mu.Unlock()
-			writeJSON(writer, http.StatusBadGateway, failure)
+			writeHTTPError(writer, http.StatusBadGateway, "playback_start_failed")
 		}
 		return
 	}
