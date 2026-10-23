@@ -58,19 +58,13 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     }
 
     const auto self = shared_from_this();
-    rtcp_transport_->set_write_callback(
-        [self](boost::system::error_code error, std::size_t)
+    rtcp_transport_->set_error_callback(
+        [self](boost::system::error_code)
         {
-            if (!self->local_port_)
-            {
-                return;
-            }
-            if (error)
+            if (self->local_port_)
             {
                 self->shutdown();
-                return;
             }
-            self->schedule_rtcp();
         });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
@@ -199,17 +193,11 @@ void gb28181_udp_receiver_session::schedule_rtcp()
 
             std::array<std::uint8_t, 1500> buffer{};
             const auto bytes = self->receiver_.generate_rtcp(buffer);
-            if (bytes <= 0)
+            if (bytes > 0)
             {
-                self->schedule_rtcp();
-                return;
+                self->rtcp_transport_->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, *target);
             }
-
-            std::vector<std::uint8_t> packet(buffer.begin(), buffer.begin() + bytes);
-            if (!self->rtcp_transport_->write(std::move(packet), *target))
-            {
-                self->schedule_rtcp();
-            }
+            self->schedule_rtcp();
         });
 }
 

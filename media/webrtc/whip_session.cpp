@@ -45,13 +45,9 @@ bool whip_session::startup(const webrtc_media_offer& transport_offer, const webr
 {
     remote_ice_ufrag_ = transport_offer.ice_ufrag;
     const auto self = shared_from_this();
-    udp_transport_->set_write_callback(
-        [self](boost::system::error_code error, std::size_t)
+    udp_transport_->set_error_callback(
+        [self](boost::system::error_code error)
         {
-            if (!error)
-            {
-                return;
-            }
             if (self->local_port_ == 0)
             {
                 return;
@@ -59,9 +55,7 @@ bool whip_session::startup(const webrtc_media_offer& transport_offer, const webr
             spdlog::debug("webrtc udp send failed session {} error {}", self->id_, error.message());
             self->shutdown();
         });
-    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
-                                             [self](std::span<const std::uint8_t> packet)
-                                             { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
+    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint, [self](std::span<const std::uint8_t> packet) { self->send_udp(packet); });
     if (!dtls_->startup(certificate, dtls_role::server))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
@@ -177,7 +171,7 @@ void whip_session::handle_stun(std::span<const std::uint8_t> packet, const boost
         auto response = make_stun_binding_error_response(*request, 420, "Unknown Attribute", request->unknown_required_attributes, ice_pwd_);
         if (!response.empty())
         {
-            send_udp(std::move(response), endpoint);
+            send_udp(response, endpoint);
         }
         return;
     }
@@ -190,7 +184,7 @@ void whip_session::handle_stun(std::span<const std::uint8_t> packet, const boost
         auto response = make_stun_binding_error_response(*request, 487, "Role Conflict", {}, ice_pwd_);
         if (!response.empty())
         {
-            send_udp(std::move(response), endpoint);
+            send_udp(response, endpoint);
         }
         return;
     }
@@ -220,7 +214,7 @@ void whip_session::handle_stun(std::span<const std::uint8_t> packet, const boost
         refresh_ice_activity_timeout();
     }
 
-    send_udp(std::move(response), endpoint);
+    send_udp(response, endpoint);
 }
 
 void whip_session::handle_dtls(std::span<const std::uint8_t> packet)
@@ -284,22 +278,22 @@ bool whip_session::startup_media()
     return true;
 }
 
-void whip_session::send_udp(std::vector<std::uint8_t> packet)
+void whip_session::send_udp(std::span<const std::uint8_t> packet)
 {
     if (!remote_endpoint_.has_value())
     {
         return;
     }
-    send_udp(std::move(packet), *remote_endpoint_);
+    send_udp(packet, *remote_endpoint_);
 }
 
-void whip_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
+void whip_session::send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (local_port_ == 0 || packet.empty())
     {
         return;
     }
-    if (!udp_transport_->write(std::move(packet), std::move(endpoint)))
+    if (!udp_transport_->write(packet, endpoint))
     {
         spdlog::warn("whip udp write queue full session {}", id_);
     }

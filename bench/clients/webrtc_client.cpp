@@ -37,6 +37,7 @@ namespace
 constexpr std::string_view client_ice_ufrag = "capacity";
 constexpr std::string_view client_ice_password = "capacity-client-password";
 constexpr std::uint32_t stun_magic_cookie = 0x2112a442U;
+constexpr int receive_buffer_bytes = 16 * 1024 * 1024;
 
 struct ssl_context_deleter
 {
@@ -471,7 +472,11 @@ bool webrtc_client_peer::establish(std::string_view answer_sdp, std::string& err
     implementation_->ice_password = ice_password;
     const auto stun = make_stun_request(implementation_->ice_username, implementation_->ice_password, transaction_id, true);
     boost::system::error_code socket_error;
-    implementation_->socket.non_blocking(true, socket_error);
+    implementation_->socket.set_option(boost::asio::socket_base::receive_buffer_size(receive_buffer_bytes), socket_error);
+    if (!socket_error)
+    {
+        implementation_->socket.non_blocking(true, socket_error);
+    }
     if (socket_error || stun.empty())
     {
         error = socket_error ? socket_error.message() : "STUN request construction failed";

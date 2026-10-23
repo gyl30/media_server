@@ -156,22 +156,13 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     }
 
     const auto self = shared_from_this();
-    state.rtcp_transport->set_write_callback(
-        [self, track_index](boost::system::error_code error, std::size_t)
+    state.rtcp_transport->set_error_callback(
+        [self, track_index](boost::system::error_code)
         {
-            if (!self->track_states_[track_index].local_port)
+            if (self->track_states_[track_index].local_port && self->shutdown_handler_)
             {
-                return;
+                self->shutdown_handler_();
             }
-            if (error)
-            {
-                if (self->shutdown_handler_)
-                {
-                    self->shutdown_handler_();
-                }
-                return;
-            }
-            self->send_rtcp(track_index + 1U);
         });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtp(track_index, yield); });
     worker_.spawn([self, track_index](boost::asio::yield_context yield) { self->run_rtcp(track_index, yield); });
@@ -216,25 +207,19 @@ void rtsp_publish_udp_session::schedule_rtcp()
                 return;
             }
 
-            self->send_rtcp(0);
+            self->send_rtcp();
         });
 }
 
-void rtsp_publish_udp_session::send_rtcp(std::size_t track_index)
+void rtsp_publish_udp_session::send_rtcp()
 {
     std::array<std::uint8_t, 1500> buffer{};
-    for (std::size_t index = track_index; index < track_states_.size(); ++index)
+    for (std::size_t index = 0; index < track_states_.size(); ++index)
     {
-        auto& state = track_states_[index];
         const auto bytes = media_.generate_rtcp(index, buffer);
-        if (bytes <= 0)
+        if (bytes > 0)
         {
-            continue;
-        }
-
-        if (state.rtcp_transport->write(std::span<const std::uint8_t>{buffer.data(), static_cast<std::size_t>(bytes)}, state.rtcp_endpoint))
-        {
-            return;
+            track_states_[index].rtcp_transport->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, track_states_[index].rtcp_endpoint);
         }
     }
 

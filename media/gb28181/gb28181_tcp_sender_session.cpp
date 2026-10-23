@@ -83,7 +83,7 @@ void gb28181_tcp_sender_session::run(std::optional<boost::asio::ip::tcp::endpoin
             }
         });
     sender_ = std::make_shared<gb28181_rtp_sender>(
-        worker_, stream_, [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); }, [self]() { self->shutdown(); });
+        worker_, stream_, [self](std::span<const std::uint8_t> packet) { self->send_packet(packet); }, [self]() { self->shutdown(); });
     if (!sender_->startup(payload_type, ssrc))
     {
         shutdown();
@@ -115,7 +115,7 @@ void gb28181_tcp_sender_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-void gb28181_tcp_sender_session::send_packet(std::vector<std::uint8_t> packet)
+void gb28181_tcp_sender_session::send_packet(std::span<const std::uint8_t> packet)
 {
     if (!stream_)
     {

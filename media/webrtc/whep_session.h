@@ -51,8 +51,8 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     bool startup_media();
     int send_rtp(std::span<const std::uint8_t> packet);
     int send_rtcp(std::span<const std::uint8_t> packet);
-    void send_udp(std::vector<std::uint8_t> packet);
-    void send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
+    void send_udp(std::span<const std::uint8_t> packet);
+    void send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
     void startup_establishment_timeout();

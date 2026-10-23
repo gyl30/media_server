@@ -74,35 +74,17 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     }
 
     const auto self = shared_from_this();
-    rtp_transport_->set_write_callback(
-        [self](boost::system::error_code error, std::size_t)
+    const auto handle_error = [self](boost::system::error_code)
+    {
+        if (self->stream_)
         {
-            if (!error)
-            {
-                return;
-            }
-            if (!self->stream_)
-            {
-                return;
-            }
             self->shutdown();
-        });
-    rtcp_transport_->set_write_callback(
-        [self](boost::system::error_code error, std::size_t)
-        {
-            if (!self->stream_)
-            {
-                return;
-            }
-            if (error)
-            {
-                self->shutdown();
-                return;
-            }
-            self->schedule_rtcp();
-        });
+        }
+    };
+    rtp_transport_->set_error_callback(handle_error);
+    rtcp_transport_->set_error_callback(handle_error);
     sender_ = std::make_shared<gb28181_rtp_sender>(
-        worker_, stream_, [self](std::vector<std::uint8_t> packet) { self->send_packet(std::move(packet)); }, [self]() { self->shutdown(); });
+        worker_, stream_, [self](std::span<const std::uint8_t> packet) { self->send_packet(packet); }, [self]() { self->shutdown(); });
     if (!sender_->startup(payload_type, ssrc))
     {
         return false;
@@ -140,33 +122,26 @@ void gb28181_udp_sender_session::schedule_rtcp()
 
             std::array<std::uint8_t, 1500> buffer{};
             const auto bytes = rtp_rtcp_report(self->rtcp_sender_, buffer.data(), static_cast<int>(buffer.size()));
-            if (bytes <= 0 || bytes > static_cast<int>(buffer.size()))
+            if (bytes > 0 && bytes <= static_cast<int>(buffer.size()))
             {
-                self->schedule_rtcp();
-                return;
+                self->rtcp_transport_->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, *self->remote_rtcp_endpoint_);
             }
-
-            std::vector<std::uint8_t> packet(buffer.begin(), buffer.begin() + bytes);
-            if (!self->rtcp_transport_->write(std::move(packet), *self->remote_rtcp_endpoint_))
-            {
-                self->schedule_rtcp();
-            }
+            self->schedule_rtcp();
         });
 }
 
-void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
+void gb28181_udp_sender_session::send_packet(std::span<const std::uint8_t> packet)
 {
     if (!stream_)
     {
         return;
     }
-    const std::span<const std::uint8_t> packet_data{packet};
-    if (!rtp_transport_->write(std::move(packet), remote_rtp_endpoint_))
+    if (!rtp_transport_->write(packet, remote_rtp_endpoint_))
     {
         spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);
         return;
     }
-    if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet_data.data(), static_cast<int>(packet_data.size())) != 0)
+    if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet.data(), static_cast<int>(packet.size())) != 0)
     {
         shutdown();
         return;

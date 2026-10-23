@@ -23,7 +23,7 @@ namespace media_server
 class udp_transport final : public std::enable_shared_from_this<udp_transport>
 {
    public:
-    using write_callback = std::function<void(boost::system::error_code, std::size_t)>;
+    using error_callback = std::function<void(boost::system::error_code)>;
 
     explicit udp_transport(boost::asio::io_context& owner);
 
@@ -34,9 +34,8 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
                      boost::asio::ip::udp::endpoint& endpoint,
                      boost::asio::yield_context& yield,
                      boost::system::error_code& error);
-    void set_write_callback(write_callback callback);
-    bool write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
-    bool write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint);
+    void set_error_callback(error_callback callback);
+    bool write(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
     void shutdown();
 
    private:
@@ -47,12 +46,12 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
     };
 
     void start_write();
-    void on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error, std::size_t bytes);
+    void on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error);
 
     boost::asio::ip::udp::socket socket_;
     std::deque<std::shared_ptr<pending_datagram>> write_queue_;
     std::size_t queued_write_bytes_{};
-    std::shared_ptr<write_callback> write_callback_;
+    error_callback error_callback_;
 };
 
 }    // namespace media_server

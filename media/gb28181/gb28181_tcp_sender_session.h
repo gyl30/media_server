@@ -1,9 +1,9 @@
 #ifndef MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 #define MEDIA_GB28181_GB28181_TCP_SENDER_SESSION_H
 
+#include <span>
 #include <memory>
 #include <string>
-#include <vector>
 #include <cstdint>
 #include <optional>
 
@@ -38,7 +38,7 @@ class gb28181_tcp_sender_session final : public session, public std::enable_shar
              std::uint32_t ssrc,
              boost::asio::yield_context yield);
     void run_read(boost::asio::yield_context yield);
-    void send_packet(std::vector<std::uint8_t> packet);
+    void send_packet(std::span<const std::uint8_t> packet);
 
    private:
     void safe_shutdown();

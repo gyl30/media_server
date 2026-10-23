@@ -56,20 +56,8 @@ bool gb28181_audio_sender::startup(boost::asio::ip::address bind_address)
     {
         return false;
     }
-    rtp_transport_->set_write_callback([self](boost::system::error_code result, std::size_t) { self->handle_error(result); });
-    rtcp_transport_->set_write_callback(
-        [self](boost::system::error_code result, std::size_t)
-        {
-            if (result)
-            {
-                self->handle_error(result);
-                return;
-            }
-            if (self->rtcp_sender_)
-            {
-                self->schedule_rtcp();
-            }
-        });
+    rtp_transport_->set_error_callback([self](boost::system::error_code result) { self->handle_error(result); });
+    rtcp_transport_->set_error_callback([self](boost::system::error_code result) { self->handle_error(result); });
     return true;
 }
 
@@ -206,10 +194,11 @@ void gb28181_audio_sender::schedule_rtcp()
             }
             std::array<std::uint8_t, 1500> buffer{};
             const auto bytes = rtp_rtcp_report(self->rtcp_sender_, buffer.data(), static_cast<int>(buffer.size()));
-            if (bytes <= 0 || !self->rtcp_transport_->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, self->remote_rtcp_endpoint_))
+            if (bytes > 0)
             {
-                self->schedule_rtcp();
+                self->rtcp_transport_->write(std::span{buffer.data(), static_cast<std::size_t>(bytes)}, self->remote_rtcp_endpoint_);
             }
+            self->schedule_rtcp();
         });
 }
 

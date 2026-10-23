@@ -328,10 +328,10 @@ bool whep_pull_session::negotiate(boost::asio::yield_context yield)
         return false;
     }
     const auto self = shared_from_this();
-    udp_transport_->set_write_callback(
-        [self](boost::system::error_code write_error, std::size_t)
+    udp_transport_->set_error_callback(
+        [self](boost::system::error_code write_error)
         {
-            if (write_error && self->local_port_ != 0)
+            if (self->local_port_ != 0)
             {
                 spdlog::debug("whep pull udp send failed {} {}", self->config_.stream_id, write_error.message());
                 self->shutdown();
@@ -431,7 +431,7 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
                                              {
                                                  if (self->selected_)
                                                  {
-                                                     self->send_udp(std::vector<std::uint8_t>(datagram.begin(), datagram.end()), *self->selected_);
+                                                     self->send_udp(datagram, *self->selected_);
                                                  }
                                              });
         if (!dtls_->startup(*certificate_, answer_->setup == "passive" ? dtls_role::client : dtls_role::server))
@@ -451,7 +451,7 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
     }
     auto response = request->ice_controlling ? make_stun_binding_error_response(*request, 487, "Role Conflict", {}, ice_pwd_)
                                              : make_stun_binding_success_response(*request, endpoint, ice_pwd_);
-    send_udp(std::move(response), endpoint);
+    send_udp(response, endpoint);
 }
 
 void whep_pull_session::handle_dtls(std::span<const std::uint8_t> packet)
@@ -579,13 +579,13 @@ void whep_pull_session::schedule_dtls_timeout()
         });
 }
 
-void whep_pull_session::send_udp(std::vector<std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
+void whep_pull_session::send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (local_port_ == 0 || packet.empty())
     {
         return;
     }
-    if (!udp_transport_->write(std::move(packet), endpoint))
+    if (!udp_transport_->write(packet, endpoint))
     {
         spdlog::warn("whep pull udp write queue full {}", config_.stream_id);
     }

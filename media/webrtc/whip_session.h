@@ -43,8 +43,8 @@ class whip_session final : public session, public std::enable_shared_from_this<w
     void handle_dtls(std::span<const std::uint8_t> packet);
     void handle_srtp(std::span<const std::uint8_t> packet);
     bool startup_media();
-    void send_udp(std::vector<std::uint8_t> packet);
-    void send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint);
+    void send_udp(std::span<const std::uint8_t> packet);
+    void send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     void schedule_dtls_timeout();
     void handle_dtls_timeout();
     void startup_establishment_timeout();

@@ -1,3 +1,4 @@
+#include <boost/asio/post.hpp>
 #include <boost/asio/error.hpp>
 #include <boost/asio/buffer.hpp>
 
@@ -23,6 +24,10 @@ void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t
 
     const boost::asio::ip::udp::endpoint endpoint{bind_address, port};
     socket_.open(endpoint.protocol(), error);
+    if (!error)
+    {
+        socket_.non_blocking(true, error);
+    }
     if (!error)
     {
         socket_.bind(endpoint, error);
@@ -53,21 +58,33 @@ std::size_t udp_transport::read(std::span<std::uint8_t> buffer,
     return socket_.async_receive_from(boost::asio::buffer(buffer), endpoint, yield[error]);
 }
 
-void udp_transport::set_write_callback(write_callback callback)
-{
-    write_callback_ = callback ? std::make_shared<write_callback>(std::move(callback)) : nullptr;
-}
+void udp_transport::set_error_callback(error_callback callback) { error_callback_ = std::move(callback); }
 
-bool udp_transport::write(std::span<const std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint)
-{
-    return write(std::vector<std::uint8_t>(data.begin(), data.end()), std::move(endpoint));
-}
-
-bool udp_transport::write(std::vector<std::uint8_t> data, boost::asio::ip::udp::endpoint endpoint)
+bool udp_transport::write(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (!socket_.is_open())
     {
         return false;
+    }
+    if (write_queue_.empty())
+    {
+        boost::system::error_code error;
+        socket_.send_to(boost::asio::buffer(data.data(), data.size()), endpoint, 0, error);
+        if (error != boost::asio::error::would_block)
+        {
+            if (error)
+            {
+                boost::asio::post(socket_.get_executor(),
+                                  [self = shared_from_this(), error]()
+                                  {
+                                      if (const auto callback = self->error_callback_)
+                                      {
+                                          callback(error);
+                                      }
+                                  });
+            }
+            return true;
+        }
     }
     if (data.size() > write_high_water_mark || queued_write_bytes_ > write_high_water_mark - data.size())
     {
@@ -76,7 +93,7 @@ bool udp_transport::write(std::vector<std::uint8_t> data, boost::asio::ip::udp::
 
     const bool start = write_queue_.empty();
     queued_write_bytes_ += data.size();
-    write_queue_.push_back(std::make_shared<pending_datagram>(pending_datagram{std::move(data), std::move(endpoint)}));
+    write_queue_.push_back(std::make_shared<pending_datagram>(pending_datagram{{data.begin(), data.end()}, endpoint}));
     if (start)
     {
         start_write();
@@ -90,23 +107,21 @@ void udp_transport::start_write()
     const auto self = shared_from_this();
     socket_.async_send_to(boost::asio::buffer(datagram->packet),
                           datagram->endpoint,
-                          [self, datagram](boost::system::error_code error, std::size_t bytes) { self->on_write(datagram, error, bytes); });
+                          [self, datagram](boost::system::error_code error, std::size_t) { self->on_write(datagram, error); });
 }
 
-void udp_transport::on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error, std::size_t bytes)
+void udp_transport::on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error)
 {
     if (!socket_.is_open() || write_queue_.empty())
     {
         return;
     }
-
-    const auto callback = write_callback_;
-    if (callback)
+    if (error)
     {
-        (*callback)(error, bytes);
-    }
-    if (error || !socket_.is_open() || write_queue_.empty())
-    {
+        if (const auto callback = error_callback_)
+        {
+            callback(error);
+        }
         return;
     }
 
@@ -122,7 +137,7 @@ void udp_transport::shutdown()
 {
     write_queue_.clear();
     queued_write_bytes_ = 0;
-    write_callback_ = {};
+    error_callback_ = {};
     boost::system::error_code error;
     socket_.cancel(error);
     socket_.close(error);

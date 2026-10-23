@@ -1,9 +1,9 @@
 #ifndef MEDIA_GB28181_GB28181_RTP_SENDER_H
 #define MEDIA_GB28181_GB28181_RTP_SENDER_H
 
+#include <span>
 #include <array>
 #include <memory>
-#include <vector>
 #include <cstdint>
 #include <functional>
 
@@ -17,7 +17,7 @@ class worker_context;
 class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_from_this<gb28181_rtp_sender>
 {
    public:
-    using packet_handler = std::function<void(std::vector<std::uint8_t>)>;
+    using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
     using end_handler = std::function<void()>;
 
     gb28181_rtp_sender(worker_context& worker, std::shared_ptr<media_stream> stream, packet_handler on_packet, end_handler handle_source_end);

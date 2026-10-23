@@ -59,7 +59,7 @@ class whep_pull_session final : public session, public std::enable_shared_from_t
     void send_checks();
     void schedule_checks();
     void schedule_dtls_timeout();
-    void send_udp(std::vector<std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
+    void send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint);
     bool aborted(const boost::asio::yield_context& yield) const;
 
    private:

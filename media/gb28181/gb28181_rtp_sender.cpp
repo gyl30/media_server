@@ -139,8 +139,7 @@ void gb28181_rtp_sender::free_packet(void*, void*) {}
 int gb28181_rtp_sender::packet_callback(void* param, const void* data, int bytes, std::uint32_t, int)
 {
     auto& self = *static_cast<gb28181_rtp_sender*>(param);
-    const auto* begin = static_cast<const std::uint8_t*>(data);
-    self.packet_handler_(std::vector<std::uint8_t>(begin, begin + bytes));
+    self.packet_handler_(std::span{static_cast<const std::uint8_t*>(data), static_cast<std::size_t>(bytes)});
     return 0;
 }
 

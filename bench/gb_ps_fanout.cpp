@@ -86,7 +86,7 @@ int main(int argc, char** argv)
         auto sender = std::make_shared<gb28181_rtp_sender>(
             worker,
             source,
-            [&, i, ssrc](std::vector<std::uint8_t> packet)
+            [&, i, ssrc](std::span<const std::uint8_t> packet)
             {
                 rtp_packet_t decoded{};
                 if (rtp_packet_deserialize(&decoded, packet.data(), static_cast<int>(packet.size())) != 0 || decoded.rtp.ssrc != ssrc)

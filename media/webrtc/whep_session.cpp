@@ -45,13 +45,9 @@ whep_session::whep_session(worker_context& worker,
 bool whep_session::startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate)
 {
     const auto self = shared_from_this();
-    udp_transport_->set_write_callback(
-        [self](boost::system::error_code error, std::size_t)
+    udp_transport_->set_error_callback(
+        [self](boost::system::error_code error)
         {
-            if (!error)
-            {
-                return;
-            }
             if (self->local_port_ == 0)
             {
                 return;
@@ -61,9 +57,7 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer, const webr
         });
 
     remote_ice_ufrag_ = transport_offer.ice_ufrag;
-    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint,
-                                             [self](std::span<const std::uint8_t> packet)
-                                             { self->send_udp(std::vector<std::uint8_t>(packet.begin(), packet.end())); });
+    dtls_ = std::make_unique<dtls_transport>(transport_offer.fingerprint, [self](std::span<const std::uint8_t> packet) { self->send_udp(packet); });
     if (!dtls_->startup(certificate, dtls_role::server))
     {
         spdlog::error("webrtc dtls transport startup failed session {}", id_);
@@ -281,7 +275,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
                       remote_address,
                       remote_port,
                       request->unknown_required_attributes.size());
-        send_udp(std::move(response), endpoint);
+        send_udp(response, endpoint);
         return;
     }
 
@@ -299,7 +293,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
             return;
         }
         spdlog::debug("webrtc stun role conflict session {} remote {} {}", id_, remote_address, remote_port);
-        send_udp(std::move(response), endpoint);
+        send_udp(response, endpoint);
         return;
     }
     if (!request->ice_controlling)
@@ -333,7 +327,7 @@ void whep_session::handle_stun(std::span<const std::uint8_t> packet, const boost
     }
 
     spdlog::trace("webrtc stun response send session {} remote {} {} size {}", id_, remote_address, remote_port, response.size());
-    send_udp(std::move(response), endpoint);
+    send_udp(response, endpoint);
 }
 
 void whep_session::handle_dtls(std::span<const std::uint8_t> packet)
@@ -387,7 +381,7 @@ int whep_session::send_rtp(std::span<const std::uint8_t> packet)
         return -1;
     }
     spdlog::trace("webrtc rtp protected session {} protected_size {}", id_, protected_packet->size());
-    send_udp(std::move(*protected_packet));
+    send_udp(*protected_packet);
     return 0;
 }
 
@@ -401,26 +395,26 @@ int whep_session::send_rtcp(std::span<const std::uint8_t> packet)
         return -1;
     }
     spdlog::trace("webrtc rtcp protected session {} protected_size {}", id_, protected_packet->size());
-    send_udp(std::move(*protected_packet));
+    send_udp(*protected_packet);
     return 0;
 }
 
-void whep_session::send_udp(std::vector<std::uint8_t> packet)
+void whep_session::send_udp(std::span<const std::uint8_t> packet)
 {
     if (!remote_endpoint_.has_value())
     {
         return;
     }
-    send_udp(std::move(packet), *remote_endpoint_);
+    send_udp(packet, *remote_endpoint_);
 }
 
-void whep_session::send_udp(std::vector<std::uint8_t> packet, boost::asio::ip::udp::endpoint endpoint)
+void whep_session::send_udp(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (local_port_ == 0 || packet.empty())
     {
         return;
     }
-    if (!udp_transport_->write(std::move(packet), std::move(endpoint)))
+    if (!udp_transport_->write(packet, endpoint))
     {
         spdlog::warn("whep udp write queue full session {}", id_);
     }
