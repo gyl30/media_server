@@ -56,7 +56,8 @@ static const char* s_zone[] = {
 const char* rfc822_datetime_format(time_t time, rfc822_datetime_t datetime)
 {
 	int r;
-	struct tm *tm = gmtime(&time);
+	struct tm result;
+	struct tm *tm = gmtime_r(&time, &result);
 	assert(0 <= tm->tm_wday && tm->tm_wday < 7);
 	assert(0 <= tm->tm_mon && tm->tm_mon < 12);
 	assert(sizeof(rfc822_datetime_t) >= 30);
