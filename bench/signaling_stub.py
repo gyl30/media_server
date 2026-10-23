@@ -5,6 +5,10 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
+class StubServer(ThreadingHTTPServer):
+    request_queue_size = 4096
+
+
 class SignalingStub:
     def __init__(self):
         self.lock = threading.Lock()
@@ -43,7 +47,7 @@ class SignalingStub:
             def log_message(self, *_):
                 pass
 
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = StubServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     @property

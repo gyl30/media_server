@@ -89,12 +89,13 @@ def proc_snapshot(pid, netns_queues=None, sockets=True):
                 queues_by_family[f"{family}_rx_queue_bytes"] += rx
                 queues_by_family["udp_drops"] += drops
     snmp = {}
-    lines = Path(f"/proc/{pid}/net/snmp").read_text().splitlines()
-    for names, values in zip(lines[::2], lines[1::2]):
-        prefix = names.split()[0].rstrip(":")
-        for key, value in zip(names.split()[1:], values.split()[1:]):
-            if key in {"RetransSegs", "InErrors", "RcvbufErrors", "SndbufErrors"}:
-                snmp[prefix + key] = int(value)
+    for table in ("snmp", "netstat"):
+        lines = Path(f"/proc/{pid}/net/{table}").read_text().splitlines()
+        for names, values in zip(lines[::2], lines[1::2]):
+            prefix = names.split()[0].rstrip(":")
+            for key, value in zip(names.split()[1:], values.split()[1:]):
+                if key in {"RetransSegs", "InErrors", "RcvbufErrors", "SndbufErrors", "ListenOverflows", "ListenDrops"}:
+                    snmp[prefix + key] = int(value)
     status = proc_status(pid)
     if "VmRSS" not in status:
         raise ProcessLookupError(pid)

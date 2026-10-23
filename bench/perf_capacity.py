@@ -7,6 +7,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from perf_run import OUTPUTS
@@ -58,6 +59,16 @@ def search(execute, start, step, granularity, maximum, healthy_repeats=3, failed
                                            ((healthy * 125 + 9999) // 10000) * 100, ((healthy * 150 + 9999) // 10000) * 100]}
 
 
+def reap_group(group):
+    for _ in range(60):
+        try:
+            os.killpg(group, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(1)
+    os.killpg(group, signal.SIGKILL)
+
+
 def run_round(command, directory, timeout):
     """Keep an explicit, inconclusive record even if perf_run cannot write result.json."""
     log = directory.parent / f"{directory.name}.runner.log"
@@ -89,6 +100,7 @@ def run_round(command, directory, timeout):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid, signal.SIGKILL)
                     exit_code = process.wait()
+            reap_group(process.pid)
     result_file = directory / "result.json"
     result = None
     if result_file.exists():

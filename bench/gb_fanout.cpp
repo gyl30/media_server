@@ -117,7 +117,11 @@ int main(int argc, char** argv)
         {
             for (const auto& sender : senders)
             {
-                deleted += co_await media_server::bench::gb_client::delete_sender(host, port, sender) ? 1U : 0U;
+                if (!co_await media_server::bench::gb_client::delete_sender(host, port, sender))
+                {
+                    break;
+                }
+                ++deleted;
             }
         },
         boost::asio::detached);

@@ -700,6 +700,9 @@ def run(args):
                 except (FileNotFoundError, ProcessLookupError):
                     final[name] = {"exited": True, "monotonic_ns": time.monotonic_ns()}
             result["samples"].append(final)
+            if "namespace_snmp" in final.get("server", {}):
+                result["namespace_tcp_delta"] = {key: value - result["baseline"]["namespace_snmp"].get(key, value)
+                                                 for key, value in final["server"]["namespace_snmp"].items()}
             for protocol, process in decode_probes:
                 try:
                     process.wait(timeout=60)
@@ -867,24 +870,19 @@ def run(args):
         for _, process, _ in clients:
             stop_process(process)
         if owned and server is not None and server.poll() is None:
-            for stream in source_ids:
+            deletions = ([(control, "/receivers/delete", {"stream_id": stream}) for stream in source_ids] +
+                         [(control, "/gb28181/sender/delete", sender) for sender in gb_senders] +
+                         [(base, "/gb28181/sender/delete", {"stream_id": sender["stream_id"], "sender_id": sender["sender_id"]})
+                          for base, sender in upstream_pairs])
+            for base, path, body in deletions:
                 try:
-                    request(control, "/receivers/delete", {"stream_id": stream}, control_token)
-                except (OSError, RuntimeError) as error:
+                    request(base, path, body, control_token)
+                except RuntimeError as error:
                     if "HTTP 404" not in str(error):
                         result["cleanup"].setdefault("errors", []).append(str(error))
-            for sender in gb_senders:
-                try:
-                    request(control, "/gb28181/sender/delete", sender, control_token)
-                except (OSError, RuntimeError) as error:
-                    if "HTTP 404" not in str(error):
-                        result["cleanup"].setdefault("errors", []).append(str(error))
-            for base, sender in upstream_pairs:
-                try:
-                    request(base, "/gb28181/sender/delete", {"stream_id": sender["stream_id"], "sender_id": sender["sender_id"]}, control_token)
-                except (OSError, RuntimeError) as error:
-                    if "HTTP 404" not in str(error):
-                        result["cleanup"].setdefault("errors", []).append(str(error))
+                except OSError as error:
+                    result["cleanup"].setdefault("errors", []).append(f"{path}: {error}; remaining deletions skipped")
+                    break
             for process in publishers:
                 stop_process(process)
             time.sleep(0.5)
