@@ -1,5 +1,5 @@
 import { api } from "/api.js";
-import { formatAgo, formatDuration } from "/ui.js";
+import { formatAgo, formatClock, formatDuration } from "/ui.js";
 
 export const store = {
   devices: [],
@@ -114,7 +114,7 @@ function gbStatus(device) {
   }
   return {
     label: "离线", tone: "neutral", group: "offline",
-    detail: device.last_seen ? `最后心跳 ${formatAgo(Date.parse(device.last_seen))}` : "本次运行尚未收到注册",
+    detail: device.last_seen ? `最后心跳 ${formatAgo(Date.parse(device.last_seen))}` : "尚未注册",
   };
 }
 
@@ -124,25 +124,25 @@ export function sourceReady(source) {
 
 export function sourceStatus(source) {
   if (sourceReady(source)) {
-    return { label: "拉流中", tone: "success", group: "online", detail: "媒体源已建立" };
+    return { label: "拉流中", tone: "success", group: "online", detail: "" };
   }
   if (source.session?.state === "created") {
     return { label: "等待媒体", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
   }
   if (source.session) {
-    return { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" };
+    return { label: "正在连接", tone: "pending", group: "online", detail: "" };
   }
   if (source.desired_state === "running") {
-    return { label: "连接失败或已结束", tone: "danger", group: "attention", detail: "上游不可达、认证失败或已断开，可修改地址或重试连接" };
+    return { label: "连接中断", tone: "danger", group: "attention", detail: "上游不可达、认证失败或已断开" };
   }
-  return { label: "已停止", tone: "neutral", group: "offline", detail: "拉流已手动停止" };
+  return { label: "已停止", tone: "neutral", group: "offline", detail: "" };
 }
 
 const PUSH_STATUS = {
   publishing: { label: "推流中", tone: "success", group: "online" },
   pending: { label: "待接入", tone: "pending", group: "offline" },
-  used: { label: "地址已使用", tone: "neutral", group: "offline", detail: "当前没有推流，重新生成地址后可再次接入" },
-  expired: { label: "地址已过期", tone: "warn", group: "attention", detail: "重新生成地址后可接入" },
+  used: { label: "未推流", tone: "neutral", group: "offline", detail: "地址已使用，重新生成后可再次接入" },
+  expired: { label: "地址已过期", tone: "warn", group: "attention", detail: "重新生成后可接入" },
 };
 
 export function pushStatus(device) {
@@ -157,10 +157,6 @@ export function pushStatus(device) {
   return status;
 }
 
-export function formatClock(value) {
-  return new Date(value).toLocaleTimeString("zh-CN", { hour12: false });
-}
-
 export function pushURLs(device) {
   return [["rtmp", "RTMP", device.rtmp_url], ["rtsp", "RTSP", device.rtsp_url], ["whip", "WHIP", device.whip_url]]
     .filter(([value]) => value === device.protocol);
@@ -169,19 +165,19 @@ export function pushURLs(device) {
 export function unifiedDevices() {
   return [
     ...store.devices.map(device => ({
-      key: `gb:${device.device_id}`, kind: "gb", id: device.device_id, name: device.name, protocol: "GB28181", filter: "gb",
-      mode: "SIP 注册", endpoint: device.device_id, raw: device, status: gbStatus(device), channels: channelsOf(device.device_id),
+      key: `gb:${device.device_id}`, kind: "gb", id: device.device_id, name: device.name, protocol: "GB28181", type: "GB28181",
+      endpoint: device.device_id, raw: device, status: gbStatus(device), channels: channelsOf(device.device_id),
       channelError: store.channels.get(device.device_id)?.error || null,
     })),
     ...store.sources.map(source => ({
       key: `rtsp:${source.source_id}`, kind: "rtsp", id: source.source_id, name: source.stream_name,
-      protocol: PULL_PROTOCOLS[pullProtocol(source.url)], filter: `${pullProtocol(source.url)}-pull`,
-      mode: "拉流", endpoint: source.url, raw: source, status: sourceStatus(source),
+      protocol: PULL_PROTOCOLS[pullProtocol(source.url)], type: `${PULL_PROTOCOLS[pullProtocol(source.url)]} 拉流`,
+      endpoint: source.url, raw: source, status: sourceStatus(source),
     })),
     ...store.pushDevices.map(device => ({
       key: `push:${device.device_id}`, kind: "push", id: device.device_id, name: device.name,
-      protocol: PUSH_PROTOCOLS[device.protocol], filter: `${device.protocol}-push`,
-      mode: "推流", endpoint: pushURLs(device)[0]?.[2], raw: device, status: pushStatus(device),
+      protocol: PUSH_PROTOCOLS[device.protocol], type: `${PUSH_PROTOCOLS[device.protocol]} 推流`,
+      endpoint: pushURLs(device)[0]?.[2], raw: device, status: pushStatus(device),
     })),
   ].sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }
@@ -192,8 +188,8 @@ export function runningStreams() {
     for (const channel of channelsOf(device.device_id) || []) {
       if (channel.live?.media_ready) {
         streams.push({
-          kind: "gb", protocol: "GB28181", streamID: channel.live.live_id, deviceID: device.device_id, name: `${device.name} · ${channel.name || channel.channel_id}`,
-          detail: channel.channel_id, target: { device_id: device.device_id, channel_id: channel.channel_id, live_id: channel.live.live_id },
+          kind: "gb", protocol: "GB28181", type: "GB28181", streamID: channel.live.live_id, deviceID: device.device_id, name: channel.name || channel.channel_id,
+          owner: device.name, target: { device_id: device.device_id, channel_id: channel.channel_id, live_id: channel.live.live_id },
         });
       }
     }
@@ -201,12 +197,12 @@ export function runningStreams() {
   for (const source of store.sources) {
     if (sourceReady(source)) {
       const protocol = PULL_PROTOCOLS[pullProtocol(source.url)];
-      streams.push({ kind: "rtsp", protocol, streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, detail: `${protocol} 拉流`, target: { source_id: source.source_id } });
+      streams.push({ kind: "rtsp", protocol, type: `${protocol} 拉流`, streamID: source.session.stream_id, deviceID: source.source_id, name: source.stream_name, target: { source_id: source.source_id } });
     }
   }
   for (const device of store.pushDevices) {
     if (device.media_ready) {
-      streams.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol] || "推流", streamID: device.token, deviceID: device.device_id, name: device.name, detail: "推流", target: { push_device_id: device.device_id } });
+      streams.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol], type: `${PUSH_PROTOCOLS[device.protocol]} 推流`, streamID: device.token, deviceID: device.device_id, name: device.name, target: { push_device_id: device.device_id } });
     }
   }
   return streams;

@@ -30,18 +30,14 @@ export function icon(name, size = "") {
   return svg;
 }
 
-export function badge(label, tone = "neutral", dot = true) {
-  return h("span", { class: `badge ${tone}` }, dot ? h("span", { class: "dot" }) : null, label);
+export function badge(label, tone = "neutral") {
+  return h("span", { class: `badge ${tone}` }, label);
 }
 
-export function protoTag(protocol) {
-  return h("span", { class: "proto" }, protocol);
-}
-
-export function emptyState({ icon: glyph = "info", title, text = "", tone = "", action = null }) {
+export function emptyState({ icon: glyph = "", title = "", text = "", tone = "", action = null }) {
   return h("div", { class: `empty${tone ? ` ${tone}` : ""}`, role: "status" },
-    h("span", { class: "glyph" }, icon(glyph, "lg")),
-    h("strong", {}, title),
+    glyph ? icon(glyph, "lg") : null,
+    title ? h("strong", {}, title) : null,
     text ? h("p", {}, text) : null,
     action);
 }
@@ -143,7 +139,7 @@ export function errorMessage(error) {
     whep_create_403: "播放授权已失效，请重新播放", whep_create_400: "浏览器与服务器无法协商音视频编码",
     whep_create_500: "播放服务暂时无法创建会话，请稍后重试", source_not_running: "媒体流未运行",
     source_start_failed: "无法开始取流，请稍后重试", source_stop_failed: "暂时无法停止取流，请稍后重试",
-    source_delete_failed: "暂时无法删除 RTSP 源，请稍后重试",
+    source_delete_failed: "暂时无法删除拉流设备，请稍后重试",
     not_found: "资源不存在或已被删除", operation_failed: "操作失败，请稍后重试",
     push_device_not_found: "推流设备不存在", push_stop_failed: "暂时无法停止推流，请稍后重试",
     push_delete_failed: "暂时无法删除推流设备，请稍后重试",
@@ -211,15 +207,14 @@ export function replaceKeepingFocus(container, nodes) {
 }
 
 export function copyButton(value, label) {
-  const button = h("button", { type: "button", class: "btn xs copy-btn", "aria-label": `复制${label}` }, icon("copy", "sm"), "复制");
+  const button = h("button", { type: "button", class: "btn sm", "aria-label": `复制${label}` }, icon("copy", "sm"), "复制");
   button.addEventListener("click", async () => {
-    const ok = await copyText(value);
-    toast(ok ? `已复制${label}` : "复制失败，请手动选中地址复制", ok ? "success" : "danger");
-    if (ok) {
-      button.classList.add("copied");
-      button.replaceChildren(icon("check", "sm"), "已复制");
-      window.setTimeout(() => { button.classList.remove("copied"); button.replaceChildren(icon("copy", "sm"), "复制"); }, 1600);
+    if (!await copyText(value)) {
+      toast("复制失败，请手动选择地址复制", "danger");
+      return;
     }
+    button.replaceChildren(icon("check", "sm"), "已复制");
+    window.setTimeout(() => button.replaceChildren(icon("copy", "sm"), "复制"), 1600);
   });
   return button;
 }
