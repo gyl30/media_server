@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// 推流协议只决定界面展示哪一种接入地址；发布凭据本身不绑定协议。
 type pushProtocol string
 
 const (
@@ -17,10 +16,8 @@ const (
 	pushProtocolWHIP pushProtocol = "whip"
 )
 
-// 推流接入凭据（即接入地址中的 token）从确认添加或重新生成时起 5 分钟内可首次使用；播放 token 的有效期另行配置。
 const pushCredentialTTL = 5 * time.Minute
 
-// 数据库以毫秒保存时间，截止时间在生成时即按毫秒截断，返回值与重新读取的一致。
 func pushCredentialDeadline(now time.Time) time.Time {
 	return now.Add(pushCredentialTTL).Truncate(time.Millisecond)
 }
@@ -33,7 +30,6 @@ func validPushProtocol(protocol pushProtocol) bool {
 	return false
 }
 
-// usedAt 非零表示凭据已被一次发布认证消费。
 type pushDevice struct {
 	deviceID   string
 	name       string
@@ -103,7 +99,6 @@ func (s *sourceStore) listPushDevices(ctx context.Context) ([]pushDevice, error)
 	return devices, rows.Err()
 }
 
-// protocol 为 nil 时保留原协议。
 func (s *sourceStore) patchPushDevice(ctx context.Context, deviceID, name string, protocol *pushProtocol) error {
 	if strings.TrimSpace(name) == "" || (protocol != nil && !validPushProtocol(*protocol)) {
 		return errInvalidDevice
@@ -119,7 +114,6 @@ func (s *sourceStore) patchPushDevice(ctx context.Context, deviceID, name string
 	return err
 }
 
-// 用新凭据替换旧凭据：旧凭据立即失效，新凭据未使用。
 func (s *sourceStore) renewPushCredential(ctx context.Context, deviceID, credential string, expiresAt time.Time) error {
 	result, err := s.db.ExecContext(ctx, `UPDATE push_devices SET credential = ?, credential_expires_at = ?, credential_used_at = 0 WHERE device_id = ?`,
 		credential, unixMilli(expiresAt), deviceID)
@@ -133,8 +127,6 @@ func (s *sourceStore) renewPushCredential(ctx context.Context, deviceID, credent
 	return err
 }
 
-// 原子消费未使用、未过期的凭据：并发认证只有一次成功，消费事实随数据库持久化。
-// 返回凭据所属设备；凭据不存在、已使用或已过期时返回空。
 func (s *sourceStore) consumePushCredential(ctx context.Context, credential string, now time.Time) (string, error) {
 	var deviceID string
 	err := s.db.QueryRowContext(ctx, `UPDATE push_devices SET credential_used_at = ?

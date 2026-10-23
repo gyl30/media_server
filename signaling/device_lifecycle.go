@@ -10,7 +10,6 @@ type deviceStopSnapshot struct {
 	broadcast *broadcastSession
 }
 
-// Caller holds mu: the fence and session snapshot must precede new play or REGISTER.
 func (s *liveService) beginDeviceStopLocked(deviceID string) deviceStopSnapshot {
 	s.stoppingDevices[deviceID] = struct{}{}
 	stopped := deviceStopSnapshot{broadcast: s.broadcasts[deviceID]}
@@ -71,7 +70,6 @@ func (s *liveService) deleteDevice(ctx context.Context, deviceID string) error {
 	}
 	stopped := s.beginDeviceStopLocked(deviceID)
 	s.mu.Unlock()
-	// HTTP 取消不能提前撤销设备 fence；SIP/媒体清理各自有界，完成后才恢复注册入口。
 	err := s.stopDeviceSessions(context.WithoutCancel(ctx), stopped)
 	s.mu.Lock()
 	defer s.mu.Unlock()

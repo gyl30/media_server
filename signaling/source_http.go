@@ -35,7 +35,6 @@ type sourceResponse struct {
 	Session      *sourceSessionResponse `json:"session,omitempty"`
 }
 
-// media_ready 来自最近一次媒体对账：媒体服务器已为该会话注册媒体源（轨道已确定）。
 type sourceSessionResponse struct {
 	StreamID   string `json:"stream_id"`
 	State      string `json:"state"`
@@ -56,7 +55,6 @@ func (s *infrastructureServer) handleSourceList(writer http.ResponseWriter, requ
 	writeJSON(writer, http.StatusOK, map[string]any{"sources": response})
 }
 
-// 创建即按期望状态 running 自动拉流；拉流失败时配置保留，界面显示连接失败并允许重试。
 func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, request *http.Request) {
 	if !s.beginSourceControl() {
 		writeHTTPError(writer, http.StatusServiceUnavailable, "server_shutdown")
@@ -71,7 +69,6 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 	}
 	username, usernameValid := decodeOptionalString(payload.Username)
 	password, passwordValid := decodeOptionalString(payload.Password)
-	// 用户名密码与协议的组合由 validRTSPSource 按 URL 协议校验（WHEP 的 password 是 Bearer token）。
 	if !usernameValid || !passwordValid {
 		writeHTTPError(writer, http.StatusBadRequest, "invalid_request")
 		return
@@ -96,7 +93,6 @@ func (s *infrastructureServer) handleSourceCreate(writer http.ResponseWriter, re
 	writeJSON(writer, http.StatusCreated, s.makeSourceResponse(source))
 }
 
-// 修改连接参数时，期望运行的源用新配置重新拉流（新的 stream_id，即新的 source generation）。
 func (s *infrastructureServer) handleSourcePatch(writer http.ResponseWriter, request *http.Request) {
 	if !s.beginSourceControl() {
 		writeHTTPError(writer, http.StatusServiceUnavailable, "server_shutdown")
@@ -194,17 +190,14 @@ func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceRespo
 	return response
 }
 
-// pullProtocol 按来源 URL 区分主动拉流协议，不另存协议字段。
 type pullProtocol string
 
 const (
 	pullProtocolRTSP pullProtocol = "rtsp"
 	pullProtocolRTMP pullProtocol = "rtmp"
-	// WHEP 端点是 http:// 地址；媒体服务器的 WHEP 客户端不支持 https。
 	pullProtocolWHEP pullProtocol = "http"
 )
 
-// validPullSourceURL 校验主动拉流来源：rtsp://、rtmp://（需要 app 与流名两级路径）或 WHEP 端点 http://，不内嵌账号密码。
 func validPullSourceURL(value string) bool {
 	parsed, err := url.Parse(value)
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {

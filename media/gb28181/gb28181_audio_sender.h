@@ -24,10 +24,8 @@ class gb28181_audio_sender final : public std::enable_shared_from_this<gb28181_a
     gb28181_audio_sender(worker_context& worker, std::function<void(boost::system::error_code)> on_error);
 
    public:
-    // owner worker 上依次各调用一次；端口先供 SIP 协商使用，同步失败后由调用方 shutdown 清理。
     [[nodiscard]] bool startup(boost::asio::ip::address bind_address);
     [[nodiscard]] bool set_peer(boost::asio::ip::udp::endpoint rtp_endpoint, boost::asio::ip::udp::endpoint rtcp_endpoint, std::uint32_t ssrc);
-    // owner worker 调用；每次为客户端实时采集的 20ms PCMA/8000/mono，不在这里再次定速。
     [[nodiscard]] bool input_audio(std::span<const std::uint8_t> samples);
     [[nodiscard]] std::optional<std::uint16_t> local_port() const noexcept { return local_port_; }
     void shutdown();

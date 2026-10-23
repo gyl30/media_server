@@ -27,7 +27,6 @@ func parseLiveOffer(body []byte) (mediaTarget, []byte, error) {
 			}
 			y = strings.TrimPrefix(line, "y=")
 		case strings.HasPrefix(line, "f="):
-			// GB28181 extension field; pion/sdp does not parse it.
 		case line != "":
 			standard.WriteString(line)
 			standard.WriteString("\r\n")

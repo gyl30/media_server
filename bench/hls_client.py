@@ -231,7 +231,6 @@ async def run_viewer(state, index):
             if last_sequence is None:
                 if init_url:
                     await download(client, init_url, state, index, True)
-                # 新观众从当前尾部开始，历史段不计为实时负载。
                 segments = segments[-1:]
             elif segments[0][0] > last_sequence + 1:
                 raise RuntimeError("segment_gap: viewer fell behind retention")

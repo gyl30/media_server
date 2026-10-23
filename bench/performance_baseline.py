@@ -50,7 +50,6 @@ def main():
             if protocol in ("rtmp", "rtsp", "whep"):
                 command += ["--client-bin", str(args.build_dir / f"{protocol}_fanout")]
             if protocol == "whep":
-                # This baseline uses a 127.0.0.1 server; isolate same-host client UDP binding.
                 command += ["--client-bind-address", "127.0.0.2"]
             (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
             with (output / "runner.log").open("w") as log:

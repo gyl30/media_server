@@ -8,7 +8,7 @@ namespace media_server
 namespace
 {
 constexpr std::size_t write_high_water_mark = 1024U * 1024U;
-}    // namespace
+}
 
 udp_transport::udp_transport(boost::asio::io_context& owner) : socket_(owner) {}
 

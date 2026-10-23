@@ -95,7 +95,6 @@ gb28181_rtp_receive_result gb28181_rtp_receiver::receive_rtp(std::span<const std
     }
 
     rtp_packet_t packet{};
-    // 空载荷包不是媒体：既不进入解复用，也不能让 UDP 会话锁定其来源端点。
     if (rtp_packet_deserialize(&packet, data.data(), static_cast<int>(data.size())) != 0 || packet.rtp.pt != payload_type_ ||
         packet.rtp.ssrc != expected_ssrc_ || packet.payloadlen <= 0)
     {
@@ -142,7 +141,6 @@ int gb28181_rtp_receiver::packet_callback(void* param, avpacket_t* packet)
 void gb28181_rtp_receiver::stream_callback(void* param, int stream, int codecid, const void*, int, int finish)
 {
     auto* self = static_cast<gb28181_rtp_receiver*>(param);
-    // stream < 0 是 ireader 对空 PSM 的完成通知，不携带条目。
     if (stream >= 0)
     {
         self->on_stream(codecid);
@@ -161,7 +159,6 @@ void gb28181_rtp_receiver::on_stream(int codecid)
     {
         if (mpeg_stream_type_audio(codecid) != 0)
         {
-            // 不支持的音频按无音频处理，视频照常输出。
             pending_topology_.unsupported_audio = true;
         }
         else
@@ -247,7 +244,6 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     }
 
     const auto codec = codec_from_avpacket(packet->stream->codecid);
-    // 拓扑未声明受支持音频时，不支持的音频按无音频忽略；已声明受支持音频却出现其他编码仍为致命。
     if (!codec && !audio_codec_ && packet->stream->codecid >= AVCODEC_AUDIO_PCM && packet->stream->codecid < AVCODEC_TEXT_WEBVTT)
     {
         return 0;

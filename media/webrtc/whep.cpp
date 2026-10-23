@@ -170,7 +170,6 @@ create_result create(worker_context& worker,
         session->shutdown();
         return failed(create_error::internal_error);
     }
-    // startup 的 UDP 接收在 async receive 处挂起；登记前不能再 yield。
     const auto& session_id = session->id();
     bool session_id_collision = false;
     {

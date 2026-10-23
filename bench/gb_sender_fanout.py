@@ -490,7 +490,6 @@ async def run(args):
         end_ns = time.monotonic_ns()
         cpu_seconds = time.process_time() - cpu_before
         elapsed = (end_ns - start_ns) / 1e9
-        # 在同一事件循环内固定结束快照，清理流量不计入测量。
         state.bytes_by_ssrc = state.bytes_by_ssrc.copy()
         state.packets_by_ssrc = state.packets_by_ssrc.copy()
         state.sequence_gaps = state.sequence_gaps.copy()

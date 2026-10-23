@@ -26,7 +26,6 @@ struct platform_response
     bool ok() const;
 };
 
-// 所有调用和回调 context 必须属于 client 所在线程。
 class platform_client final : public QObject
 {
    public:

@@ -16,7 +16,6 @@ struct AVCodecContext;
 namespace media_server
 {
 
-// 一次性采集/上传 owner；GUI 线程使用，SDL callback 仅写入有界 PCM 缓冲。
 class talk_session final : public QObject
 {
     Q_OBJECT

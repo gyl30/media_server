@@ -15,7 +15,6 @@
 namespace media_server
 {
 
-// 有限录像的独占原始 PS 通道，不注册实时 media_stream。
 class gb28181_playback_session final : public session, public std::enable_shared_from_this<gb28181_playback_session>
 {
    public:

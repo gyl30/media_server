@@ -100,7 +100,6 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material, d
     spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
 
     auto state = std::make_unique<struct context>();
-    // 本端写密钥用于发送，对端写密钥用于接收；DTLS 客户端写密钥是 client_write。
     const bool server = role == dtls_role::server;
     auto outbound_master_key = server ? make_master_key(keying_material.server_write_key, keying_material.server_write_salt)
                                       : make_master_key(keying_material.client_write_key, keying_material.client_write_salt);

@@ -23,12 +23,9 @@ struct record_snapshot
     QString audio_codec;
     QString error;
     bool saved{};
-    // 实时录制因源结束或网络中断而保存，不是用户停止。
     bool interrupted{};
 };
 
-// 把实时 RTSP 或有限 PS 输入流复制为 Matroska，不解码。先写本次新建的 <目标>.part，
-// 收尾全部成功后改名为目标；取消、写盘失败或有限输入不完整时删除 .part。
 class record_thread final : public QThread
 {
     Q_OBJECT
@@ -37,7 +34,6 @@ class record_thread final : public QThread
     record_thread(QUrl url, QString target, playback_mode mode, QDeadlineTimer finite_deadline = QDeadlineTimer::Forever, QObject* parent = nullptr);
 
    public:
-    // 实时录制停止并保存；有限下载只能取消（requestInterruption）。
     void finish();
     record_snapshot snapshot() const;
 

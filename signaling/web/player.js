@@ -1,13 +1,9 @@
-// 播放器：实时监控的每个画面和设备详情的播放区都是一个播放器。播放器独占自己的 <video>、WHEPPreview 和 DOM 节点，
-// 状态回调只更新本播放器；关闭播放器只释放它的 WHEP 会话，不停止上游点播或拉流。
 import { WHEPPreview } from "/whep.js";
 import { store, deviceHash } from "/store.js";
 import { h, icon, protoTag, errorMessage } from "/ui.js";
 
 export const PLAYER_STATE = { preparing: "正在准备", negotiating: "正在建立 WHEP 连接", streaming: "播放中", stopping: "正在关闭", failed: "播放失败", ended: "已结束" };
 
-// item 来自 devices.js 的 playItem：key、kind、deviceID、protocol、label、target（whep.js 的播放目标）。
-// onUpdate 在 WHEP 状态变化时调用，由使用方决定是否仍需渲染（已关闭的播放器不再渲染）。
 export function createPlayer(item, onUpdate) {
   const player = { ...item, state: "preparing", error: "", gesture: false, streamingAt: 0 };
   player.video = h("video", { autoplay: true, playsinline: true, muted: true });
@@ -35,7 +31,6 @@ export function startPlayer(player) {
   void player.preview.start(player.target, player.label).catch(() => {});
 }
 
-// slot 为画面编号（实时监控）或 null（详情页）；detailLink 控制是否显示"设备详情"入口。
 export function renderPlayer(player, { slot = null, active = false, detailLink = false, onClose }) {
   const stop = handler => event => { event.stopPropagation(); handler(); };
   const failed = player.state === "failed" || player.state === "ended";
@@ -70,7 +65,6 @@ export function renderPlayer(player, { slot = null, active = false, detailLink =
     icon(fullscreen ? "minimize" : "maximize", "sm")));
 }
 
-// 播放目标当前运行的媒体流 ID 及该事实的数据时间；GB 通道取通道缓存自身的请求时刻，而不是列表快照时间。
 function currentStream(target) {
   if (target.source_id) {
     const session = store.sources.find(source => source.source_id === target.source_id)?.session;
@@ -85,7 +79,6 @@ function currentStream(target) {
   return { id: channel?.live?.state === "streaming" ? channel.live.live_id : "", at: cache?.at ?? 0 };
 }
 
-// 开始播放之后取得的数据表明媒体流已结束或换代时结束该播放器，不自动重连。
 export function endIfStreamChanged(player) {
   const session = player.preview.current;
   const stream = currentStream(player.target);

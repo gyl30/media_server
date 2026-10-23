@@ -55,7 +55,6 @@ void hls_segmenter::on_frame(const media_frame& frame)
     }
     const auto elapsed_ns = frame.pts_ns - *segment_start_pts_ns_;
     const auto target_ns = static_cast<std::int64_t>(hls::target_duration_seconds * 1'000'000'000.0);
-    // 有视频时只在关键帧切片；纯音频流任意帧都可以作为分片起点。
     const bool segment_boundary = (!has_video_ || (track.kind == media_kind::video && frame.key_frame)) && elapsed_ns >= target_ns;
     if (segment_boundary && !current_segment_.empty())
     {
@@ -111,7 +110,6 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     bool has_video = false;
     for (const auto& track : source->tracks())
     {
-        // MPEG-TS 不承载的轨道（如 Opus）只跳过该轨，其余轨道照常输出。
         if (track.codec == codec_id::opus)
         {
             spdlog::warn("hls skip unsupported track {} codec {}", track.id, to_string(track.codec));

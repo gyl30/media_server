@@ -274,7 +274,6 @@ def run(args):
         return f"http://{host}:{ports[2]}/play/{protocol}/{path}" + ("/index.m3u8" if protocol == "hls" else "")
 
     def probe(source, name, stub, host=None, ports=None):
-        # 真实媒体探针，授权与启动开销全部处于稳态窗口之外。
         source_group = source if isinstance(source, list) else [source]
         old_fault = args.fault
         args.fault = "none"
@@ -417,7 +416,6 @@ def run(args):
             result["server_identity"] = process_identities[server_pid]
             if set(result["baseline"]["cpu_affinity"]) & os.sched_getaffinity(0):
                 raise ValueError("server and client CPU affinity overlap")
-            # PARTIAL publish-only 仍保持每个源的持续双轨 FLV 客户端，独立采样。
             counts = args.counts or {"flv": args.sources}
             next_client_start = time.monotonic()
             for protocol, count in counts.items():
@@ -516,7 +514,6 @@ def run(args):
                     stopped_source = True
                 next_sample += 1000000000
                 time.sleep(max(0, (min(next_sample, deadline_ns) - time.monotonic_ns()) / 1e9))
-            # 与客户端窗口末点关联；采样时钟偏差写入结果，不能隐藏。
             final = {}
             for name, pid in monitored:
                 try:
@@ -589,7 +586,6 @@ def run(args):
                     "fd_max": max(item["fd"] for item in samples), "affinity": end["cpu_affinity"], "cpu_method": "client_window_counter" if "client_cpu_cores" in group_media else "proc_window_delta",
                     "thread_cpu_cores": {tid: (state["cpu"] - begin["threads"].get(tid, state)["cpu"]) / elapsed for tid, state in end["threads"].items()},
                     "thread_sample_window": {"start": begin["monotonic_ns"], "end": end["monotonic_ns"]}}
-                # 单线程客户端接近一核或 FD 接近限制时，无法由其失败确定服务端容量。
                 hot_thread = max(result["process_metrics"][name]["thread_cpu_cores"].values(), default=0) >= 0.9
                 if name != "server" and (hot_thread or end["udp_drops"] > begin["udp_drops"] or cores >= 0.9 * min(1 if name.startswith(tuple(OUTPUTS)) else len(end["cpu_affinity"]), len(end["cpu_affinity"])) or
                                          end["fd"] >= resource.getrlimit(resource.RLIMIT_NOFILE)[0] * 0.8):

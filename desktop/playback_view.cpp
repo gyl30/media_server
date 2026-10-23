@@ -34,7 +34,6 @@ namespace media_server
 namespace
 {
 
-// 实时观看与本地录制使用同一签票接口，各自独立票据与观看身份。
 void play_request(const play_target& target, QString& path, QJsonObject& body)
 {
     path = QStringLiteral("/api/play");
@@ -166,8 +165,6 @@ void playback_view::set_record_paused(bool paused)
                     set_status(QStringLiteral("录像实例已结束或到期，已停止本次回放"));
                     return;
                 }
-                // 结果未知时设备可能已执行；不自动发送相反指令，仍受原历史实例绝对期限约束。
-                // 呈现中的帧状态会覆盖画面文本，失败另经错误信号提示。
                 set_status(paused ? QStringLiteral("暂停未确认：%1；继续播放").arg(response.error)
                                   : QStringLiteral("继续未确认：%1；本地仍暂停，可重试或停止").arg(response.error));
                 emit playback_error(status_);
@@ -201,7 +198,6 @@ void playback_view::set_record_paused(bool paused)
 
 bool playback_view::record_paused() const { return record_paused_; }
 
-// 解码线程结束后尾部仍在呈现，仍可暂停或继续；呈现结束会清空 decoder_。
 bool playback_view::record_control_ready() const { return record_owner_ && decoder_ && !request_; }
 
 bool playback_view::record_seek_ready() const
@@ -238,7 +234,6 @@ void playback_view::seek_record(double position)
                 emit playback_error(status_);
                 return;
             }
-            // 受理不等于媒体已经切换；保留有界积压，按实际收到的时间戳呈现。
             set_status(QStringLiteral("设备已受理定位请求，实际精度由设备决定"));
         },
         8'000);
@@ -290,7 +285,6 @@ void playback_view::scale_record(double scale)
                 emit playback_error(status_);
                 return;
             }
-            // 204 不是媒体边界；实际呈现比例由有界媒体积压反馈，不使用请求倍率。
             set_status(QStringLiteral("设备已受理倍速请求，按实际输入节奏呈现"));
         },
         8'000);
@@ -362,7 +356,6 @@ void playback_view::wait_for_gb_media(
 
 void playback_view::start_decoder(const QString& name, const QUrl& url, playback_mode mode, QDeadlineTimer finite_deadline)
 {
-    // 解码线程独立保活至 finished，关闭画面不在 GUI 中等待网络线程。
     auto* decoder =
         new decode_thread(url, QSize(std::max(160, width()), std::max(100, height())), mode, finite_deadline, QCoreApplication::instance());
     decoder_ = decoder;
@@ -404,7 +397,6 @@ void playback_view::start_recording(platform_client& client, const QString& dire
     {
         return;
     }
-    // 名称只作文件名片段：路径分隔符等字符替换为下划线，不会写到所选目录之外。
     auto stem = live_target_.name.isEmpty() ? live_target_.id : live_target_.name;
     for (auto& character : stem)
     {
@@ -436,7 +428,6 @@ void playback_view::start_recording(platform_client& client, const QString& dire
                                                       : QStringLiteral("录制申请失败：%1").arg(response.error));
                 return;
             }
-            // 录制线程独立保活至结束；画面停止只请求收尾保存，不在 GUI 等待。
             auto* recorder = new record_thread(url, target, playback_mode::realtime, QDeadlineTimer::Forever, QCoreApplication::instance());
             recorder_ = recorder;
             connect(recorder,
@@ -589,7 +580,6 @@ void playback_view::set_audible(quint32 audio_id, int period_bytes)
     auto anchor = audio_id == 0 && !video_.empty() && video_.back().pts_us != no_media_timestamp ? video_.back().pts_us : shown_pts_;
     if (presentation_rate_)
     {
-        // update_media已选定当前epoch的时钟，切换静音不能再改选另一条音轨。
         anchor = wall_pts_ == no_media_timestamp
                      ? shown_pts_
                      : wall_pts_ + (record_paused_ ? 0 : static_cast<qint64>(wall_clock_.nsecsElapsed() / 1000 * *presentation_rate_));
@@ -637,7 +627,6 @@ void playback_view::update_media()
         return;
     }
     const bool finite = decoder_->mode() == playback_mode::finite;
-    // 先观察线程结束，再取队列；反过来可能漏掉两步之间入队的最后一批。
     const bool finished_before_take = decoder_->isFinished();
     const bool finite_tail_taken = finished_before_take && video_.empty() && pcm_.empty();
     bool video_evicted = false;
@@ -670,7 +659,6 @@ void playback_view::update_media()
         {
             queued += block.pcm.size();
         }
-        // 有界保留最近的 PCM；真实 PTS 跳变由下面的连续性检查处理。
         while (!finite && queued > decoded_pcm_capacity && pcm_.size() > 1)
         {
             queued -= pcm_.front().pcm.size();
@@ -831,7 +819,6 @@ void playback_view::update_media()
             }
             else if (!tail.isEmpty())
             {
-                // flush后的delay可能仍非零；仅将真实剩余源区间映射到实际尾部输出。
                 if (audio_input_end_pts_ != no_media_timestamp)
                 {
                     audio_spans_.push_back({audio_output_frames_, audio_output_frames_ + tail.size() / 4, audio_end_pts_, audio_input_end_pts_});
@@ -851,19 +838,16 @@ void playback_view::update_media()
         }
     }
 
-    // 暂停冻结呈现与尾部判断；解码线程以错误结束时仍按原路径收尾。
     if (record_paused_ && !(decoder_->isFinished() && !decoder_->snapshot().error.isEmpty()))
     {
         return;
     }
 
-    // 已声明音轨的有声播放先建立音频时钟，避免首帧按视频时钟抢跑后再回跳。
     if (!finite && audible() && !decoder_->snapshot().audio_codec.isEmpty() && SDL_GetAudioDeviceStatus(audio_id_) != SDL_AUDIO_PLAYING)
     {
         return;
     }
     qint64 clock = no_media_timestamp;
-    // 有限回放在实际视频时间轴跳变时重锚，不以控制响应或请求位置推断首帧。
     if (finite && !video_.empty() && video_.front().pts_us != no_media_timestamp && shown_end_pts_ != no_media_timestamp &&
         std::abs(video_.front().pts_us - shown_end_pts_) > 1'000'000)
     {
@@ -878,7 +862,6 @@ void playback_view::update_media()
     if (audio_id_ != 0 && audio_end_pts_ != no_media_timestamp && SDL_GetAudioDeviceStatus(audio_id_) == SDL_AUDIO_PLAYING &&
         (SDL_GetQueuedAudioSize(audio_id_) != 0 || (presentation_rate_ && audio_clock_frames_ < audio_output_frames_)))
     {
-        // SDL 队列不包含已交给后端的 period，按双 period 估算；同步偏差另用数字回环验证。
         clock = current_audio_clock;
         if (clock == no_media_timestamp)
         {
@@ -886,7 +869,6 @@ void playback_view::update_media()
         }
         else if (finite && shown_end_pts_ != no_media_timestamp && video_clock != no_media_timestamp && std::abs(clock - video_clock) > 1'000'000)
         {
-            // 音视频先后进入新段；旧轨不得把另一轨拖回相差数秒的时钟。
             clock = video_clock;
         }
         else
@@ -906,7 +888,6 @@ void playback_view::update_media()
         wall_clock_.start();
         clock = wall_pts_;
     }
-    // 实时队列已淘汰待呈现帧时，墙钟不能仍等在被淘汰区间，否则后续队首会持续超前而饥饿。
     if (video_evicted && (!audible() || audio_end_pts_ == no_media_timestamp) && !video_.empty() && video_.front().pts_us != no_media_timestamp &&
         clock != no_media_timestamp && video_.front().pts_us > clock + 15'000)
     {
@@ -935,7 +916,6 @@ void playback_view::update_media()
         {
             const auto audio_lead = adopted_audio_clock && !audio_spans_.empty() ? std::max(qint64(0), audio_spans_.back().last_pts - clock) : 0;
             const auto buffered = (frontier - clock - audio_lead) / 1'000'000.0;
-            // 既有16帧GUI队列内留出小幅积压；不以请求值或204猜测输入倍率。
             const auto rate = std::clamp(1 + 16 * (buffered - 0.12), 0.25, 4.0);
             wall_pts_ = clock;
             wall_clock_.restart();
@@ -975,7 +955,6 @@ void playback_view::update_media()
         if (finite && stats.error.isEmpty() && finite_tail_taken && video_.empty() && pcm_.empty() && shown_end_pts_ != no_media_timestamp &&
             clock >= shown_end_pts_ && audible() && audio_end_pts_ != no_media_timestamp && std::abs(audio_end_pts_ - clock) > 1'000'000)
         {
-            // 视频尾帧已显示完；两轨 epoch 不同时，将余下的真实音频及后端 period 交给音频时钟。
             shown_end_pts_ = no_media_timestamp;
             clock = audio_clock();
             wall_pts_ = clock;

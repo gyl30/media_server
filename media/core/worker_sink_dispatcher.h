@@ -23,7 +23,6 @@ class worker_sink_dispatcher final
    public:
     explicit worker_sink_dispatcher(worker_context& owner) : owner_(owner) {}
 
-    // 业务 owner 保留 add/remove 的入口 dispatch 和终态检查；以下操作都在 owner worker 上执行。
     void add(std::shared_ptr<Sink> sink, worker_context& target)
     {
         auto& group = sink_groups_[&target];

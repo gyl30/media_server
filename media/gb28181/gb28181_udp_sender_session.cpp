@@ -22,7 +22,7 @@ namespace media_server
 namespace
 {
 constexpr auto rtcp_interval = std::chrono::seconds{25};
-}    // namespace
+}
 
 gb28181_udp_sender_session::gb28181_udp_sender_session(worker_context& worker,
                                                        std::shared_ptr<media_stream> stream,
@@ -166,7 +166,6 @@ void gb28181_udp_sender_session::send_packet(std::vector<std::uint8_t> packet)
         spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);
         return;
     }
-    // transport 持有 packet，发送 completion 不会在 write 内执行。
     if (remote_rtcp_endpoint_ && rtp_onsend(rtcp_sender_, packet_data.data(), static_cast<int>(packet_data.size())) != 0)
     {
         shutdown();

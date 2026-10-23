@@ -13,17 +13,14 @@ import (
 	"github.com/google/uuid"
 )
 
-// 推流设备状态：pending 为地址可首次使用；used 为地址已被消费且当前没有推流；
-// expired 为地址未使用已过期；publishing 为推流已通过认证（是否有画面以实际播放为准）。
 type pushDeviceResponse struct {
-	DeviceID  string       `json:"device_id"`
-	Name      string       `json:"name"`
-	Protocol  pushProtocol `json:"protocol"`
-	State     string       `json:"state"`
-	ExpiresAt time.Time    `json:"expires_at,omitzero"`
-	UsedAt    time.Time    `json:"used_at,omitzero"`
-	// 推流中且最近一次媒体对账显示媒体源已注册。
-	MediaReady bool `json:"media_ready"`
+	DeviceID   string       `json:"device_id"`
+	Name       string       `json:"name"`
+	Protocol   pushProtocol `json:"protocol"`
+	State      string       `json:"state"`
+	ExpiresAt  time.Time    `json:"expires_at,omitzero"`
+	UsedAt     time.Time    `json:"used_at,omitzero"`
+	MediaReady bool         `json:"media_ready"`
 	pushURLs
 }
 
@@ -34,7 +31,6 @@ type pushURLs struct {
 	WHIPURL string `json:"whip_url,omitempty"`
 }
 
-// 接入地址由凭据和媒体服务器地址重建，数据库只保存凭据。
 func (s *infrastructureServer) pushURLs(credential string) pushURLs {
 	server := s.media.server
 	return pushURLs{
@@ -94,8 +90,6 @@ func (s *infrastructureServer) handlePushDeviceList(writer http.ResponseWriter, 
 	writeJSON(writer, http.StatusOK, map[string]any{"devices": response})
 }
 
-// 添加推流设备前预生成接入凭据，让添加页面在确认前展示真实地址。凭据只记在内存中等待确认，
-// 发布认证只认数据库中的凭据，因此确认前不能发布；取消添加时它在确认期限后丢弃。
 func (s *infrastructureServer) handlePushCredentialPrepare(writer http.ResponseWriter, request *http.Request) {
 	value, err := newStreamToken()
 	if err != nil {
@@ -111,7 +105,6 @@ func (s *infrastructureServer) handlePushCredentialPrepare(writer http.ResponseW
 	writeJSON(writer, http.StatusCreated, s.pushURLs(value))
 }
 
-// 创建只接受预生成凭据，确认后凭据从创建成功起 5 分钟内有效。
 func (s *infrastructureServer) handlePushDeviceCreate(writer http.ResponseWriter, request *http.Request) {
 	var command struct {
 		Name     string       `json:"name"`
@@ -173,7 +166,6 @@ func (s *infrastructureServer) handlePushDevicePatch(writer http.ResponseWriter,
 	s.writePushDevice(writer, request, deviceID, http.StatusOK)
 }
 
-// 重新生成接入地址：旧凭据立即失效，新凭据从现在起 5 分钟有效。正在推流时拒绝，不隐式停止现有发布。
 func (s *infrastructureServer) handlePushPublish(writer http.ResponseWriter, request *http.Request) {
 	deviceID := request.PathValue("id")
 	if !validUUIDv4(deviceID) {

@@ -129,7 +129,6 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     state.rtp_transport = std::make_shared<udp_transport>(worker_.io());
     state.rtcp_transport = std::make_shared<udp_transport>(worker_.io());
 
-    // 失败返回 -1 使连接关闭，端口与 transport 由 safe_shutdown 清理。
     state.local_port = media_port_pool::instance().acquire();
     if (!state.local_port)
     {

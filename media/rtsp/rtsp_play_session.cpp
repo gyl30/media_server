@@ -152,7 +152,6 @@ void rtsp_play_session::on_frame(const media_frame& entry)
     constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
     const auto elapsed = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
     const auto elapsed_ticks = (elapsed / ntp_fraction) * state.clock_rate + (elapsed % ntp_fraction) * state.clock_rate / ntp_fraction;
-    // Relate SR wall time to the shared presentation timeline, not packet arrival jitter.
     timestamp += static_cast<std::uint32_t>(rtcp_sync_->pts * state.clock_rate / 1'000 + elapsed_ticks - pts * state.clock_rate / 1'000);
     boost::endian::store_big_u32(rtcp.data() + 16, timestamp);
     write_interleaved(static_cast<std::uint8_t>(state.rtcp_channel), rtcp.data(), static_cast<std::size_t>(rtcp_bytes));

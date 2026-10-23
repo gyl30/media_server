@@ -9,10 +9,7 @@ import (
 const mediaReconcileInterval = 5 * time.Second
 const pushRegistrationGrace = 3 * time.Second
 
-// reconcileMedia 让信令状态跟随媒体服务器上实际运行的接收会话：
-// 媒体侧已结束的直播和 RTSP 拉流被清理，信令不认识的遗留接收会话被删除。
 func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
-	// 运行上限由历史 context 表达；即使媒体 HTTP 不可达，也先请求已到期 owner 结束。
 	s.live.stopMatching(ctx, func(session *liveSession) bool {
 		if session.key.historyID != "" && session.state == liveStreaming && session.ctx.Err() != nil {
 			s.logger.Warn("playback application deadline reached; transfer may be incomplete", "stream_id", session.streamID, "error", session.ctx.Err())
@@ -20,7 +17,6 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 		}
 		return false
 	})
-	// 音频不在 receiver 清单中。先续其控制租约，避免视频查询失败阻断 SIP owner 的清理。
 	s.live.mu.Lock()
 	var broadcasts []*broadcastSession
 	for _, session := range s.live.broadcasts {
@@ -39,11 +35,9 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 			session.cancel(err)
 		}
 		s.live.mu.Unlock()
-		// 无法维持租约也结束本次对讲，但不把网络未知误报为设备离线或媒体已不存在。
 		s.logger.Warn("talk control lease failed", "talk_id", session.mediaID, "error", err)
 	}
 	now := s.live.sip.now()
-	// 先快照再查询：快照中的会话在查询前已在媒体侧创建，查询结果缺失即表示已结束。
 	lives := s.live.streamingSessions()
 	pulls := s.confirmedRTSPPulls()
 	s.tokens.mu.Lock()
@@ -101,7 +95,6 @@ func (s *infrastructureServer) reconcileMedia(ctx context.Context) error {
 	}
 	s.tokens.mu.Unlock()
 
-	// 查询之后再收集已知会话，查询前已存在且仍由信令持有的会话都不会被误删。
 	known := make(map[string]struct{})
 	s.live.collectStreamIDs(known)
 	s.collectRTSPPullStreamIDs(known)
@@ -180,7 +173,6 @@ func (s *infrastructureServer) collectRTSPPullStreamIDs(ids map[string]struct{})
 	}
 }
 
-// dropEndedRTSPPull 只移除仍处于已创建状态的同一会话。
 func (s *infrastructureServer) dropEndedRTSPPull(expected rtspPullSession) bool {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()

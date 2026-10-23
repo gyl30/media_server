@@ -27,7 +27,6 @@ finite_http_input::finite_http_input(QThread& owner, AVIOInterruptCB io_interrup
 
 finite_http_input::~finite_http_input() { socket.abort(); }
 
-// 完整 HTTP 之后只保留取消；网络预算不限制已经取回的解码尾部和呈现排空。
 int finite_http_input::context_error() const
 {
     return thread.isInterruptionRequested()                                                       ? AVERROR_EXIT
@@ -185,7 +184,6 @@ int finite_http_input::read(void* opaque, uint8_t* buffer, int size)
         }
         if (input.socket.state() == QAbstractSocket::UnconnectedState)
         {
-            // Beast 要求 put_eof 前已收到响应字节；未响应即断开本就不是完整传输。
             if (!input.parser.got_some())
             {
                 return AVERROR(EIO);

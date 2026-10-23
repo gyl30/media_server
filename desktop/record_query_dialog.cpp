@@ -236,7 +236,6 @@ bool record_query_dialog::selected_range(qint64& start_time, qint64& end_time, Q
     }
     start_time = first.toSecsSinceEpoch();
     end_time = last.toSecsSinceEpoch();
-    // 文件名使用设备当地墙上时间，只含数字与下划线。
     stem = QStringLiteral("%1_%2_%3")
                .arg(channel_id_, first.toString(QStringLiteral("yyyyMMddHHmmss")), last.toString(QStringLiteral("yyyyMMddHHmmss")));
     return true;
@@ -273,7 +272,6 @@ void record_query_dialog::start_download()
         download_session_,
         [this, target](const QUrl& url, platform_client*, const QString&, QDeadlineTimer deadline)
         {
-            // 下载线程独立保活至结束；取消只请求中断，由线程删除本次临时文件。
             auto* downloader = new record_thread(url, target, playback_mode::finite, deadline, QCoreApplication::instance());
             downloader_ = downloader;
             connect(downloader,
@@ -288,7 +286,6 @@ void record_query_dialog::start_download()
                         }
                         downloader_.clear();
                         download_progress_->stop();
-                        // 下载结束（含失败）都只回收本次实例。
                         delete download_session_;
                         download_session_ = nullptr;
                         set_busy(!query_->isEnabled());

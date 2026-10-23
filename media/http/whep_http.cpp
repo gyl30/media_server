@@ -172,7 +172,6 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
     }
 
     const std::string_view allow = session_resource ? "GET, HEAD, DELETE, OPTIONS" : "GET, HEAD, POST, OPTIONS";
-    // 本实现只支持一次完整 SDP POST/answer，不支持 PATCH/Trickle ICE。
     return make_string_response(request, boost::beast::http::status::method_not_allowed, "text/plain", "method not allowed\n", allow);
 }
 

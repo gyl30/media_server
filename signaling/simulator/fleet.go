@@ -482,7 +482,6 @@ func (f *simulatedFleet) handleInvite(endpointIndex int, request *sip.Request, t
 		return
 	}
 	if f.cfg.answerSSRC != 0 {
-		// 模拟在 y= 中自定义 SSRC 的设备。
 		answer = []byte(strings.Replace(string(answer), fmt.Sprintf("y=%010d", target.ssrc), fmt.Sprintf("y=%010d", f.cfg.answerSSRC), 1))
 		target.ssrc = uint32(f.cfg.answerSSRC)
 	}

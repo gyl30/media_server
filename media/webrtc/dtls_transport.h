@@ -18,7 +18,6 @@
 namespace media_server
 {
 
-// 本端 DTLS 角色：平台作为 WHIP/WHEP 服务端时由对端发起握手（server）；作为 WHEP 客户端且对端 setup:passive 时由本端发起（client）。
 enum class dtls_role
 {
     server,

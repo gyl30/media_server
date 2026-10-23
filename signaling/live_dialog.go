@@ -31,7 +31,6 @@ func newLiveDialogRequest(invite *sip.Request, answer *sip.Response, method sip.
 			request.Recipient = *route.Address.Clone()
 		}
 	} else {
-		// 保留原 DialogUA.RewriteContact 的实际响应来源路由。
 		request.SetDestination(answer.Source())
 	}
 	request.SetTransport(invite.Transport())
@@ -43,7 +42,6 @@ func newLiveDialogRequest(invite *sip.Request, answer *sip.Response, method sip.
 	return request
 }
 
-// nextDialogRequest 为同一对话内的 BYE/INFO 分配递增 CSeq；调用方须持有 session.dialog。
 func (session *liveSession) nextDialogRequest(method sip.RequestMethod) *sip.Request {
 	if session.cseq == 0 {
 		session.cseq = session.invite.CSeq().SeqNo

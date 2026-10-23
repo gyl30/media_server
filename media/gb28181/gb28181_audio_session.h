@@ -25,7 +25,6 @@ class gb28181_audio_session final : public session, public std::enable_shared_fr
 
    public:
     [[nodiscard]] std::optional<std::uint16_t> startup(boost::asio::ip::address bind_address);
-    // 在 owner 上执行，SIP 完成之后一次性配置；失败不允许重试同一对象。
     [[nodiscard]] bool configure(boost::asio::ip::udp::endpoint rtp, boost::asio::ip::udp::endpoint rtcp, std::uint32_t ssrc, std::string token);
     void attach(boost::asio::ip::tcp::socket socket, boost::beast::http::request<boost::beast::http::string_body> request, std::string token);
     void keep_alive();

@@ -118,7 +118,7 @@ void rtmp_client::cancel() noexcept
 
 bool rtmp_client::handshake_complete() const noexcept
 {
-    constexpr int media_state = 4;    // rtmp_client_getstate() 的公开 START 值。
+    constexpr int media_state = 4;
     return client_ != nullptr && rtmp_client_getstate(client_) == media_state;
 }
 

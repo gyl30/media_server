@@ -51,7 +51,6 @@ bool gb28181_audio_session::configure(boost::asio::ip::udp::endpoint rtp, boost:
     }
     if (!sender_->set_peer(std::move(rtp), std::move(rtcp), ssrc))
     {
-        // 同步部分失败也立即撤销认领资格；迟到配置不能再次覆盖子对象资源。
         session_registry::instance().remove_sender_session(id_, id_, *this);
         shutdown();
         return false;
@@ -131,7 +130,6 @@ void gb28181_audio_session::run(tcp::socket socket,
         http::async_write(rejected, reply, yield[error]);
         return;
     }
-    // 认领后握手失败也不恢复，upload_ 同时表达该对象已有唯一上传连接。
     upload_token_.clear();
     upload_ = std::make_unique<websocket::stream<boost::beast::tcp_stream>>(std::move(socket));
     auto timeout = websocket::stream_base::timeout::suggested(boost::beast::role_type::server);
@@ -158,7 +156,6 @@ void gb28181_audio_session::run(tcp::socket socket,
         }
         std::array<std::uint8_t, 160> samples{};
         boost::asio::buffer_copy(boost::asio::buffer(samples), buffer.data());
-        // UDP 丢新包不转为终止；真正发送错误由子对象错误回调关闭父会话。
         static_cast<void>(sender_->input_audio(samples));
         audio_idle_.touch();
         buffer.consume(buffer.size());

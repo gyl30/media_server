@@ -46,7 +46,6 @@ void rtmp_session::run(boost::asio::yield_context yield)
                 self->shutdown();
             }
         });
-    // 收到数据即刷新；播放连接停止计时。
     idle_timer_.start(self,
                       [this]()
                       {
@@ -234,7 +233,6 @@ int rtmp_session::on_play(std::string_view app, std::string_view stream)
         return -1;
     }
     play_ = std::move(player);
-    // The muxer emits codec config immediately; Play.Start must precede it.
     if (rtmp_server_start(rtmp_context_, 0, nullptr) != 0 || !play_->startup())
     {
         return -1;

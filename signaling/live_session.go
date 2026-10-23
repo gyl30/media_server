@@ -45,24 +45,22 @@ type liveKey struct {
 }
 
 type liveSession struct {
-	key         liveKey
-	streamID    string
-	rtpPort     uint16
-	ssrc        uint32
-	state       liveState
-	invite      *sip.Request
-	answer      *sip.Response
-	ctx         context.Context
-	cancel      context.CancelFunc
-	claimed     chan struct{}
-	established chan struct{}
-	done        chan struct{}
-	cleanupErr  error
-	// 仅交互回放保存原请求的 NPT 范围；下载/直播为 0，表示不适用 seek/scale，而非播放状态。
+	key              liveKey
+	streamID         string
+	rtpPort          uint16
+	ssrc             uint32
+	state            liveState
+	invite           *sip.Request
+	answer           *sip.Response
+	ctx              context.Context
+	cancel           context.CancelFunc
+	claimed          chan struct{}
+	established      chan struct{}
+	done             chan struct{}
+	cleanupErr       error
 	playbackDuration int64
-	// dialog 串行同一对话内的 INFO 与 BYE，并保护 cseq。
-	dialog sync.Mutex
-	cseq   uint32
+	dialog           sync.Mutex
+	cseq             uint32
 }
 
 type liveView struct {
@@ -385,7 +383,6 @@ func (s *liveService) invite(operationContext context.Context, session *liveSess
 		deviceSSRC, answerErr = validateGBAnswer(answer.Body(), livePayloadType, ssrc, session.key.historyID != "")
 	}
 	if answerErr == nil && deviceSSRC != ssrc {
-		// 设备在 y= 中改用了自己的 SSRC，接收端必须按设备实际发送的值过滤。
 		s.logger.Info("device selected SSRC", "stream_id", session.streamID, "requested", ssrc, "device", deviceSSRC)
 		answerErr = s.media.updateReceiverSSRC(operationContext, session.streamID, deviceSSRC)
 	}
@@ -462,7 +459,6 @@ func (s *liveService) stopSessionLocked(ctx context.Context, session *liveSessio
 		return s.waitForStop(ctx, session, done)
 	}
 	session.state = liveStopping
-	// 结束在途回放控制的等待，使 BYE 不排在完整 INFO 超时之后。
 	session.cancel()
 	s.mu.Unlock()
 	return s.cleanup(session, true)

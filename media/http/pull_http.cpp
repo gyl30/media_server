@@ -101,7 +101,6 @@ bool optional_string(const boost::json::object& object, std::string_view key, st
     return true;
 }
 
-// 主机名去掉 IPv6 方括号；端口缺省时用协议默认端口，显式端口必须为 1-65535。
 bool parse_host_port(const ada::url_aggregator& url, std::string& host, std::uint16_t& port)
 {
     auto hostname = url.get_hostname();
@@ -144,7 +143,6 @@ std::optional<rtsp_pull_config> parse_rtsp_config(std::string stream_id, const a
     return config;
 }
 
-// rtmp://host[:port]/app/stream[?query]：第一段路径是 app，其余路径与查询串是 Play 的流名。
 std::optional<rtmp_pull_config> parse_rtmp_config(std::string stream_id, const ada::url_aggregator& url)
 {
     rtmp_pull_config config{.stream_id = std::move(stream_id), .host = {}, .port = 1935, .app = {}, .stream = {}, .tc_url = {}};

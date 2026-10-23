@@ -95,7 +95,6 @@ response_type handle_gb28181_audio_request(const request_type& request,
         return result;
     }
 
-    // 结构校验先于会话查找，不让非法配置改变已存在的上传授权。
     std::string token;
     boost::asio::ip::udp::endpoint rtp;
     boost::asio::ip::udp::endpoint rtcp;
@@ -147,7 +146,6 @@ response_type handle_gb28181_audio_request(const request_type& request,
     }
     if (configuring)
     {
-        // 在实际 owner 执行后才回复：不能把已投递等同于 SIP 媒体端点已准备好。
         const bool configured = boost::asio::async_initiate<boost::asio::yield_context, void(bool)>(
             [session, rtp, rtcp, ssrc, token = std::move(token)](auto completion) mutable
             {

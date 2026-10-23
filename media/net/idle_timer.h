@@ -11,10 +11,8 @@
 namespace media_server
 {
 
-// 输入空闲期限：从建立开始计时，网络读到数据即刷新；超过该时长没有输入则关闭会话。
 inline constexpr std::chrono::seconds media_idle_timeout{20};
 
-// 由 owner executor 使用；owner 必须持有本对象，回调前通过 weak owner 确认其仍然存活，回调可直接使用 owner。
 class idle_timer final
 {
    public:

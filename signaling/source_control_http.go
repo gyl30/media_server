@@ -27,7 +27,6 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 	writeJSON(writer, http.StatusCreated, map[string]string{"stream_id": streamID})
 }
 
-// startSource 把期望状态设为 running 并在媒体服务器上建立拉流会话；调用方已进入 source control。
 func (s *infrastructureServer) startSource(ctx context.Context, sourceID string) (string, error) {
 	s.sourceOperationMu.Lock()
 	defer s.sourceOperationMu.Unlock()
@@ -59,7 +58,6 @@ func (s *infrastructureServer) startSource(ctx context.Context, sourceID string)
 	return session.streamID, nil
 }
 
-// resumeSources 在启动时按持久化的期望状态恢复拉流；失败只记录，界面显示连接失败并允许重试。
 func (s *infrastructureServer) resumeSources(ctx context.Context) {
 	if !s.beginSourceControl() {
 		return
@@ -99,7 +97,6 @@ func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, requ
 	writer.WriteHeader(http.StatusNoContent)
 }
 
-// stopSource 结束当前拉流会话并记录期望状态；修改配置后重新拉流时期望状态保持 running。
 func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string, desired sourceDesiredState) error {
 	s.sourceOperationMu.Lock()
 	defer s.sourceOperationMu.Unlock()

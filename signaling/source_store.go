@@ -271,7 +271,6 @@ func scanRTSPSource(row rowScanner) (rtspSource, error) {
 	return source, nil
 }
 
-// RTSP 拉流使用用户名密码；WHEP 拉流的 password 保存 Bearer token、没有用户名；RTMP 的认证信息只能在 URL 的流名或查询串中。
 func validRTSPSource(source rtspSource) bool {
 	credentials := source.password == "" || source.username != ""
 	switch {

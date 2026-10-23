@@ -20,9 +20,8 @@ namespace media_server
 
 namespace
 {
-// rtmp_client_start 的 publish 参数：1 表示 Play（直播或点播）。
 constexpr int rtmp_client_play = 1;
-}    // namespace
+}
 
 rtmp_pull_session::rtmp_pull_session(worker_context& worker, rtmp_pull_config config)
     : worker_(worker), config_(std::move(config)), resolver_(worker_.io()), connect_socket_(worker_.io()), idle_timer_(worker_.io())
@@ -34,7 +33,6 @@ rtmp_pull_session::~rtmp_pull_session() = default;
 void rtmp_pull_session::startup()
 {
     const auto self = shared_from_this();
-    // 连接、握手和收流都受同一空闲时间约束，上游不再发送数据时结束会话。
     idle_timer_.start(self,
                       [this]()
                       {
@@ -92,7 +90,6 @@ int rtmp_pull_session::send_callback(void* param, const void* header, std::size_
     return static_cast<int>(header_bytes + payload_bytes);
 }
 
-// 父清理先于 TCP 子关闭完成，已读到的数据仍可能进入回调；media_ 为空时结束读循环。
 int rtmp_pull_session::video_callback(void* param, const void* data, std::size_t bytes, std::uint32_t timestamp)
 {
     auto* self = static_cast<rtmp_pull_session*>(param);
@@ -180,7 +177,6 @@ void rtmp_pull_session::run_read(rtmp_client_t* client, boost::asio::yield_conte
             return;
         }
         idle_timer_.touch();
-        // 上游拒绝（StreamNotFound、Play.Failed 等）时 input 返回错误；Play.Stop / Complete 后状态为 STOP。
         if (rtmp_client_input(client, buffer.data(), bytes) != 0 || rtmp_client_getstate(client) == RTMP_STATE_STOP)
         {
             spdlog::info("rtmp pull upstream ended {}", config_.stream_id);

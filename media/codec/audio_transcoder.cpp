@@ -465,7 +465,6 @@ bool audio_transcoder::resample_decoded()
         const auto gap = frame_sample_pts >= expected ? frame_sample_pts - expected : expected - frame_sample_pts;
         if (gap > max_timestamp_gap)
         {
-            // A live reader may resync to a newer GOP; do not synthesize the skipped interval.
             swr_close(state_->resampler);
             if (swr_init(state_->resampler) < 0)
             {

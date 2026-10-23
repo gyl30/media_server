@@ -18,7 +18,6 @@ type liveSDPParameters struct {
 	ssrc        uint32
 }
 
-// gbSession 是 INVITE 的 SIP 会话用途；接收器路径与传输方式仍由 receiverKind 表达。
 type gbSession int
 
 const (
@@ -27,7 +26,6 @@ const (
 	sessionDownload
 )
 
-// validDownloadSpeed 是本平台支持的下载倍速子集；设备是否支持以实际应答为准。
 func validDownloadSpeed(speed int) bool { return speed == 1 || speed == 2 || speed == 4 }
 
 func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, session gbSession, speed int) ([]byte, error) {
@@ -87,9 +85,6 @@ func buildGBSDP(parameters liveSDPParameters, startTime, endTime int64, session 
 	return body, nil
 }
 
-// validateGBAnswer 校验设备 200 OK 的 SDP 并返回设备实际使用的 SSRC。
-// 与 wvp、Monibuca 一致：y= 缺失时沿用请求的 SSRC，y= 不同时以设备为准；
-// f= 和 s= 只是描述信息，不参与校验。
 func validateGBAnswer(body []byte, payloadType uint8, requestedSSRC uint32, playback bool) (uint32, error) {
 	var standard strings.Builder
 	ssrc := requestedSSRC
@@ -109,7 +104,6 @@ func validateGBAnswer(body []byte, payloadType uint8, requestedSSRC uint32, play
 			ssrc = uint32(value)
 		case strings.HasPrefix(line, "f="):
 		case playback && strings.HasPrefix(line, "u="):
-			// GB 简捷 URI 可为数字设备 ID 加参数，并非 RFC URI；这里只校验媒体协商。
 		case line != "":
 			standard.WriteString(line)
 			standard.WriteString("\r\n")
@@ -144,7 +138,6 @@ func validateGBAnswer(body []byte, payloadType uint8, requestedSSRC uint32, play
 			}
 		}
 	}
-	// 省略方向时按 SDP 默认 sendrecv，只拒绝明确不发送媒体的应答。
 	if direction == "recvonly" || direction == "inactive" {
 		return 0, fmt.Errorf("device SDP does not send media")
 	}

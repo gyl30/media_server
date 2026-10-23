@@ -38,7 +38,6 @@ func newDeviceStore(ctx context.Context, db *sql.DB) (*deviceStore, error) {
 	return &deviceStore{db: db}, nil
 }
 
-// 分配提交后才可发送 Notify；保留已用高水位，不回收或复用。序号1由历史实机探针占用。
 func (s *deviceStore) nextBroadcastID(ctx context.Context, domain string) (string, error) {
 	if !validDigits(domain, 10) {
 		return "", errInvalidDevice

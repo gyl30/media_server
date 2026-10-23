@@ -137,7 +137,6 @@ void decode_thread::run()
     format->interrupt_callback = AVIOInterruptCB{&decode_thread::interrupt, this};
     if (mode_ == playback_mode::realtime && url_.scheme() == QStringLiteral("rtsp"))
     {
-        // 轨道探测期间的数据不回放到实时显示队列。
         format->flags |= AVFMT_FLAG_NOBUFFER;
     }
     io_deadline_us_ = av_gettime_relative() + 15000000;
@@ -158,7 +157,6 @@ void decode_thread::run()
             }
             return;
         }
-        // 有限 PS 探测可能一直读取到设备延迟发来的结束块，随后只受平台绝对预算约束。
         io_deadline_us_ = std::numeric_limits<qint64>::max();
         auto* buffer = static_cast<uint8_t*>(av_malloc(32768));
         if (buffer)
@@ -234,7 +232,6 @@ void decode_thread::run()
         result = avcodec_parameters_to_context(context, parameters);
         if (result >= 0)
         {
-            // 各画面独立解码，避免 FFmpeg 默认按整机核数为每路额外创建大量线程。
             context->thread_count = 1;
             context->pkt_timebase = format->streams[index]->time_base;
             result = avcodec_open2(context, codec, nullptr);
@@ -456,7 +453,6 @@ void decode_thread::run()
                 if (mode_ == playback_mode::finite && pts != no_media_timestamp && next_pcm_pts != no_media_timestamp &&
                     std::abs(pts - next_pcm_pts) > 100'000)
                 {
-                    // 实际音频跳变时丢弃上一段滤波尾部；不清解码器或尚未消费的合法媒体。
                     const auto delayed = swr_get_delay(resampler, audio_input_rate);
                     swr_close(resampler);
                     result = swr_init(resampler);

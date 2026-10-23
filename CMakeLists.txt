@@ -120,9 +120,6 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
             set(CMAKE_REQUIRED_INCLUDES "${Boost_INCLUDE_DIRS}")
             unset(MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE CACHE)
             check_cxx_source_compiles([=[
-                #include <utility>
-                #include <boost/context/fiber.hpp>
-
                 int main()
                 {
                     boost::context::fiber context([](boost::context::fiber&& caller) {

@@ -19,7 +19,7 @@ namespace media_server
 namespace
 {
 constexpr auto rtcp_interval = std::chrono::seconds{1};
-}    // namespace
+}
 
 gb28181_udp_receiver_session::gb28181_udp_receiver_session(worker_context& worker,
                                                            std::string stream_id,
@@ -75,7 +75,6 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtp(yield); });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
     schedule_rtcp();
-    // 设备不发 BYE 就停止推流时（重启、断网）释放接收端口。
     idle_timer_.start(self,
                       [this]()
                       {
@@ -222,7 +221,6 @@ void gb28181_udp_receiver_session::safe_shutdown()
     rtp_transport_->shutdown();
     rtcp_transport_->shutdown();
     receiver_.shutdown();
-    // 端口在 socket 关闭后才归还，且只归还一次。
     if (local_port_)
     {
         media_port_pool::instance().release(*local_port_);

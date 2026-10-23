@@ -13,7 +13,6 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
-// alarmCapacity 是尚待客户端读取的近期报警上限；只在内存中保留，重启清空。
 const alarmCapacity = 1000
 const alarmPageLimit = 200
 
@@ -79,8 +78,6 @@ func (l *alarmLog) add(record alarmRecord) {
 	}
 }
 
-// since 的游标包含平台运行实例和最后已读序号，平台重启后即使新序号已追平旧游标也会返回 reset。
-// 缓存淘汰未读记录时返回 gap；next_cursor 仅推进到本页实际返回的最后一条。
 func (l *alarmLog) since(cursor string) (alarmPage, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -116,7 +113,6 @@ func (l *alarmLog) since(cursor string) (alarmPage, error) {
 	return page, nil
 }
 
-// handleAlarm 接收设备报警通知：先回 SIP 200，再按 GB/T 28181-2016 9.4.2 发送报警通知响应。
 func (s *sipServer) handleAlarm(req *sip.Request, tx sip.ServerTransaction) {
 	var notify alarmNotify
 	from := req.From()
@@ -129,7 +125,6 @@ func (s *sipServer) handleAlarm(req *sip.Request, tx sip.ServerTransaction) {
 	_, stopping := s.live.stoppingDevices[deviceID]
 	s.live.mu.Unlock()
 	_, ownChannel := s.channels.get(deviceID, notify.DeviceID)
-	// 父设备可上报自身或其已知通道的报警；来源必须与当前注册一致，且不把报警当作心跳。
 	if stopping || !s.devices.registeredSource(deviceID, req.Source(), s.now()) || (notify.DeviceID != deviceID && !ownChannel) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusForbidden, "Forbidden", nil))
 		return

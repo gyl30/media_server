@@ -1,5 +1,3 @@
-// 实时监控：统一设备列表 + 单画面 / 四分屏视频工作区。
-// 每个画面是一个播放器（player.js）；布局切换只移动画面节点，播放器的状态回调绑定画面对象而不是槽位编号。
 import { store, unifiedDevices, syncChannels, loadChannels, sourceReady } from "/store.js";
 import { h, icon, protoTag, toast, errorMessage, replaceKeepingFocus } from "/ui.js";
 import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/player.js";
@@ -7,7 +5,6 @@ import { playItem } from "/devices.js";
 
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
 
-// 设备是否可直接预览及原因。GB 通道在线即可预览：预览时按现有流程发起点播（用户显式操作）。
 function previewable(device) {
   if (device.kind === "rtsp") {
     return sourceReady(device.raw) ? "" : device.status.label;
@@ -97,7 +94,6 @@ export function mountVideo(root, ctx) {
       }, h("div", { class: "tile-empty" }, icon("plus", "lg"), h("strong", {}, `画面 ${index + 1}`), h("small", {}, "先选中画面，再从左侧设备列表预览")),
       h("span", { class: "slot-number" }, String(index + 1).padStart(2, "0")));
     }));
-    // 节点在同一任务内移动不会暂停播放；保险起见恢复正在播放的画面。
     for (const tile of tiles()) {
       if (tile.state === "streaming" && tile.video.paused && !tile.gesture) void tile.video.play().catch(() => {});
     }
@@ -111,7 +107,6 @@ export function mountVideo(root, ctx) {
 
   function createTile(item) {
     const tile = createPlayer(item, () => {
-      // 已关闭的画面不再属于任何槽位，关闭过程中的状态回调不再渲染。
       if (slots.includes(tile)) {
         renderTile(tile);
         renderBar();
@@ -187,7 +182,6 @@ export function mountVideo(root, ctx) {
     listCount.textContent = store.loaded ? `${rows.length} 个设备 / 源` : "";
   }
 
-  // 展开时才请求该 GB 设备的通道列表。
   function toggle(device) {
     if (expanded.has(device.id)) {
       expanded.delete(device.id);
@@ -198,7 +192,6 @@ export function mountVideo(root, ctx) {
     renderList();
   }
 
-  // 播放到选中画面：选中画面已有视频时替换（关闭原画面的 viewer）；四分屏中填入空画面后，选中下一个空画面。
   function pick(item) {
     const existing = slots.findIndex(tile => tile?.key === item.key);
     if (existing >= 0 && existing < layout) {
@@ -282,7 +275,6 @@ export function mountVideo(root, ctx) {
 
   return {
     update() {
-      // 展开中的在线 GB 设备和正在播放的 GB 设备随轮询同步通道；其余设备不请求。
       syncChannels([...new Set([...[...expanded].filter(id => store.devices.some(device => device.device_id === id && device.online)),
         ...tiles().filter(tile => tile.target.device_id).map(tile => tile.target.device_id)])]);
       tiles().forEach(endIfStreamChanged);

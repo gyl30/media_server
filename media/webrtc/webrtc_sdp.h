@@ -42,7 +42,6 @@ struct webrtc_media_offer
     std::vector<std::string> formats;
     std::vector<int> payload_types;
     std::vector<webrtc_codec_offer> codecs;
-    // a=candidate 中的 UDP、组件 1、IP 字面量地址；解析 WHEP 应答时使用。
     std::vector<boost::asio::ip::udp::endpoint> candidates;
 };
 
@@ -86,7 +85,6 @@ struct webrtc_answer_config
                                                               const webrtc_answer_config& config);
 [[nodiscard]] std::optional<webrtc_answer> make_whip_answer(const webrtc_offer& offer, const webrtc_answer_config& config);
 
-// 平台作为 WHEP 客户端的接收 offer：BUNDLE 的 H.264 视频与 Opus 音频，rtcp-mux、setup:actpass 和本端 host candidate。
 [[nodiscard]] std::string make_whep_pull_offer(const webrtc_answer_config& config);
 
 struct whep_pull_answer
@@ -100,7 +98,6 @@ struct whep_pull_answer
     std::optional<int> audio_payload_type;
 };
 
-// 解析 WHEP 服务端应答：需要 BUNDLE 传输的 ICE / DTLS 参数与至少一个可用 candidate，以及发送中的 H.264 视频；Opus 音频可选。
 [[nodiscard]] std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp);
 
 }    // namespace media_server

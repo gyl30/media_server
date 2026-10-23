@@ -11,6 +11,6 @@ namespace media_server
 
 [[nodiscard]] std::optional<ada::url_aggregator> parse_http_target(std::string_view target);
 
-}    // namespace media_server
+}
 
 #endif

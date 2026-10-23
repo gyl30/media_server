@@ -19,8 +19,6 @@ extern "C"
 namespace media_server
 {
 
-// 有限录像 HTTP chunked 输入：Qt socket 提供 TCP/TLS，Beast 解析分帧；只有解析完整结束才返回 EOF。
-// 全部调用在所属工作线程内进行，作为 FFmpeg 自定义 AVIO 的读取端。
 struct finite_http_input
 {
     QSslSocket socket;

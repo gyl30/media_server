@@ -321,8 +321,6 @@ int rtmp_publish_session::on_flv_demux(int codec, std::span<const std::uint8_t> 
     return publish_media(codec, data, pts, dts, flags);
 }
 
-// 没有 onMetaData 时（例如拉取不发送元数据的服务器）按实际到达的配置确定轨道：收到音频帧即有音频；
-// 首个视频帧之后 500ms 媒体时间内没有音频则只有视频。之前的帧不发布，观看端自然等待下一个关键帧。
 int rtmp_publish_session::infer_tracks_without_metadata(int codec, std::uint32_t dts)
 {
     const bool audio = codec == FLV_AUDIO_AAC || codec == FLV_AUDIO_OPUS || codec == FLV_AUDIO_G711A || codec == FLV_AUDIO_G711U;

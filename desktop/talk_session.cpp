@@ -225,7 +225,6 @@ void talk_session::close_capture()
 {
     if (capture_id_ != 0)
     {
-        // SDL_CloseAudioDevice 等待 callback，不能在持有其 PCM 锁时调用。
         SDL_CloseAudioDevice(capture_id_);
         capture_id_ = 0;
     }
@@ -248,7 +247,6 @@ void talk_session::stop(const QString& error)
     close_capture();
     if (request_)
     {
-        // 等启动响应有界结束，若收到迟到 201，仍按其准确 ID 删除。
         return;
     }
     if (talk_id_.isEmpty())

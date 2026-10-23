@@ -24,7 +24,6 @@ class platform_client;
 
 inline constexpr char record_directory_key[] = "record_directory";
 
-// 本地录制与设备下载共用的保存目录偏好，默认系统影片目录。
 QString record_directory();
 
 class record_query_dialog final : public QDialog

@@ -20,7 +20,6 @@ var (
 	errBroadcastRemoteBye = errors.New("device ended broadcast")
 )
 
-// SIP owner 不持有媒体 socket，端口由媒体服务器预先绑定。
 type broadcastEndpoint struct {
 	rtp  netip.AddrPort
 	rtcp netip.AddrPort
@@ -59,7 +58,7 @@ type broadcastSession struct {
 	invited    chan *broadcastDialog
 	result     chan broadcastResult
 	done       chan struct{}
-	dialog     *broadcastDialog // live.mu 保护发布，answerDone 后才读取 InviteResponse。
+	dialog     *broadcastDialog
 	cleanupErr error
 }
 
@@ -100,7 +99,6 @@ func (s *liveService) startBroadcast(ctx context.Context, deviceID string) (broa
 		s.mu.Unlock()
 		return broadcastResult{}, err
 	}
-	// HTTP 请求只拥有启动阶段；成功交付后由设备、媒体和平台关闭入口管理寿命。
 	operation, cancel := context.WithCancelCause(context.Background())
 	session := &broadcastSession{
 		deviceID: deviceID, sourceID: sourceID, mediaID: mediaID, sn: int(s.sip.messageSN.Add(1)),
@@ -159,7 +157,6 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 	}
 	session.result <- broadcastResult{mediaID: session.mediaID, uploadToken: token, err: err}
 	<-session.ctx.Done()
-	// 明确拒绝 create 时没有取得媒体所有权；响应不确定则以本次唯一 ID 补偿删除。
 	var rejection *mediaServerHTTPRejection
 	if !errors.As(createErr, &rejection) {
 		cleanup, cancel := s.media.timeoutContext()
@@ -172,7 +169,6 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 	dialog := session.dialog
 	s.mu.Unlock()
 	if dialog != nil {
-		// Terminate 解除库内部应答等待；先 join，再读应答或 BYE。
 		if dialog.session.LoadState() != sip.DialogStateConfirmed {
 			dialog.tx.Terminate()
 		}
@@ -329,7 +325,6 @@ func (s *sipServer) handleBroadcastInvite(req *sip.Request, tx sip.ServerTransac
 		}
 	}()
 	defer close(owned.answerDone)
-	// handler 必须持有事务直到应答完成，不能返回后再异步 RespondSDP。
 	owned.answerErr = dialog.RespondSDP(buildBroadcastAnswer(session.sourceID, session.local, peer.ssrc))
 }
 
@@ -373,7 +368,6 @@ func (s *sipServer) handleBye(req *sip.Request, tx sip.ServerTransaction) {
 			s.respond(tx, sip.NewResponseFromRequest(req, 481, "Call/Transaction Does Not Exist", nil))
 			return
 		}
-		// 先标明远端结束，避免本地清理向设备回送多余 BYE。
 		session.cancel(errBroadcastRemoteBye)
 		s.live.mu.Unlock()
 		if err := dialog.session.ReadBye(req, tx); err != nil {

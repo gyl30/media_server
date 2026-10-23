@@ -112,7 +112,6 @@ void record_thread::run()
                 avio_context_free(&output_io);
             }
             file.close();
-            // 只删除本次以 NewOnly 新建的临时文件，不触碰已有目标或他人的 .part。
             if (created && !saved)
             {
                 QFile::remove(part);
@@ -187,7 +186,6 @@ void record_thread::run()
         }
         return;
     }
-    // 录制保留探测缓存，不使用实时显示的 NOBUFFER，避免丢掉首个关键帧。
     result = avformat_find_stream_info(input, nullptr);
     if (result < 0 || (input_io && input_io->error < 0 && input_io->error != AVERROR_EOF))
     {
@@ -238,7 +236,6 @@ void record_thread::run()
     }
     output->pb = output_io;
     output->flags |= AVFMT_FLAG_CUSTOM_IO;
-    // 保留音视频相对偏移，把最早时间戳平移到 0。
     output->avoid_negative_ts = AVFMT_AVOID_NEG_TS_MAKE_ZERO;
     std::vector<int> mapping(input->nb_streams, -1);
     for (const int index : {video_index, audio_index})
@@ -264,7 +261,6 @@ void record_thread::run()
         return;
     }
 
-    // 有限下载按原样完整复制；只有实时录制从首个可解码关键帧写起。
     bool keyframe_seen = finite;
     bool video_written = false;
     bool source_ended = false;
@@ -303,7 +299,6 @@ void record_thread::run()
         }
         if (result == AVERROR_EOF)
         {
-            // 有限输入还必须由 HTTP 解析确认完整结束，FFmpeg EOF 不足以证明。
             if (http_input && (!http_input->parser.is_done() || (input_io->error < 0 && input_io->error != AVERROR_EOF)))
             {
                 error = tr("历史媒体传输未正常结束");
@@ -318,7 +313,6 @@ void record_thread::run()
             break;
         }
         const int stream_index = packet->stream_index;
-        // PS 可在探测后才出现新轨道；不能越界访问映射，也不能静默丢掉音频。
         const int output_index = static_cast<std::size_t>(stream_index) < mapping.size() ? mapping[static_cast<std::size_t>(stream_index)] : -1;
         if (output_index < 0 &&
             (static_cast<std::size_t>(stream_index) >= mapping.size() || input->streams[stream_index]->codecpar->codec_type == AVMEDIA_TYPE_AUDIO))
@@ -341,7 +335,6 @@ void record_thread::run()
         if (stream_index == video_index)
         {
             video_deadline_us = now + track_timeout_us;
-            // 实时源可能从 GOP 中途开始，此前的音视频包都不写入。
             keyframe_seen = keyframe_seen || (packet->flags & AV_PKT_FLAG_KEY) != 0;
         }
         else
@@ -377,7 +370,6 @@ void record_thread::run()
         ++(stream_index == video_index ? stats_.video_packets : stats_.audio_packets);
     }
 
-    // 取消或写盘失败不保存；有限输入只有完整结束才保存；实时录制写入视频后停止、源结束或网络中断都保存。
     const bool cancelled = isInterruptionRequested();
     const bool keep = !cancelled && !write_failed && video_written && (finite ? source_ended : true);
     if (!keep)
@@ -402,7 +394,6 @@ void record_thread::run()
         error = tr("写入录像文件收尾失败：%1").arg(file.errorString());
         return;
     }
-    // 收尾期间收到的取消仍然有效，以改名提交为取消受理的终点。
     if (isInterruptionRequested())
     {
         return;

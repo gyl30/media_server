@@ -64,7 +64,6 @@ func (s *infrastructureServer) handleTalkGet(writer http.ResponseWriter, request
 	id := session.mediaID
 	s.live.mu.Unlock()
 	writer.Header().Set("Cache-Control", "no-store")
-	// 只说明控制 owner 存在，不泄露上传 token，也不声称音频已到达设备。
 	writeJSON(writer, http.StatusOK, map[string]string{"talk_id": id, "device_id": deviceID})
 }
 

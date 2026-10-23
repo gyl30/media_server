@@ -26,7 +26,7 @@ namespace media_server
 namespace
 {
 constexpr std::size_t rtsp_read_buffer_bytes = 64U * 1024U;
-}    // namespace
+}
 
 rtsp_server_connection::rtsp_server_connection(worker_context& worker, boost::asio::ip::tcp::socket socket, const config& application_config)
     : worker_(worker), config_(application_config), transport_(std::make_shared<tcp_transport>(std::move(socket))), idle_timer_(worker.io())
@@ -51,7 +51,6 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
                 self->shutdown();
             }
         });
-    // 收到数据即刷新（UDP 推流由 UDP 会话收到 RTP 时刷新）；播放连接停止计时。
     idle_timer_.start(self,
                       [this]()
                       {

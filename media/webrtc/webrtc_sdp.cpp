@@ -211,7 +211,6 @@ void on_fmtp(void* param, const char*, const char* value)
     }
 }
 
-// a=candidate:<foundation> <component> <transport> <priority> <address> <port> typ <type> ...
 void on_candidate(void* param, const char*, const char* value)
 {
     if (param == nullptr || value == nullptr)
@@ -296,7 +295,6 @@ std::optional<h264_profile_level> parse_h264_profile_level(std::string_view text
     const auto profile_iop = static_cast<std::uint8_t>(value >> 8U);
     const auto level_idc = static_cast<std::uint8_t>(value);
 
-    // RFC 6184 允许不同 profile_idc/profile-iop 组合表示同一子配置，不能直接比较六位字符串。
     struct profile_pattern
     {
         std::uint8_t id;
@@ -370,7 +368,6 @@ const webrtc_codec_offer* find_h264(const webrtc_media_offer& media, const h264_
                          }
                          const auto profile_level_id = parameter_value(codec.format_parameters, "profile-level-id");
                          const auto offered = parse_h264_profile_level(profile_level_id.value_or("42000a"));
-                         // 非对称 Level 采用宽松互通策略；answer 和媒体仍保留真实源 SPS，不保证接收端解码能力。
                          return offered && offered->profile == source.profile &&
                                 (source.level_rank <= offered->level_rank || has_parameter(codec.format_parameters, "level-asymmetry-allowed", "1"));
                      });
@@ -396,7 +393,6 @@ const webrtc_codec_offer* find_h265(const webrtc_media_offer& media, const h265_
                 return false;
             }
 
-            // RFC 7798 对省略的 profile-space/profile-id/tier-flag/level-id 分别推导 0/1/0/93，tx-mode 推导 SRST。
             const auto profile_space = decimal_parameter(codec.format_parameters, "profile-space", 0, 3);
             const auto profile = decimal_parameter(codec.format_parameters, "profile-id", 1, 31);
             const auto tier = decimal_parameter(codec.format_parameters, "tier-flag", 0, 1);
@@ -459,7 +455,6 @@ bool opus_passthrough_compatible(const webrtc_codec_offer& codec, const media_tr
         }
     }
 
-    // RFC 7587：省略 maxaveragebitrate 表示接收端支持最大值 510000。
     const auto bitrate = decimal_parameter(codec.format_parameters, "maxaveragebitrate", 510'000, 510'000);
     if (!bitrate || *bitrate != 510'000)
     {
@@ -580,7 +575,6 @@ std::string build_answer_sdp(const webrtc_offer& offer,
     {
         const auto& mid = offer.media[index].mid;
         answer << media_answers[index];
-        // libwebrtc 会逐个校验 bundled RTP media 是否显式启用 rtcp-mux。
         if (std::find(accepted_mids.begin(), accepted_mids.end(), mid) != accepted_mids.end())
         {
             answer << "a=rtcp-mux\r\n";
@@ -1240,7 +1234,6 @@ std::string make_whep_pull_offer(const webrtc_answer_config& config)
         offer << "a=fingerprint:sha-256 " << config.fingerprint << "\r\n";
         offer << "a=setup:actpass\r\n";
     };
-    // 各 H.264 profile 都允许 level 不对称，服务端按源的 profile 选择。
     offer << "m=video " << config.port << " UDP/TLS/RTP/SAVPF 96 97 98 99\r\n";
     transport("0");
     for (const auto& [payload_type, profile] : {std::pair{96, "42e01f"}, std::pair{97, "42001f"}, std::pair{98, "4d001f"}, std::pair{99, "64001f"}})
@@ -1285,12 +1278,10 @@ std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp)
     for (const auto& media : answer->media)
     {
         const auto media_direction = lower_copy(media.direction);
-        // port 0 明确拒绝该轨道，inactive 是 recvonly offer 的合法无媒体应答。
         if (media.port == 0 || media_direction == "inactive")
         {
             continue;
         }
-        // 本客户端只接收共享传输上的媒体；活跃轨道不能被静默忽略为 video-only。
         if (!bundle_contains(*answer, media.mid) || media_direction != "sendonly")
         {
             return std::nullopt;
@@ -1308,7 +1299,6 @@ std::optional<whep_pull_answer> parse_whep_pull_answer(std::string_view sdp)
         bool supported = false;
         for (const auto& codec : media.codecs)
         {
-            // on_rtpmap 已过滤不属于当前 m= 的 PT；这里仅匹配本客户端固定 offer 的 codec。
             const auto encoding = lower_copy(codec.encoding_name);
             if (media_type == "video" && codec.payload_type >= 96 && codec.payload_type <= 99 &&
                 result.video_payload_type < 0 && encoding == "h264" && codec.clock_rate == 90'000U &&

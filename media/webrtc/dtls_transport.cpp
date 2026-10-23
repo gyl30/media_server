@@ -180,7 +180,6 @@ bool dtls_transport::startup(const dtls_certificate& certificate, dtls_role role
         return true;
     }
 
-    // 客户端立即发出 ClientHello，之后与服务端一样由收到的数据和超时重传推进握手。
     SSL_set_connect_state(ssl_.get());
     const auto result = SSL_do_handshake(ssl_.get());
     if ((result <= 0 && SSL_get_error(ssl_.get(), result) != SSL_ERROR_WANT_READ) || !pump_outgoing())

@@ -1,4 +1,3 @@
-// 控制台、视频资源、系统状态。所有数值都由真实快照确定性汇总；没有数据来源的指标只标注暂不支持。
 import { store, unifiedDevices, runningStreams, deviceHash, refresh, loadChannels, PUSH_PROTOCOLS } from "/store.js";
 import { h, icon, badge, protoTag, emptyState, errorMessage, formatClock, replaceKeepingFocus } from "/ui.js";
 
@@ -19,7 +18,6 @@ function loadingOrError(root) {
   return true;
 }
 
-// GB 点播状态来自通道列表：每次打开页面为在线设备取一次，之后由手动刷新更新，不随轮询逐台请求。
 function onlineChannelsOnce() {
   let done = false;
   return () => {
@@ -30,7 +28,6 @@ function onlineChannelsOnce() {
   };
 }
 
-// 通道数据时间：取已缓存通道中最早的一次请求时间；没有在线设备时为空。
 function channelsNote() {
   const online = store.devices.filter(device => device.online);
   if (online.length === 0) {

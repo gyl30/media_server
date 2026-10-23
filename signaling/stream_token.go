@@ -14,20 +14,16 @@ import (
 	"time"
 )
 
-// streamToken 是一次性播放 token。
 type streamToken struct {
 	streamID  string
 	expiresAt time.Time
 }
 
-// pushRun 是已通过发布认证的推流运行；verifiedAt 用于媒体对账的注册宽限。
 type pushRun struct {
 	streamID   string
 	verifiedAt time.Time
 }
 
-// tokens 只保存播放 token；推流接入凭据以数据库为准。prepared 是添加推流设备时已展示、尚未确认的凭据及其确认期限，
-// 确认添加时必须命中这里，未确认的凭据不能用于发布。pushRuns 是已通过发布认证的推流运行。
 type streamTokens struct {
 	mu       sync.Mutex
 	tokens   map[string]streamToken
@@ -97,7 +93,6 @@ type playbackURLs struct {
 var errSourceNotRunning = errors.New("source is not running")
 var errMediaNotReady = errors.New("media source is not ready")
 
-// Running-source locks precede token state for both admission and termination.
 func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs, error) {
 	s.live.mu.Lock()
 	defer s.live.mu.Unlock()
@@ -124,7 +119,6 @@ func (s *infrastructureServer) newPlaybackURLs(source playSource) (playbackURLs,
 	if streamID == "" || !s.streamRunningLocked(streamID) {
 		return playbackURLs{}, errSourceNotRunning
 	}
-	// 自动接入的拉流源和推流设备只为已注册的媒体源签发地址；GB 点播保留先签发、后接入的票据语义。
 	if source.LiveID == "" && !s.mediaReady(streamID) {
 		return playbackURLs{}, errMediaNotReady
 	}
@@ -249,7 +243,6 @@ func (s *infrastructureServer) consumeStreamToken(ctx context.Context, value, op
 	defer s.rtspPullMu.Unlock()
 	defer s.tokens.mu.Unlock()
 	now := s.live.sip.now()
-	// 推流凭据的流标识就是凭据本身；数据库原子消费保证只有一次认证成功，消费事实重启后仍然有效。
 	if operation == "publish" {
 		if value != streamID {
 			return "publish_identity_mismatch"

@@ -163,7 +163,6 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		writeHTTPError(writer, http.StatusNotFound, "channel_not_found")
 		return
 	}
-	// cancel 只控制动作事务/点动等待；STOP 必须使用独立 context，连续 STOP 不得取消它。
 	actionContext, cancel := context.WithCancel(request.Context())
 	s.live.ptzOwners[key] = cancel
 	s.live.mu.Unlock()
@@ -192,7 +191,6 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		}
 	}
 	if preset {
-		// 与已有 owner 的手动 STOP 在同一把锁内决定：成功释放或保留到 STOP 完成。
 		s.live.mu.Lock()
 		if startError == nil {
 			startError = actionContext.Err()
@@ -205,7 +203,6 @@ func (s *infrastructureServer) handlePTZ(writer http.ResponseWriter, request *ht
 		}
 		s.live.mu.Unlock()
 	}
-	// 等 START 的 Do 返回、Terminate 完成本地重传终止后，再尝试原目标 STOP。
 	control.SN = int(s.live.sip.messageSN.Add(1))
 	control.PTZCommand = "A50F0000000000B4"
 	body, stopError := xml.Marshal(control)

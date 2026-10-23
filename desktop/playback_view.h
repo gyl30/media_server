@@ -116,7 +116,6 @@ class playback_view final : public QWidget
     QElapsedTimer wall_clock_;
     qint64 wall_pts_{no_media_timestamp};
     qint64 audio_end_pts_{no_media_timestamp};
-    // 累计输出帧对应真实源PTS；已排入SDL的旧比例不能随新比例重解释。
     struct audio_span
     {
         qint64 first_frame{};

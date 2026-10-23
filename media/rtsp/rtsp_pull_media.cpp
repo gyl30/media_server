@@ -139,7 +139,6 @@ int rtsp_pull_media::on_demuxed_packet(avpacket_t* packet)
         return -1;
     }
 
-    // avpkt2bs 会缓存首次解析的编解码配置；ready 后配置变化结束当前 source generation。
     const auto track_result = update_track_from_packet(*packet);
     if (track_result < 0)
     {

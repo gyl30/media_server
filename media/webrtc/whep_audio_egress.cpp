@@ -185,7 +185,6 @@ void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress)
     {
         return;
     }
-    // worker 的 shutdown subscription 持有 processor，排队请求无需延长其终止后的生命。
     boost::asio::dispatch(released->worker_.io(),
                           [weak = std::weak_ptr<whep_audio_egress>(released)]()
                           {

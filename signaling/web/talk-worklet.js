@@ -1,12 +1,9 @@
-// 浏览器采样率的单声道 PCM → 带限8kHz → PCMA；单消息credit，迟到音频不补发。
 class TalkEncoder extends AudioWorkletProcessor {
   constructor() {
     super();
     if (!Number.isFinite(sampleRate) || sampleRate < 8000) throw new Error("音频上下文采样率不支持");
     this.kernel = null;
     if (sampleRate !== 8000) {
-      // Blackman窗sinc，中心3.7kHz、10ms支撑：保留3.4kHz语音并在4kHz前滚降。
-      // 核长随输入率缩放，约5ms群延迟；不在process内计算三角函数。
       const half = Math.ceil(sampleRate / 200);
       this.kernel = new Float64Array(2 * half + 1);
       const cutoff = 3700 / sampleRate;
@@ -39,7 +36,6 @@ class TalkEncoder extends AudioWorkletProcessor {
       this.phase += 8000;
       if (this.phase >= sampleRate) {
         this.phase -= sampleRate;
-        // 相位跨quantum保留；对已低通的相邻输入时刻插值，支持44.1k等非整数比。
         const fraction = this.phase / 8000;
         let value = 0, cursor = this.position;
         for (let tap = 0; tap < this.kernel.length; tap++) {
@@ -58,7 +54,6 @@ class TalkEncoder extends AudioWorkletProcessor {
   encode(value, time) {
     let sample = Math.max(-32768, Math.min(32767, Math.round(value * 32768)));
     const mask = sample >= 0 ? 0xd5 : 0x55;
-    // 对128个正量化级二分取最近级；线性输入以4为单位，与项目FFmpeg的S16编码一致。
     sample = Math.abs(sample >> 2);
     let low = 0, high = 127;
     while (low < high) {

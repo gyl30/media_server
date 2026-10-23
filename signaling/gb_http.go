@@ -169,6 +169,5 @@ func (s *infrastructureServer) handleCatalogQuery(writer http.ResponseWriter, re
 		writeHTTPError(writer, http.StatusBadGateway, "catalog_query_failed")
 		return
 	}
-	// SIP 受理不代表异步目录响应已经收齐，现有通道查询返回实际收到的目录。
 	writeJSON(writer, http.StatusAccepted, map[string]any{"device_id": deviceID, "sn": sn, "status": "accepted"})
 }

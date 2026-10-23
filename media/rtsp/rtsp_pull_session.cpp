@@ -67,7 +67,6 @@ bool should_setup_media(rtsp_client_t* client, int media)
         return false;
     }
 
-    // ireader 会压缩被忽略的 media，因此当前索引之前只有已经选择的 media。
     for (int selected = 0; selected < media; ++selected)
     {
         if (rtsp_client_get_media_type(client, selected) == type)
@@ -95,7 +94,6 @@ rtsp_pull_session::~rtsp_pull_session() = default;
 void rtsp_pull_session::startup()
 {
     const auto self = shared_from_this();
-    // 连接、协商和收流都受同一空闲时间约束，上游不再发送 RTP 时结束会话。
     idle_timer_.start(self,
                       [this]()
                       {
@@ -345,7 +343,6 @@ int rtsp_pull_session::on_setup()
         return -1;
     }
 
-    // 失败返回 -1 结束读循环，media_ 由 safe_shutdown 清理。
     media_ = std::make_unique<rtsp_pull_media>(worker_, config_.stream_id);
     if (!media_->startup(std::move(descriptions)))
     {

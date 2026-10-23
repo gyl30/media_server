@@ -21,7 +21,6 @@ PLUGINS = (
     "tls/libqopensslbackend.so",
 )
 FFMPEG_LIBRARIES = ("avutil", "avcodec", "avformat", "swscale", "swresample")
-# 当前 Ubuntu/Qt 组合的 libproxy 0.4.17 会按编译期绝对路径 dlopen，ldd 看不到这些资源。
 LIBPROXY_RESOURCES = (
     "modules/network_networkmanager.so",
     "modules/config_gnome3.so",
@@ -64,7 +63,6 @@ def dependencies(binary, env):
 
 
 def package_notice(path, licenses):
-    # 自定义编译器目录不是系统包的产物；不能借用另一个 GCC 包的版权说明冒充匹配。
     for candidate in (path, Path("/lib") / path.relative_to("/usr/lib") if path.is_relative_to("/usr/lib") else path):
         owner = subprocess.run(["dpkg-query", "-S", str(candidate)], text=True, capture_output=True, timeout=10)
         if owner.returncode != 0:
@@ -130,7 +128,6 @@ def main():
     if ffmpeg_version != (source / "RELEASE").read_text().strip():
         parser.error(f"FFmpeg 实际运行版本与许可源码不匹配：{ffmpeg_version}")
 
-    # Qt OpenSSL backend 通过 dlopen 加载这些库，不能只依赖 ldd 静态闭包。
     openssl_dir = Path(run(["pkg-config", "--variable=libdir", "openssl"]))
     tls_libraries = [openssl_dir / "libssl.so.3", openssl_dir / "libcrypto.so.3"]
     for library in tls_libraries:
@@ -148,7 +145,6 @@ def main():
             if not resource.is_file():
                 parser.error(f"本已验证的 libproxy 0.4.17 组合缺少运行资源：{resource}")
             libproxy_resources[LIBPROXY_BUNDLE / relative] = resource
-    # 主程序先载入的同 SONAME runtime 会被插件复用；单独 ldd 插件否则可能选中宿主旧 GCC。
     runtime_directories = {str(path.parent) for name, path in main_libraries.items()
                            if name in ("libstdc++.so.6", "libgcc_s.so.1", "libgomp.so.1")}
     env["LD_LIBRARY_PATH"] = os.pathsep.join([str(prefix / "lib"), *sorted(runtime_directories)])
@@ -158,7 +154,6 @@ def main():
         for name, path in dependencies(binary, env).items():
             previous = libraries.get(name)
             if previous is not None and previous != path:
-                # 同一 SONAME 必须使用同一已解析构件，而不是静默覆盖。
                 raise RuntimeError(f"库冲突 {name}: {previous} / {path}")
             libraries[name] = path
     for library in tls_libraries:
@@ -199,7 +194,6 @@ def main():
                 if entry["copyright"] is None:
                     unresolved_licenses.append(str(path))
         metadata.append(entry)
-    # Qt 6.2 的 OpenSSL 动态查找首先尝试 unversioned 名称；不能依赖宿主开发包提供别名。
     runtime_aliases = {"libssl.so": "libssl.so.3", "libcrypto.so": "libcrypto.so.3"}
     for alias, target in runtime_aliases.items():
         (output / "lib" / alias).symlink_to(target)

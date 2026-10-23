@@ -1,4 +1,3 @@
-// 设备管理：GB28181 设备、RTSP 拉流源、推流设备（RTMP / RTSP / WHIP）统一列表，以及添加、编辑、删除。
 import { api } from "/api.js";
 import { store, unifiedDevices, deviceHash, refresh, loadChannels, pushURLs, sourceReady, pullProtocol, PUSH_PROTOCOLS, PULL_PROTOCOLS } from "/store.js";
 import {
@@ -39,7 +38,6 @@ export function mountDevices(root, ctx) {
 
   function update() {
     const all = unifiedDevices();
-    // 只为还没有通道数据的在线 GB 设备请求一次通道列表，不随轮询全量刷新。
     const missing = all.filter(device => device.kind === "gb" && device.raw.online && !store.channels.has(device.id)).map(device => device.id);
     if (missing.length) void loadChannels(missing);
     const query = filters.query.trim().toLowerCase();
@@ -129,7 +127,6 @@ function rowActions(device, ctx) {
   return links;
 }
 
-// 带到实时监控的播放项；target 沿用 whep.js 的结构。
 export function playItem(device, channel = null) {
   if (device.kind === "gb") {
     return {
@@ -143,7 +140,6 @@ export function playItem(device, channel = null) {
   };
 }
 
-// GB28181 没有修改接口；拉流源修改连接参数后服务端用新配置重新拉流。
 export function editState(device) {
   if (device.kind === "gb") {
     return { ok: false, reason: "GB28181 设备暂不支持编辑" };
@@ -183,7 +179,6 @@ export function stopPush(device) {
   });
 }
 
-// 重新生成接入地址：旧地址立即失效；推流中由服务端拒绝。
 export async function renewPushURL(device) {
   try {
     await api.renewPushCredential(device.id);
@@ -194,7 +189,6 @@ export async function renewPushURL(device) {
   await refresh();
 }
 
-// 接入地址行只显示选择的推流协议。
 export function pushURLRows(urls) {
   return h("div", { class: "url-rows bordered" }, urls.map(([, label, url]) => h("div", { class: "url-row" },
     h("div", { class: "url-proto" }, h("strong", {}, label)), h("div", { class: "url-side" }, copyButton(url, ` ${label} 推流地址`)), h("div", { class: "url-value" }, url))));
@@ -233,14 +227,11 @@ const PUSH_HELP = {
   whip: "兼容 WHIP 的客户端向下面的 HTTP 地址发起 SDP 协商。",
 };
 
-// existing 为空时是添加；否则编辑（RTSP 拉流源或推流设备）。
 export function openDeviceDialog(existing = null) {
   const dialog = document.getElementById("device-dialog");
   const raw = existing?.raw;
-  // choice：gb / rtsp-pull / rtmp-pull / whep-pull / rtmp / rtsp / whip；推流编辑时为当前协议。
   let choice = existing ? (existing.kind === "rtsp" ? `${pullProtocol(raw.url)}-pull` : raw.protocol) : "gb";
   let busy = false;
-  // 添加推流设备时预生成的接入凭据；三种协议的地址共用它，切换协议不重新生成。
   let prepared = null;
   let prepareError = null;
   let preparing = false;
@@ -398,14 +389,12 @@ export function openDeviceDialog(existing = null) {
     h("div", { class: "dialog-foot" }, cancel, submit)));
   dialog.setAttribute("aria-label", existing ? "编辑设备" : "添加设备");
   render();
-  // 提交期间 Esc 不关闭对话框。
   const onCancel = event => { if (busy) event.preventDefault(); };
   dialog.addEventListener("cancel", onCancel);
   dialog.addEventListener("close", () => dialog.removeEventListener("cancel", onCancel), { once: true });
   openDialog(dialog, existing ? fields.name : picker);
 }
 
-// 与服务端 validPullSourceURL 一致：有主机名、不内嵌账号密码；RTMP 需要应用名与流名。
 function validPullURL(value, protocol) {
   try {
     const url = new URL(value);
@@ -419,7 +408,6 @@ function validPullURL(value, protocol) {
   }
 }
 
-// 返回与实际请求一致的成功提示。
 async function save(choice, existing, name, fields, prepared) {
   if (choice === "gb") {
     await api.createDevice({ device_id: fields.device_id.value.trim(), name });
@@ -442,7 +430,6 @@ async function save(choice, existing, name, fields, prepared) {
     await api.createSource(payload);
     return "已添加 RTMP 拉流源，正在连接";
   }
-  // WHEP 的 Bearer Token 存为 password：留空不发送（保留），填写覆盖，勾选清除发送空串。
   if (choice === "whep-pull") {
     if (fields.clear.checked) {
       payload.password = "";
@@ -465,7 +452,6 @@ async function save(choice, existing, name, fields, prepared) {
     await api.createSource(payload);
     return "已添加 RTSP 拉流源，正在连接";
   }
-  // 沿用现有 PATCH 语义：密码留空不发送（保留）；填写则覆盖；勾选清除或清空用户名则发送空串清除。
   payload.username = username;
   if (fields.clear.checked || (!username && existing.raw.username)) {
     payload.password = "";

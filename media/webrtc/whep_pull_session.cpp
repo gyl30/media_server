@@ -29,7 +29,6 @@ namespace
 
 constexpr auto http_timeout = std::chrono::seconds{5};
 constexpr auto establishment_timeout = std::chrono::seconds{15};
-// 固定 controlling / 积极提名的有限 ICE 检查；建立后独立检查对端的同意新鲜度授权期限。
 constexpr auto check_interval = std::chrono::milliseconds{100};
 constexpr auto consent_interval = std::chrono::seconds{5};
 constexpr auto consent_timeout = std::chrono::seconds{30};
@@ -63,7 +62,6 @@ struct http_result
     std::string body;
 };
 
-// 一次 HTTP/1.1 请求（WHEP 只用 http://）；DNS、连接、发送与读取共用一个期限。
 std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolver,
                                          const ada::url_aggregator& url,
                                          boost::beast::http::verb method,
@@ -146,10 +144,8 @@ std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolve
     };
 }
 
-// 会话结束后释放外部 WHEP 资源；与会话生命周期分离，只持有请求所需的数据。
 void delete_resource(worker_context& worker, std::string resource_url, std::string token)
 {
-    // Worker 的普通任务在 request_stop 时取消/拒绝创建；资源回收必须在 owner io 上继续排空。
     boost::asio::spawn(
         worker.io(),
         [resource_url = std::move(resource_url), token = std::move(token)](boost::asio::yield_context yield)
@@ -180,7 +176,6 @@ whep_pull_session::~whep_pull_session() = default;
 void whep_pull_session::startup()
 {
     const auto self = shared_from_this();
-    // HTTP 协商、ICE、DTLS 和收流都受同一空闲时间约束；建立后的媒体和同意检查响应刷新它。
     idle_timer_.start(self,
                       [this]()
                       {
@@ -196,7 +191,6 @@ void whep_pull_session::shutdown()
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
 }
 
-// 可重复执行：协商途中关闭后，迟到的 POST 结果会再次进入这里释放刚创建的外部资源。
 void whep_pull_session::safe_shutdown()
 {
     idle_timer_.stop();
@@ -255,7 +249,6 @@ void whep_pull_session::run(boost::asio::yield_context yield)
         });
 }
 
-// 绑定本端 UDP、提交 offer、解析应答并准备媒体接收；失败返回 false，由调用方关闭。
 bool whep_pull_session::negotiate(boost::asio::yield_context yield)
 {
     const auto port = media_port_pool::instance().acquire();
@@ -290,7 +283,6 @@ bool whep_pull_session::negotiate(boost::asio::yield_context yield)
     const auto result = http_exchange(resolver_, *endpoint, boost::beast::http::verb::post, offer, config_.token, yield);
     if (result && (result->status == 200U || result->status == 201U) && !result->location.empty())
     {
-        // 资源地址可以是相对地址；先记录，协商途中关闭或后续失败都能释放外部资源。
         if (const auto resource = ada::parse<ada::url_aggregator>(result->location, &*endpoint); resource && resource->get_protocol() == "http:")
         {
             resource_url_ = std::string(resource->get_href());
@@ -314,7 +306,6 @@ bool whep_pull_session::negotiate(boost::asio::yield_context yield)
     answer_ = parse_whep_pull_answer(result->body);
     if (answer_)
     {
-        // 这里只有绑定地址对应的一族 UDP socket；跳过不可由它发送的候选，保留同族直达路径。
         std::erase_if(answer_->candidates,
                       [this](const boost::asio::ip::udp::endpoint& candidate)
                       { return candidate.address().is_v4() != config_.local_address.is_v4(); });
@@ -398,7 +389,6 @@ void whep_pull_session::handle_packet(std::span<const std::uint8_t> packet, cons
     }
 }
 
-// 成功响应只接受本会话发出的事务且来自应答 candidate；首个成功的 candidate 即选中路径（积极提名）。
 void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const boost::asio::ip::udp::endpoint& endpoint)
 {
     if (const auto transaction = parse_stun_binding_success_response(packet, answer_->ice_pwd))
@@ -444,7 +434,6 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
                                                      self->send_udp(std::vector<std::uint8_t>(datagram.begin(), datagram.end()), *self->selected_);
                                                  }
                                              });
-        // 应答 setup:passive 表示对端等待本端发起 DTLS 握手。
         if (!dtls_->startup(*certificate_, answer_->setup == "passive" ? dtls_role::client : dtls_role::server))
         {
             spdlog::error("whep pull dtls startup failed {}", config_.stream_id);
@@ -455,7 +444,6 @@ void whep_pull_session::handle_stun(std::span<const std::uint8_t> packet, const 
         return;
     }
 
-    // 完整 ICE 实现的对端也会向本端检查；本端是 controlling 方，只接受 controlled 方的请求。
     const auto request = parse_stun_binding_request(packet, ice_ufrag_ + ":" + answer_->ice_ufrag, ice_pwd_);
     if (!request || !request->unknown_required_attributes.empty())
     {

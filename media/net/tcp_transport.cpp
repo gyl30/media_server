@@ -12,7 +12,7 @@ namespace media_server
 namespace
 {
 constexpr std::size_t write_high_water_mark = 1024U * 1024U;
-}    // namespace
+}
 
 tcp_transport::tcp_transport(boost::asio::ip::tcp::socket socket) : socket_(std::move(socket)) {}
 
@@ -54,7 +54,6 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
     }
 
     const bool writing = !write_queue_.empty();
-    // 对端停止读取时在途写不会完成，因此入队时限制尚未开始发送的字节数。
     if (writing && queued_write_bytes_ - write_queue_.front()->size() + data.size() > write_high_water_mark)
     {
         const auto callback = std::exchange(write_callback_, {});

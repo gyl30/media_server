@@ -29,8 +29,7 @@ type infrastructureServer struct {
 	sourceControlClosed bool
 	tokens              *streamTokens
 	tokenTTL            time.Duration
-	// 最近一次媒体对账中媒体源已注册的接收会话；整体替换，用于区分"接入中"和"已建立媒体源"。
-	readyStreams atomic.Pointer[map[string]struct{}]
+	readyStreams        atomic.Pointer[map[string]struct{}]
 }
 
 func (s *infrastructureServer) mediaReady(streamID string) bool {

@@ -1,4 +1,3 @@
-// 设备详情：信息、接入操作与本页独立 WHEP 播放器；打开页面不会自动点播或播放。
 import { api } from "/api.js";
 import { store, unifiedDevices, refresh, refreshing, syncChannels, loadChannels, pushURLs, formatClock, sourceReady, PUSH_PROTOCOLS } from "/store.js";
 import {
@@ -35,11 +34,9 @@ export function mountDetail(root, ctx, kind, id) {
   root.replaceChildren(page);
 
   const find = () => unifiedDevices().find(device => device.kind === kind && device.id === id);
-  // 刚创建或通过链接打开的设备可能还不在快照里：只有挂载之后的快照仍找不到，才判定为不存在。
   const mountedAt = Date.now();
 
   function update() {
-    // 管理点播的迟到完成可以保留上游，但不能把已经离开的详情重新写回路由容器。
     if (!mounted) return;
     const device = find();
     if (!device) {
@@ -180,7 +177,6 @@ export function mountDetail(root, ctx, kind, id) {
         }, icon("square", "sm"), "停止") : null));
   }
 
-  // 点播接口在 live 就绪后同时返回一组播放地址；界面以随后的通道快照为准。
   async function startLive(channel) {
     if (pending.has(channel.channel_id)) {
       return;
@@ -210,7 +206,6 @@ export function mountDetail(root, ctx, kind, id) {
     });
   }
 
-  // 接入地址：一次性使用，确认添加或重新生成后 5 分钟内首次接入有效。推流中不能重新生成，避免隐式断开现有发布。
   function publishCard(device) {
     const raw = device.raw;
     const publishing = raw.state === "publishing";
@@ -248,7 +243,6 @@ export function mountDetail(root, ctx, kind, id) {
     const channel = (device.channels || []).find(item => item.channel_id === channelID);
     const item = kind === "gb" ? device.raw.online && channel?.status === "ON" ? playItem(device, channel) : null
       : (kind === "rtsp" ? sourceReady(device.raw) : device.raw.state === "publishing") ? playItem(device) : null;
-    // 选择另一个通道只释放原 viewer；同一个目标的媒体结束由播放器显示，不自动恢复。
     if (player && kind === "gb" && player.key !== `gb:${id}:${channelID}`) closePlayer();
     if (player) {
       if (item) player.target = item.target;

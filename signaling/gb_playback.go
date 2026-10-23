@@ -16,7 +16,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// 这是 1x 回放的应用资源上限，不是设备已交付全部录像的保证。
 const playbackCompletionGrace = time.Minute
 const playbackDrainTimeout = 20 * time.Second
 const playbackControlTimeout = 5 * time.Second
@@ -35,7 +34,6 @@ type playbackTicket struct {
 	Deadline   time.Time `json:"deadline"`
 }
 
-// historyMediaSeconds 是按倍速传完录像所需的整秒数，向上取整且不做加法溢出。
 func historyMediaSeconds(startTime, endTime int64, speed int) int64 {
 	duration := endTime - startTime
 	seconds := duration / int64(speed)
@@ -45,13 +43,11 @@ func historyMediaSeconds(startTime, endTime int64, speed int) int64 {
 	return seconds
 }
 
-// handleHistoryCreate 创建历史回放或下载实例；下载要求 speed 为 1/2/4，回放不接受 speed。
 func (s *infrastructureServer) handleHistoryCreate(writer http.ResponseWriter, request *http.Request, session gbSession) {
 	var command struct {
-		StartTime int64 `json:"start_time"`
-		EndTime   int64 `json:"end_time"`
-		// 区分字段缺失与 0/null：回放只要出现 speed 就拒绝。
-		Speed json.RawMessage `json:"speed"`
+		StartTime int64           `json:"start_time"`
+		EndTime   int64           `json:"end_time"`
+		Speed     json.RawMessage `json:"speed"`
 	}
 	deviceID, channelID := request.PathValue("device_id"), request.PathValue("channel_id")
 	var speed int
@@ -273,7 +269,7 @@ func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter,
 			return
 		}
 		if value == 0 {
-			value = 0 // JSON -0 也是范围起点，MANSRTSP 中统一写为 0。
+			value = 0
 		}
 	}
 	err := s.live.controlPlayback(request.Context(), id, action, value)
@@ -292,7 +288,6 @@ func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter,
 		s.logger.Warn("playback control rejected", "playback_id", id, "action", action, "error", err)
 		writeHTTPError(writer, http.StatusBadGateway, "device_rejected")
 	default:
-		// 超时或传输失败时设备可能已执行，不自动发送相反指令。
 		s.logger.Warn("playback control result unknown", "playback_id", id, "action", action, "error", err)
 		status := http.StatusBadGateway
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sip.ErrTransactionTimeout) {
@@ -302,7 +297,6 @@ func (s *infrastructureServer) handlePlaybackControl(writer http.ResponseWriter,
 	}
 }
 
-// controlPlayback 在原对话内发送一次 GB/T 28181-2016 附录 B 的 MANSRTSP INFO；受理不证明媒体生效，也不改变 owner 期限。
 func (s *liveService) controlPlayback(ctx context.Context, id, action string, value float64) error {
 	s.mu.Lock()
 	var session *liveSession
@@ -323,7 +317,6 @@ func (s *liveService) controlPlayback(ctx context.Context, id, action string, va
 		return errPlaybackControlBusy
 	}
 	defer session.dialog.Unlock()
-	// 取得对话门后复查：停止可能已先发出 BYE。
 	s.mu.Lock()
 	streaming := s.sessions[session.key] == session && session.state == liveStreaming && session.ctx.Err() == nil
 	s.mu.Unlock()
@@ -353,7 +346,6 @@ func (s *liveService) controlPlayback(ctx context.Context, id, action string, va
 	if response.StatusCode != 200 {
 		return fmt.Errorf("%w: %w", errPlaybackRejected, sipgo.ErrDialogResponse{Res: response})
 	}
-	// 附录 J 示例的 200 可无内层响应；有内层响应时须为同一 CSeq 的 200。
 	if inner := strings.TrimSpace(string(response.Body())); inner != "" {
 		lines := strings.Split(strings.ReplaceAll(inner, "\r\n", "\n"), "\n")
 		status := strings.Fields(lines[0])
@@ -384,7 +376,6 @@ func (s *liveService) handlePlaybackEnd(request *sip.Request, transaction sip.Se
 }
 
 func (s *liveService) finishPlayback(session *liveSession, sendBye bool) {
-	// ACK 后设备可立即通知结束，而 INVITE owner 还在校验 SDP 或更新接收 SSRC。
 	<-session.established
 	s.mu.Lock()
 	if s.sessions[session.key] != session || session.state != liveStreaming {
@@ -398,7 +389,6 @@ func (s *liveService) finishPlayback(session *liveSession, sendBye bool) {
 		if sendBye {
 			s.sendBye(session)
 		}
-		// SIP 结束并不证明 TCP 媒体尾部已排空；给现有接收器一个有界收尾窗口。
 		timer := time.NewTimer(playbackDrainTimeout)
 		defer timer.Stop()
 		select {

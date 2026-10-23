@@ -56,7 +56,6 @@ bool start_tcp_listener(
                 }
                 if (accept_error)
                 {
-                    // 不区分错误原因：固定间隔重试，监听恢复后继续服务，日志也不会刷屏。
                     spdlog::error("accept failed port {} error {}", port, accept_error.message());
                     boost::asio::steady_timer retry(yield.get_executor(), accept_retry_interval);
                     boost::system::error_code wait_error;

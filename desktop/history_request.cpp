@@ -18,10 +18,8 @@ void request_history(platform_client& client,
                      std::function<void(const platform_response& response)> failed)
 {
     const QPointer<QObject> session = consumer;
-    // 平台地址切换不能把旧实例的迟到补偿发送到新平台。
     const QPointer<platform_client> owner = new platform_client(&client);
     owner->set_base_url(client.base_url());
-    // 创建响应必须有界收尾：使用方取消后仍读取实例身份，只回收本次独占实例。
     auto* response_context = new QObject(owner);
     owner->request(
         "POST",

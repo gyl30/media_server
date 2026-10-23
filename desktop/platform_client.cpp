@@ -120,7 +120,6 @@ QNetworkReply* platform_client::request(const QByteArray& method,
                 }
                 callback(std::move(response));
             });
-    // 独立于调用方 context；它销毁后，响应仍有界结束并回收。
     connect(reply, &QNetworkReply::finished, reply, &QObject::deleteLater);
     timer->start(timeout_ms);
     return reply;

@@ -387,7 +387,6 @@ monitor_window::monitor_window(QWidget* parent)
     alarm_status_->setText(QStringLiteral("显示设备上报的近期报警；平台只在内存保留最近 1000 条，重启后清空"));
     alarm_layout->addWidget(alarm_status_);
     const auto alarm_index = controls->addTab(alarms, QStringLiteral("报警"));
-    // 只在报警页可见时轮询；切回时按游标补读平台保留的近期报警。
     alarm_timer_->setInterval(2000);
     connect(alarm_timer_, &QTimer::timeout, this, &monitor_window::poll_alarms);
     connect(controls,
@@ -608,7 +607,6 @@ monitor_window::~monitor_window()
         record_dialog_->close();
     }
     stop_all();
-    // 基类析构删除子画面时 stop() 仍会发信号，此时本窗口已不完整；先断开画面到本窗口的回调。
     for (auto* view : views_)
     {
         disconnect(view, nullptr, this, nullptr);
@@ -682,7 +680,6 @@ void monitor_window::poll_alarms()
                     QStringLiteral("报警查询失败：%1；稍后自动再查").arg(response.ok() ? QStringLiteral("响应无效") : response.error));
                 return;
             }
-            // 游标包含平台实例身份，重启后即使序号已追平，也按新实例的记录重建。
             if (result.value(QStringLiteral("reset")).toBool())
             {
                 alarm_list_->clear();
@@ -726,7 +723,6 @@ void monitor_window::set_layout(int count)
         grid_->addWidget(view, index / columns, index % columns);
         view->show();
     }
-    // QGridLayout 保留曾使用过的行列；显式清除旧 stretch，避免缩布局后留空白。
     for (int index = 0; index < 4; ++index)
     {
         grid_->setRowStretch(index, index < columns ? 1 : 0);
@@ -1301,7 +1297,6 @@ void monitor_window::play_item(QTreeWidgetItem* item)
             delete item->takeChild(0);
         }
         const auto path = QStringLiteral("/api/devices/%1/channels").arg(QString::fromLatin1(QUrl::toPercentEncoding(id)));
-        // 请求归属于该树项的独立 context；刷新设备树会先销毁 listing_。
         auto* context = new QObject(listing_);
         item->setDisabled(true);
         client_.request("GET",
@@ -1382,7 +1377,6 @@ void monitor_window::closeEvent(QCloseEvent* event)
             return;
         }
     }
-    // stop_all() 已让实时录制收尾保存，关闭录像窗口已取消下载；等它们写完或删除临时文件再退出。
     for (auto* recorder : qApp->findChildren<record_thread*>())
     {
         if (recorder->isRunning())

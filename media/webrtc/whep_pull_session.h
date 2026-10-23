@@ -28,7 +28,6 @@ namespace media_server
 {
 class worker_context;
 
-// url 为外部 WHEP 端点（http://），token 非空时作为 Bearer 认证；local_address 为本端 UDP 绑定与 candidate 地址。
 struct whep_pull_config
 {
     std::string stream_id;
@@ -37,9 +36,6 @@ struct whep_pull_config
     boost::asio::ip::address local_address;
 };
 
-// 平台作为 WHEP 客户端从外部端点接收媒体：HTTP 提交 offer，作为 ICE controlling 方向应答中的 candidate 做连通性检查，
-// 完成 DTLS（按应答的 setup 决定角色）与 SRTP 后，经 whip_media_receiver 解包、Opus 转 AAC 并注册媒体源。
-// 只支持应答 candidate 可直接到达的网络（无 STUN/TURN 服务器、不做 Trickle ICE 与 ICE restart）。
 class whep_pull_session final : public session, public std::enable_shared_from_this<whep_pull_session>
 {
    public:

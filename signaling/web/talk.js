@@ -1,4 +1,3 @@
-// 单个详情页拥有一次麦克风上传；Go 只控制，音频直接通过 WS 到媒体服务器。
 export class TalkCapture {
   constructor(onState) {
     this.onState = onState;
@@ -25,7 +24,7 @@ export class TalkCapture {
     const audio = session.audio = new AudioContext();
     const resumed = audio.resume().catch(() => {
       if (!session.controller.signal.aborted) void this.stop("浏览器未允许启动音频上下文");
-    }); // 用户点击期间发起，不依靠自动播放例外；立即处理拒绝，避免权限等待时的未处理 promise。
+    });
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 }, video: false });
     if (session.controller.signal.aborted) {
       stream.getTracks().forEach(track => track.stop());
@@ -40,7 +39,6 @@ export class TalkCapture {
     session.source = audio.createMediaStreamSource(stream);
     session.node = new AudioWorkletNode(audio, "gb-talk-encoder", { channelCount: 1, channelCountMode: "explicit" });
     session.node.onprocessorerror = () => void this.stop("音频编码器已停止");
-    // 保留有界请求到响应结束；取消时仍接收迟到 ticket，随后按准确 ID 删除。
     session.request = (async () => {
       const response = await fetch(`/api/devices/${session.deviceID}/talk`, { method: "POST",
         headers: { "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(15000) });
@@ -82,7 +80,6 @@ export class TalkCapture {
           void this.stop("音频编码长度错误");
           return;
         }
-        // 主线程卡顿后，丢弃已经排队超过200ms的唯一消息，而非突发补发。
         if (audio.currentTime - time < 0.2) {
           try {
             socket.send(packet);
@@ -95,7 +92,7 @@ export class TalkCapture {
         session.node.port.postMessage(null);
       };
       session.source.connect(session.node);
-      session.node.connect(audio.destination); // processor 输出保持零，不回放麦克风。
+      session.node.connect(audio.destination);
       this.onState("transmitting");
     };
   }
@@ -130,11 +127,10 @@ export class TalkCapture {
     if (!session) return Promise.resolve();
     if (session.cleanup) return session.cleanup;
     session.controller.abort();
-    // 先登记实际 cleanup promise，再触发 UI/网络回调，重复 stop 只等待同一次收尾。
     session.cleanup = Promise.resolve().then(async () => {
       try {
         await session.request;
-      } catch { /* 创建失败或响应丢失，Go/媒体期限清理未知身份。 */ }
+      } catch { }
       if (session.id) {
         try {
           const response = await fetch(`/api/devices/${session.deviceID}/talk`, { method: "DELETE",

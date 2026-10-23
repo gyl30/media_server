@@ -1,6 +1,3 @@
-// 各页面共用的 DOM 构造、提示、确认框、格式化与错误文案。不持有业务状态。
-
-// h("button", { class: "btn", onclick }, "文字", node, [nodes], null)
 export function h(tag, props = {}, ...children) {
   const element = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -37,7 +34,6 @@ export function badge(label, tone = "neutral", dot = true) {
   return h("span", { class: `badge ${tone}` }, dot ? h("span", { class: "dot" }) : null, label);
 }
 
-// 协议标签显示实际接入协议。
 export function protoTag(protocol) {
   return h("span", { class: "proto" }, protocol);
 }
@@ -63,7 +59,6 @@ export function toast(message, tone = "info") {
   window.setTimeout(() => item.remove(), 3200);
 }
 
-// 打开时聚焦；关闭后焦点回到触发元素。busy 期间禁止 Esc 关闭。
 export function openDialog(dialog, initialFocus) {
   const trigger = document.activeElement;
   dialog.addEventListener("close", () => {
@@ -77,7 +72,6 @@ export function openDialog(dialog, initialFocus) {
 
 const confirmDialog = () => document.getElementById("confirm-dialog");
 
-// 危险操作确认。action 抛错时保留确认框并显示原因，可直接重试；成功后关闭。
 export function confirmAction({ title, message, confirmLabel, action }) {
   const dialog = confirmDialog();
   const button = dialog.querySelector("[data-confirm]");
@@ -166,7 +160,6 @@ export function errorMessage(error) {
   return error instanceof TypeError ? "无法连接服务器，请检查网络后重试" : "操作失败，请稍后重试";
 }
 
-// 非安全来源（HTTP 访问内网地址）没有 navigator.clipboard，退回到选区复制。
 export async function copyText(value) {
   try {
     await navigator.clipboard.writeText(value);
@@ -208,7 +201,6 @@ export function formatClock(timestamp) {
   return new Date(timestamp).toLocaleTimeString("zh-CN", { hour12: false });
 }
 
-// 轮询会重建列表区域；用 data-key 把键盘焦点还给重建后的同一个控件。
 export function replaceKeepingFocus(container, nodes) {
   const active = container.contains(document.activeElement) ? document.activeElement : null;
   const key = active?.dataset.key;

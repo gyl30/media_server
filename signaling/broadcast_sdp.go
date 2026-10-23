@@ -10,7 +10,6 @@ import (
 	"github.com/pion/sdp/v3"
 )
 
-// 首个控制子集仅接受注册来源同 IP 的单路 UDP PCMA，媒体所有权由调用方保留。
 func parseBroadcastOffer(body []byte, registeredSource string) (broadcastPeer, error) {
 	remote, err := netip.ParseAddrPort(registeredSource)
 	if err != nil || !remote.Addr().Is4() {

@@ -29,7 +29,6 @@ namespace media_server
 namespace
 {
 
-// 控制面对账使用：列出仍在运行的输入会话；ready 表示该会话的媒体源已确定轨道并注册。
 boost::beast::http::response<boost::beast::http::string_body> make_receiver_list_response(
     const boost::beast::http::request<boost::beast::http::string_body>& request)
 {
@@ -59,7 +58,6 @@ bool is_control_path(std::string_view path)
 
 bool http_session::control_authorized(const boost::beast::http::request<boost::beast::http::string_body>& request)
 {
-    // 播放端口需要对浏览器开放，控制接口必须单独鉴权。
     if (config_.control_token.empty())
     {
         boost::system::error_code error;
@@ -120,7 +118,6 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
     }
     if (is_control_path(path) && !control_authorized(request))
     {
-        // 与控制接口其他错误一致返回 JSON，信令据此识别为明确拒绝。
         boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::forbidden, request.version());
         response.set(boost::beast::http::field::server, "media_server");
         response.set(boost::beast::http::field::content_type, "application/json");

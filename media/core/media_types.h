@@ -36,7 +36,6 @@ struct media_track
     std::uint32_t clock_rate{};
     std::uint16_t channel_count{};
 
-    // H.264 为 Annex-B SPS/PPS；H.265 为 Annex-B VPS/SPS/PPS；AAC 为 AudioSpecificConfig。
     std::vector<std::uint8_t> codec_config;
 };
 
@@ -47,7 +46,6 @@ struct media_frame
     std::int64_t pts_ns{};
     bool key_frame{};
 
-    // H.264/H.265 为 Annex-B access unit；AAC 为完整 ADTS frame；Opus 为单个 packet。
     byte_buffer payload;
 };
 

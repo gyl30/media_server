@@ -122,7 +122,6 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
     else
     {
         constexpr std::int64_t ntp_fraction = std::int64_t{1} << 32U;
-        // NTP is unsigned 32.32 fixed-point; interpret modular subtraction as the signed session-time delta.
         const auto delta = std::bit_cast<std::int64_t>(ntp - rtcp_sync_->ntp);
         pts = rtcp_sync_->pts + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
     }

@@ -141,7 +141,6 @@ void gb28181_audio_sender::read_rtcp(boost::asio::yield_context yield)
         {
             continue;
         }
-        // 只处理本通道使用的BYE；不把无关XR/反馈交给通用第三方解析器。
         auto packet = std::span<const std::uint8_t>{buffer.data(), bytes};
         bool received_bye{};
         while (!packet.empty())

@@ -1,5 +1,3 @@
-// 应用外壳：hash 路由、侧边栏、快照轮询。每个页面 mount 后返回 { update, unmount }，
-// 路由变化（侧边栏、前进 / 后退、手改 hash）统一经过 hashchange，旧页面先 unmount 再挂载新页面。
 import { store, subscribe, refresh, refreshing, stopRefresh, unifiedDevices, loadChannels } from "/store.js";
 import { h, icon, toast, formatClock, errorMessage } from "/ui.js";
 import { mountDevices } from "/devices.js";
@@ -27,13 +25,11 @@ let current = null;
 let route = null;
 
 const ctx = {
-  // 由其他页面带到实时监控的一路播放；监控页挂载时取走。
   pendingPlay: null,
   playInCenter(item) {
     ctx.pendingPlay = item;
     location.hash = "#monitor";
   },
-  // 从设备列表"通道"进入实时监控并展开该 GB 设备。
   monitorDevice: "",
   openMonitorDevice(deviceID) {
     ctx.monitorDevice = deviceID;
@@ -111,7 +107,6 @@ subscribe(() => {
   current?.update();
 });
 
-// 手动刷新同时更新已缓存的 GB 通道；自动轮询只刷新三个列表。
 refreshButton.addEventListener("click", async () => {
   refreshButton.disabled = true;
   refreshButton.setAttribute("aria-busy", "true");
