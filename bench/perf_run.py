@@ -754,7 +754,7 @@ def run(args):
             if any(process.poll() is not None for process in publishers) and args.fault == "none":
                 result["status"] = "FAIL"
                 result["capacity_boundary"] = "UPSTREAM_FAILED"
-            server_samples = [sample["server"] for sample in result["samples"] if not sample["server"].get("exited")]
+            server_samples = [sample["server"] for sample in result["samples"] if "udp_drops" in sample["server"]]
             if len(server_samples) >= 2:
                 result.setdefault("server_evidence", {})["udp_drops"] = server_samples[-1]["udp_drops"] - server_samples[0]["udp_drops"]
             if any(value > 0 for value in result.get("server_evidence", {}).values()):
@@ -771,6 +771,8 @@ def run(args):
                 if len(samples) < 2:
                     continue
                 begin, end = samples[0], samples[-1]
+                socket_samples = [item for item in samples if "udp_drops" in item]
+                udp_drops = socket_samples[-1]["udp_drops"] - socket_samples[0]["udp_drops"] if socket_samples else 0
                 elapsed = (end["monotonic_ns"] - begin["monotonic_ns"]) / 1e9
                 group_media = group_by_name.get(name, {}).get("measurement", {})
                 cores = group_media.get("client_cpu_cores", (end["cpu"] - begin["cpu"]) / elapsed)
@@ -780,7 +782,7 @@ def run(args):
                     "thread_cpu_cores": {tid: (state["cpu"] - begin["threads"].get(tid, state)["cpu"]) / elapsed for tid, state in end["threads"].items()},
                     "thread_sample_window": {"start": begin["monotonic_ns"], "end": end["monotonic_ns"]}}
                 hot_thread = max(result["process_metrics"][name]["thread_cpu_cores"].values(), default=0) >= 0.9
-                if name not in ("server", "runner") and (hot_thread or end["udp_drops"] > begin["udp_drops"] or cores >= 0.9 * min(1 if name.startswith(tuple(OUTPUTS)) else len(end["cpu_affinity"]), len(end["cpu_affinity"])) or
+                if name not in ("server", "runner") and (hot_thread or udp_drops > 0 or cores >= 0.9 * min(1 if name.startswith(tuple(OUTPUTS)) else len(end["cpu_affinity"]), len(end["cpu_affinity"])) or
                                          end["fd"] >= resource.getrlimit(resource.RLIMIT_NOFILE)[0] * 0.8):
                     result["status"] = "BLOCKED" if not success else "INCONCLUSIVE"
                     result["capacity_boundary"] = "CLIENT_RESOURCE"
