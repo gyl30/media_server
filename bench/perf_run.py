@@ -894,7 +894,15 @@ def run(args):
                     result["cleanup"].setdefault("errors", []).append(f"{path}: {error}; remaining deletions skipped")
                     break
             for process in publishers:
-                stop_process(process)
+                if process.poll() is None:
+                    process.send_signal(signal.SIGTERM)
+            deadline = time.monotonic() + 10
+            for process in publishers:
+                try:
+                    process.wait(timeout=max(0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
             time.sleep(0.5)
             try:
                 result["cleanup"]["remaining_owned_receivers"] = sorted(receiver_list(control) & set(source_ids))
