@@ -96,11 +96,8 @@ void media_stream::end()
 
 std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
 {
-    if (ended_)
-    {
-        return {};
-    }
-    if (const auto output = ps_output_.lock())
+    std::scoped_lock lock(output_mutex_);
+    if (auto output = ps_output_.lock())
     {
         return output;
     }
@@ -115,7 +112,7 @@ std::shared_ptr<mpeg_ps_output> media_stream::ps_output()
 
 std::shared_ptr<flv_tag_output> media_stream::flv_output()
 {
-    std::scoped_lock lock(flv_output_mutex_);
+    std::scoped_lock lock(output_mutex_);
     if (auto output = flv_output_.lock())
     {
         return output;

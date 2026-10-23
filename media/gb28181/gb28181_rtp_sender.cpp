@@ -43,28 +43,12 @@ bool gb28181_rtp_sender::startup(std::uint8_t payload_type, std::uint32_t ssrc)
             break;
         }
     }
-    const auto self = shared_from_this();
-    const auto source = stream_;
-    boost::asio::post(source->worker().io(),
-                      [self, source]()
-                      {
-                          auto output = source->ps_output();
-                          boost::asio::post(self->worker_.io(),
-                                            [self, output = std::move(output)]()
-                                            {
-                                                if (!self->stream_)
-                                                {
-                                                    return;
-                                                }
-                                                if (!output)
-                                                {
-                                                    self->on_end();
-                                                    return;
-                                                }
-                                                self->ps_output_ = output;
-                                                output->add_sink(self);
-                                            });
-                      });
+    ps_output_ = stream_->ps_output();
+    if (!ps_output_)
+    {
+        return false;
+    }
+    ps_output_->add_sink(shared_from_this());
     return true;
 }
 
