@@ -133,6 +133,7 @@ export function errorMessage(error) {
     device_delete_failed: "设备暂时无法删除，媒体资源清理未完成，请稍后重试",
     device_store_failed: "设备数据暂时无法保存，请稍后重试",
     live_stop_failed: "点播暂时无法停止，请稍后重试", live_start_failed: "设备暂时无法连接，请稍后重试",
+    talk_start_failed: "设备未响应对讲请求，请稍后重试", talk_busy: "设备正在对讲中",
     invalid_request: "输入有误，请检查后重试", conflict: "资源正在使用，请稍后重试", not_running: "媒体流未运行",
     media_not_ready: "媒体尚未就绪，请等待接入完成",
     whep_create_404: "播放链接已失效，请重新播放", whep_create_409: "媒体尚未就绪，请稍后重新播放",

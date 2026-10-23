@@ -1,3 +1,5 @@
+import { errorMessage } from "/ui.js";
+
 export class TalkCapture {
   constructor(onState) {
     this.onState = onState;
@@ -43,7 +45,7 @@ export class TalkCapture {
       const response = await fetch(`/api/devices/${session.deviceID}/talk`, { method: "POST",
         headers: { "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(15000) });
       const ticket = await response.json();
-      if (!response.ok) throw new Error(`对讲建立失败：${ticket.error || response.status}`);
+      if (!response.ok) throw new Error(errorMessage({ code: ticket.error }));
       if (!/^[0-9a-f]{64}$/.test(ticket.talk_id)) throw new Error("平台返回无效的对讲身份");
       session.id = ticket.talk_id;
       const upload = new URL(ticket.upload_url);

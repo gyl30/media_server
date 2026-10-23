@@ -114,7 +114,7 @@ function gbStatus(device) {
   }
   return {
     label: "离线", tone: "neutral", group: "offline",
-    detail: device.last_seen ? `最后心跳 ${formatAgo(Date.parse(device.last_seen))}` : "尚未注册",
+    detail: device.last_seen ? `最后心跳 ${formatAgo(Date.parse(device.last_seen))}` : "",
   };
 }
 
@@ -125,9 +125,6 @@ export function sourceReady(source) {
 export function sourceStatus(source) {
   if (sourceReady(source)) {
     return { label: "拉流中", tone: "success", group: "online", detail: "" };
-  }
-  if (source.session?.state === "created") {
-    return { label: "等待媒体", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
   }
   if (source.session) {
     return { label: "正在连接", tone: "pending", group: "online", detail: "" };
