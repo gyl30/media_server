@@ -56,9 +56,13 @@ input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、G
 
 每组需要正常退出、ready/progressing 等于请求数，且实际窗口覆盖率至少 0.99；同时检查服务端退出、队列、UDP drops、客户端资源与清理。结果可能是 PASS、FAIL、INCONCLUSIVE、BLOCKED 或 UNSUPPORTED，必须同时读取 `capacity_boundary`、errors 和 cleanup，不能只看总字节数。
 
-progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱和时帧会在内部队列中累积，viewer 仍然 progressing，但媒体逐渐落后于实时。原生客户端因此按视频媒体时间戳在窗口内的推进量除以窗口时长，输出 `viewer_realtime_min/p10/p50/max`；任一组最小值低于 `--min-realtime-ratio`（默认 0.98）时判为 `SERVER_SATURATED`。准备阶段失败时，如果服务端核在某秒的合计繁忙率达到 95% 或单核达到 98%，且客户端核未饱和、失败原因不是客户端资源或授权，也判为 `SERVER_SATURATED`。`perf_capacity.py` 把 `SERVER_UNSTABLE` 与 `SERVER_SATURATED` 都作为失败边界。
+progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱和时帧会在内部队列中累积，viewer 仍然 progressing，但媒体逐渐落后于实时。原生客户端因此按视频媒体时间戳在窗口内的推进量除以窗口时长，输出 `viewer_realtime_min/p10/p50/max`。窗口内服务端核合计繁忙率达到 90%、单核达到 98% 或服务端单线程达到 0.95 核时视为饱和；饱和且任一组最小值低于 `--min-realtime-ratio`（默认 0.98）或已经失败，判为 `SERVER_SATURATED`，未饱和时的落后判为 FAIL/`UNCONFIRMED`。准备阶段失败时，如果服务端核在某秒的合计繁忙率达到 95% 或单核达到 98%，且客户端核未饱和、失败原因不是客户端资源或启动，也判为 `SERVER_SATURATED`。授权失败只有在签名桩没有拒绝、最长处理时间低于 1 s 时才视为服务端侧（服务端等待鉴权有截止时间），否则视为工具问题。`perf_capacity.py` 把 `SERVER_UNSTABLE` 与 `SERVER_SATURATED` 都作为失败边界。
 
-`cpu_busy` 记录窗口内服务端核、其 SMT 兄弟核和客户端核在 `/proc/stat` 中的繁忙核数与 softirq，以及服务端核的 APERF/MPERF 平均工作频率、C0 驻留率和每秒周期数（需要 root 读取 `/dev/cpu/*/msr`）。调频策略会随负载改变频率，低负载下的 CPU 时间不能直接按线性外推到饱和点，比较成本时应结合周期数。
+`cpu_busy` 记录窗口内服务端核、其 SMT 兄弟核和客户端核在 `/proc/stat` 中的繁忙核数与 softirq，以及服务端核的 APERF/MPERF 平均工作频率、C0 驻留率和每秒周期数（需要 root 读取 `/dev/cpu/*/msr`）。调频策略会随负载改变频率，低负载下的 CPU 时间不能直接按线性外推到饱和点，比较成本时应结合周期数。`--perf-stat` 在窗口内对服务端核运行 `perf stat`，把 cycles、instructions、ref-cycles 和 IPC 写入 `perf_stat`；指令数不随频率变化，适合跨负载比较。
+
+进程 CPU、PSS 和 FD 每秒采样，套接字队列每 5 次采样读取一次，避免 runner 在上万连接时自身成为瓶颈；runner 的有效采样少于窗口秒数的 80% 时结果为 INCONCLUSIVE/`RUNNER_RESOURCE`。`namespace_tcp_delta` 是窗口前后 namespace 内 TCP/UDP 重传、错误和 listen 溢出计数的差值；`verification` 记录签名桩的调用数、拒绝数和处理耗时 p99/最大值。
+
+`--churn PROTOCOL:COUNT` 在窗口内每 `--churn-period` 秒（不少于 12，默认 20）启动一组额外 viewer，停留周期减 8 秒后退出，用于观察会话反复建立和回收；任一轮失败则整次失败，HLS 不支持。`--cleanup-settle N` 在清理完成后等待 N 秒再取一次服务端快照（`cleanup.server_settled`），用于核对会话、FD 和内存是否回收。
 
 容量入口示例：
 
@@ -73,7 +77,7 @@ python3 bench/perf_capacity.py --output /tmp/media-capacity-new \
   --workers 4 --server-cpus 0-3 --client-cpus 4-7
 ```
 
-driver 只用 HEALTHY 与 SERVER_UNSTABLE 建立边界，其他原因属于未决结果；到达 maximum 只证明所测上限。`--plan-only` 不运行负载。比较前后版本时固定硬件、CPU、依赖、输入码流、网络与窗口，分别保存服务端和客户端 ELF SHA；避免与构建、其他负载或采样同时争抢资源。
+driver 只用 HEALTHY 与 SERVER_UNSTABLE 建立边界，其他原因属于未决结果；到达 maximum 只证明所测上限。每轮 runner 退出后，driver 最多等待 60 s 让该轮进程组全部退出，超时强制结束，避免残留服务端占用端口污染下一轮。`--plan-only` 不运行负载。比较前后版本时固定硬件、CPU、依赖、输入码流、网络与窗口，分别保存服务端和客户端 ELF SHA；避免与构建、其他负载或采样同时争抢资源。
 
 ## Profiling
 
