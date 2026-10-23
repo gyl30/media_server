@@ -121,7 +121,7 @@ function rowActions(device, ctx) {
     if (sourceReady(device.raw)) links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
   } else {
     links.push(action("编辑", "edit", () => openDeviceDialog(device)));
-    if (device.raw.state === "publishing") links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
+    if (device.raw.media_ready) links.push(action("预览", "preview", () => ctx.playInCenter(playItem(device))));
   }
   links.push(action("删除", "delete", () => deleteDevice(device, ctx), { neg: true }));
   return links;

@@ -156,7 +156,8 @@ export function mountDetail(root, ctx, kind, id) {
     const busy = pending.has(channel.channel_id);
     const label = channel.name || channel.channel_id;
     const state = channel.status !== "ON" ? badge("离线", "neutral")
-      : live?.state === "streaming" ? badge("点播中", "success")
+      : live?.media_ready ? badge("点播中", "success")
+      : live?.state === "streaming" ? badge("等待媒体", "pending")
       : live ? badge(LIVE_LABEL[live.state] || live.state, "pending")
       : badge("未点播", "neutral", false);
     return h("div", { class: `channel${selected ? " is-selected" : ""}` },
@@ -242,7 +243,7 @@ export function mountDetail(root, ctx, kind, id) {
   function renderPlayback(device) {
     const channel = (device.channels || []).find(item => item.channel_id === channelID);
     const item = kind === "gb" ? device.raw.online && channel?.status === "ON" ? playItem(device, channel) : null
-      : (kind === "rtsp" ? sourceReady(device.raw) : device.raw.state === "publishing") ? playItem(device) : null;
+      : (kind === "rtsp" ? sourceReady(device.raw) : device.raw.media_ready) ? playItem(device) : null;
     if (player && kind === "gb" && player.key !== `gb:${id}:${channelID}`) closePlayer();
     if (player) {
       if (item) player.target = item.target;

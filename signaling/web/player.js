@@ -2,7 +2,11 @@ import { WHEPPreview } from "/whep.js";
 import { store, deviceHash } from "/store.js";
 import { h, icon, protoTag, errorMessage } from "/ui.js";
 
-export const PLAYER_STATE = { preparing: "正在准备", negotiating: "正在建立 WHEP 连接", streaming: "播放中", stopping: "正在关闭", failed: "播放失败", ended: "已结束" };
+export const PLAYER_STATE = { preparing: "正在请求播放", negotiating: "正在连接", streaming: "等待画面", stopping: "正在关闭", failed: "播放失败", ended: "已结束" };
+
+export function isPlaying(player) {
+  return player.state === "streaming" && player.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA;
+}
 
 export function createPlayer(item, onUpdate) {
   const player = { ...item, state: "preparing", error: "", gesture: false, streamingAt: 0 };
@@ -23,6 +27,7 @@ export function createPlayer(item, onUpdate) {
     player.gesture = false;
     onUpdate(player);
   });
+  player.video.addEventListener("loadeddata", () => onUpdate(player));
   return player;
 }
 
@@ -34,10 +39,11 @@ export function startPlayer(player) {
 export function renderPlayer(player, { slot = null, active = false, detailLink = false, onClose }) {
   const stop = handler => event => { event.stopPropagation(); handler(); };
   const failed = player.state === "failed" || player.state === "ended";
-  const label = PLAYER_STATE[player.state] || player.state;
+  const playing = isPlaying(player);
+  const label = playing ? "播放中" : PLAYER_STATE[player.state] || player.state;
   player.element.className = `tile is-${player.state}${active ? " is-active" : ""}`;
   player.element.setAttribute("aria-label", `${slot === null ? "" : `画面 ${slot}：`}${player.label}，${label}`);
-  player.top.replaceChildren(h("span", { class: `live-dot${player.state === "streaming" ? " on" : failed ? " err" : ""}` }),
+  player.top.replaceChildren(h("span", { class: `live-dot${playing ? " on" : failed ? " err" : ""}` }),
     h("span", { class: "name", title: player.label }, player.label), protoTag(player.protocol),
     h("span", { class: "tile-state" }, label),
     h("button", { type: "button", class: "tile-btn", "aria-label": "关闭画面", title: "关闭画面（只释放本画面）", onclick: stop(onClose) }, icon("x", "sm")));
@@ -48,7 +54,7 @@ export function renderPlayer(player, { slot = null, active = false, detailLink =
         h("button", { type: "button", class: "btn sm", onclick: stop(onClose) }, "关闭")));
   } else if (player.state === "streaming" && player.gesture) {
     player.center.replaceChildren(h("button", { type: "button", class: "btn primary", onclick: stop(() => void player.video.play().catch(() => {})) }, icon("play", "sm"), "点击播放"));
-  } else if (player.state !== "streaming") {
+  } else if (!playing) {
     player.center.replaceChildren(h("span", { class: "spinner", "aria-hidden": "true" }), h("span", {}, `${label}…`));
   } else {
     player.center.replaceChildren();
@@ -58,8 +64,8 @@ export function renderPlayer(player, { slot = null, active = false, detailLink =
     h("button", { type: "button", class: "tile-btn", "aria-label": player.video.muted ? "打开声音" : "静音", title: player.video.muted ? "打开声音" : "静音",
       disabled: player.state !== "streaming", onclick: stop(() => { player.video.muted = !player.video.muted; renderPlayer(player, { slot, active, detailLink, onClose }); }) },
     icon(player.video.muted ? "volume-off" : "volume", "sm")),
-    detailLink ? h("a", { class: "tile-btn", href: deviceHash(player.kind, player.deviceID), "aria-label": "设备详情", title: "设备详情（离开实时监控，关闭全部画面）",
-      onclick: event => event.stopPropagation() }, icon("info", "sm")) : null,
+    ...(detailLink ? [h("a", { class: "tile-btn", href: deviceHash(player.kind, player.deviceID), "aria-label": "设备详情", title: "设备详情（离开实时监控，关闭全部画面）",
+      onclick: event => event.stopPropagation() }, icon("info", "sm"))] : []),
     h("button", { type: "button", class: "tile-btn", "aria-label": fullscreen ? "退出全屏" : "全屏", title: fullscreen ? "退出全屏（Esc）" : "全屏",
       onclick: stop(() => (document.fullscreenElement ? document.exitFullscreen() : player.element.requestFullscreen()).catch(() => {})) },
     icon(fullscreen ? "minimize" : "maximize", "sm")));

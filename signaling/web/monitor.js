@@ -1,6 +1,6 @@
 import { store, unifiedDevices, syncChannels, loadChannels, sourceReady } from "/store.js";
 import { h, icon, protoTag, toast, errorMessage, replaceKeepingFocus } from "/ui.js";
-import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged } from "/player.js";
+import { createPlayer, renderPlayer, startPlayer, endIfStreamChanged, isPlaying } from "/player.js";
 import { playItem } from "/devices.js";
 
 const KIND_ICON = { gb: "camera", rtsp: "link", push: "radio" };
@@ -9,7 +9,7 @@ function previewable(device) {
   if (device.kind === "rtsp") {
     return sourceReady(device.raw) ? "" : device.status.label;
   }
-  return device.raw.state === "publishing" ? "" : device.status.label;
+  return device.raw.media_ready ? "" : device.status.label;
 }
 
 export function mountVideo(root, ctx) {
@@ -69,7 +69,7 @@ export function mountVideo(root, ctx) {
 
   function renderBar() {
     const visible = tiles();
-    const playing = visible.filter(tile => tile.state === "streaming").length;
+    const playing = visible.filter(isPlaying).length;
     const current = slots[active];
     selectedInfo.textContent = `当前选中：画面 ${active + 1} · ${current ? current.label : "空画面"}`;
     footCount.textContent = `已放入 ${visible.length} 路 · 播放中 ${playing}`;
@@ -144,7 +144,7 @@ export function mountVideo(root, ctx) {
             : !device.channels ? h("p", { class: "monitor-note" }, device.channelError ? `通道加载失败：${errorMessage(device.channelError)}` : "正在获取通道…")
             : matchedChannels.length === 0 ? h("p", { class: "monitor-note" }, "暂无通道")
             : matchedChannels.map(channel => sourceRow(playItem(device, channel), channel.name || channel.channel_id,
-              channel.status === "ON" ? "" : "通道离线", channel.live?.state === "streaming" ? "点播中" : "可点播", playing))) : null));
+              channel.status === "ON" ? "" : "通道离线", channel.live?.media_ready ? "点播中" : "可点播", playing))) : null));
         continue;
       }
       if (!match(device.name, device.id, device.protocol, device.mode)) continue;

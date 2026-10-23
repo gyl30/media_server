@@ -127,7 +127,7 @@ export function sourceStatus(source) {
     return { label: "拉流中", tone: "success", group: "online", detail: "媒体源已建立" };
   }
   if (source.session?.state === "created") {
-    return { label: "接入中", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
+    return { label: "等待媒体", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
   }
   if (source.session) {
     return { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" };
@@ -148,7 +148,8 @@ const PUSH_STATUS = {
 export function pushStatus(device) {
   const status = PUSH_STATUS[device.state];
   if (device.state === "publishing") {
-    return { ...status, detail: `已接入 ${formatDuration(Date.now() - Date.parse(device.used_at))}` };
+    const detail = `已接入 ${formatDuration(Date.now() - Date.parse(device.used_at))}`;
+    return device.media_ready ? { ...status, detail } : { label: "等待媒体", tone: "pending", group: "online", detail };
   }
   if (device.state === "pending") {
     return { ...status, detail: `${formatClock(device.expires_at)} 前首次接入有效` };
@@ -189,7 +190,7 @@ export function runningStreams() {
   const streams = [];
   for (const device of store.devices) {
     for (const channel of channelsOf(device.device_id) || []) {
-      if (channel.live?.state === "streaming") {
+      if (channel.live?.media_ready) {
         streams.push({
           kind: "gb", protocol: "GB28181", streamID: channel.live.live_id, deviceID: device.device_id, name: `${device.name} · ${channel.name || channel.channel_id}`,
           detail: channel.channel_id, target: { device_id: device.device_id, channel_id: channel.channel_id, live_id: channel.live.live_id },
@@ -204,7 +205,7 @@ export function runningStreams() {
     }
   }
   for (const device of store.pushDevices) {
-    if (device.state === "publishing") {
+    if (device.media_ready) {
       streams.push({ kind: "push", protocol: PUSH_PROTOCOLS[device.protocol] || "推流", streamID: device.token, deviceID: device.device_id, name: device.name, detail: "推流", target: { push_device_id: device.device_id } });
     }
   }
