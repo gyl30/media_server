@@ -19,12 +19,17 @@ struct media_counters
     std::uint64_t video_messages{};
     std::uint64_t audio_bytes{};
     std::uint64_t audio_messages{};
+    std::uint64_t video_media_ms{};
 };
 
 template <typename Client>
 media_counters sample_media(const Client& client)
 {
-    return {client.received_bytes(), client.received_messages(), client.received_audio_bytes(), client.received_audio_messages()};
+    return {client.received_bytes(),
+            client.received_messages(),
+            client.received_audio_bytes(),
+            client.received_audio_messages(),
+            client.video_media_ms()};
 }
 
 struct media_progress

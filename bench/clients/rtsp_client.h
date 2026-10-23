@@ -35,6 +35,7 @@ class rtsp_client final
     [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
     [[nodiscard]] std::uint64_t received_audio_bytes() const noexcept { return received_audio_bytes_; }
     [[nodiscard]] std::uint64_t received_audio_messages() const noexcept { return received_audio_messages_; }
+    [[nodiscard]] std::uint64_t video_media_ms() const noexcept;
 
    private:
     static int send_callback(void* param, const char* uri, const void* request, std::size_t bytes);

@@ -12,6 +12,9 @@ from pathlib import Path
 from perf_run import OUTPUTS
 
 
+FAILED_BOUNDARIES = ("SERVER_UNSTABLE", "SERVER_SATURATED")
+
+
 def split_load(total, protocols):
     base, extra = divmod(total, len(protocols))
     if base == 0:
@@ -28,7 +31,7 @@ def search(execute, start, step, granularity, maximum, healthy_repeats=3, failed
         if boundary == "HEALTHY":
             healthy = count
             count += step
-        elif boundary == "SERVER_UNSTABLE":
+        elif boundary in FAILED_BOUNDARIES:
             failed = count
             break
         else:
@@ -41,14 +44,14 @@ def search(execute, start, step, granularity, maximum, healthy_repeats=3, failed
         boundary = execute(middle)
         if boundary == "HEALTHY":
             healthy = middle
-        elif boundary == "SERVER_UNSTABLE":
+        elif boundary in FAILED_BOUNDARIES:
             failed = middle
         else:
             return {"status": "INCONCLUSIVE", "reason": boundary, "healthy_lower_bound": healthy, "failed_upper_bound": failed}
     if healthy == 0:
         return {"status": "INCONCLUSIVE", "reason": "NO_HEALTHY_BOUNDARY", "failed_upper_bound": failed}
-    for count, expected in [(healthy, "HEALTHY")] * healthy_repeats + [(failed, "SERVER_UNSTABLE")] * failed_repeats:
-        if execute(count) != expected:
+    for count, expected in [(healthy, ("HEALTHY",))] * healthy_repeats + [(failed, FAILED_BOUNDARIES)] * failed_repeats:
+        if execute(count) not in expected:
             return {"status": "INCONCLUSIVE", "reason": "BOUNDARY_NOT_REPEATABLE", "healthy_lower_bound": healthy, "failed_upper_bound": failed}
     return {"status": "PASS", "healthy_capacity": healthy, "first_failed": failed,
             "overload_diagnostic_counts": [max(failed, ((healthy * 110 + 9999) // 10000) * 100),
@@ -106,8 +109,8 @@ def run_round(command, directory, timeout):
             failure = "runner status contradicts its exit code"
         elif (boundary == "HEALTHY") != (state == "PASS"):
             failure = "runner status contradicts HEALTHY boundary"
-        elif boundary == "SERVER_UNSTABLE" and state != "FAIL":
-            failure = "SERVER_UNSTABLE requires a failed workload"
+        elif boundary in FAILED_BOUNDARIES and state != "FAIL":
+            failure = f"{boundary} requires a failed workload"
     if failure:
         return {"status": "INCONCLUSIVE", "boundary": failed_boundary, "error": failure,
                 "exit_code": exit_code, "log": str(log), "result": str(result_file) if result_file.exists() else None}
@@ -170,7 +173,7 @@ def main():
             reason = None
             for count in counts:
                 boundary = execute(count)
-                if boundary not in ("HEALTHY", "SERVER_UNSTABLE"):
+                if boundary not in ("HEALTHY", *FAILED_BOUNDARIES):
                     reason = boundary
                     break
             result = {"status": "PASS" if all(item["status"] == "PASS" for item in rounds) else "INCONCLUSIVE", "rounds": rounds}

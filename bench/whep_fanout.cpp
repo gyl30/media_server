@@ -35,6 +35,8 @@ namespace
 
 using clock_type = std::chrono::steady_clock;
 
+constexpr std::uint64_t video_clock_khz = 90;
+
 struct configuration
 {
     std::string whep_url;
@@ -218,14 +220,12 @@ class play_session final : public std::enable_shared_from_this<play_session>
                  std::shared_ptr<media_server::bench::webrtc_client_peer> peer,
                  std::string resource_url,
                  std::size_t index,
-                 std::uint8_t video_payload_type,
                  bool expect_audio,
                  clock_type::time_point started)
         : results_(std::move(results)),
           peer_(std::move(peer)),
           resource_url_(std::move(resource_url)),
           index_(index),
-          video_payload_type_(video_payload_type),
           expect_audio_(expect_audio),
           started_(started)
     {
@@ -259,6 +259,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
 
     [[nodiscard]] std::uint64_t video_packets() const noexcept { return video_packets_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t audio_packets() const noexcept { return audio_packets_.load(std::memory_order_relaxed); }
+    [[nodiscard]] std::uint64_t video_media_ms() const noexcept { return video_media_ticks_.load(std::memory_order_relaxed) / video_clock_khz; }
     [[nodiscard]] std::uint64_t received_bytes() const noexcept { return received_bytes_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t received_packets() const noexcept { return received_packets_.load(std::memory_order_relaxed); }
     [[nodiscard]] std::uint64_t received_media_datagrams() const noexcept { return peer_->received_media_datagrams(); }
@@ -276,13 +277,14 @@ class play_session final : public std::enable_shared_from_this<play_session>
             return;
         }
         const auto payload_type = static_cast<std::uint8_t>(packet[1] & 0x7fU);
-        if (payload_type == video_payload_type_)
+        if (payload_type == media_server::bench::webrtc_h264_payload_type || payload_type == media_server::bench::webrtc_h265_payload_type)
         {
             if (!video_health_.observe(packet))
             {
                 fail("rtp_health", "video sequence gap or timestamp reversal");
                 return;
             }
+            video_media_ticks_.store(video_health_.advanced(), std::memory_order_relaxed);
             ++video_packets_;
             if (!pli_sent_)
             {
@@ -305,7 +307,8 @@ class play_session final : public std::enable_shared_from_this<play_session>
                 pli_sent_ = peer_->send_rtcp(pli);
             }
         }
-        else if (payload_type == 111U)
+        else if (payload_type == media_server::bench::webrtc_opus_payload_type || payload_type == media_server::bench::webrtc_pcma_payload_type ||
+                 payload_type == media_server::bench::webrtc_pcmu_payload_type)
         {
             if (!audio_health_.observe(packet))
             {
@@ -346,13 +349,13 @@ class play_session final : public std::enable_shared_from_this<play_session>
     std::shared_ptr<media_server::bench::webrtc_client_peer> peer_;
     std::string resource_url_;
     std::size_t index_{};
-    std::uint8_t video_payload_type_{};
     bool expect_audio_{};
     clock_type::time_point started_;
     std::atomic_uint64_t video_packets_{};
     std::atomic_uint64_t audio_packets_{};
     std::atomic_uint64_t received_bytes_{};
     std::atomic_uint64_t received_packets_{};
+    std::atomic_uint64_t video_media_ticks_{};
     media_server::bench::rtp_health video_health_;
     media_server::bench::rtp_health audio_health_;
     bool pli_sent_{};
@@ -500,7 +503,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                auto session = std::make_shared<play_session>(results, peer, response.location, index, 102U, !config.video_only, started);
+                auto session = std::make_shared<play_session>(results, peer, response.location, index, !config.video_only, started);
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });
@@ -595,11 +598,12 @@ int main(int argc, char** argv)
             std::uint64_t bytes{};
             std::uint64_t video{};
             std::uint64_t audio{};
+            std::uint64_t media_ms{};
         };
         std::vector<session_sample> session_before;
         for (const auto& session : sessions)
         {
-            session_before.push_back({session->received_bytes(), session->video_packets(), session->audio_packets()});
+            session_before.push_back({session->received_bytes(), session->video_packets(), session->audio_packets(), session->video_media_ms()});
         }
         const auto process_before = sample_process();
         const auto started = clock_type::now();
@@ -618,7 +622,10 @@ int main(int argc, char** argv)
             std::uint64_t progress_bytes_min = std::numeric_limits<std::uint64_t>::max();
             for (std::size_t index = 0; index < sessions.size(); ++index)
             {
-                const session_sample current{sessions[index]->received_bytes(), sessions[index]->video_packets(), sessions[index]->audio_packets()};
+                const session_sample current{sessions[index]->received_bytes(),
+                                             sessions[index]->video_packets(),
+                                             sessions[index]->audio_packets(),
+                                             sessions[index]->video_media_ms()};
                 const auto video = current.video - progress_before[index].video;
                 const auto audio = current.audio - progress_before[index].audio;
                 progress_count += video > 0 && (config.video_only || audio > 0) ? 1U : 0U;
@@ -644,6 +651,8 @@ int main(int argc, char** argv)
         std::size_t progressing{};
         std::vector<std::uint64_t> viewer_bytes;
         viewer_bytes.reserve(sessions.size());
+        std::vector<double> viewer_realtime;
+        viewer_realtime.reserve(sessions.size());
         std::uint64_t min_video_packets = std::numeric_limits<std::uint64_t>::max();
         std::uint64_t min_audio_packets = std::numeric_limits<std::uint64_t>::max();
         for (std::size_t index = 0; index < sessions.size(); ++index)
@@ -651,11 +660,14 @@ int main(int argc, char** argv)
             const auto video = sessions[index]->video_packets() - session_before[index].video;
             const auto audio = sessions[index]->audio_packets() - session_before[index].audio;
             viewer_bytes.push_back(sessions[index]->received_bytes() - session_before[index].bytes);
+            viewer_realtime.push_back(static_cast<double>(sessions[index]->video_media_ms() - session_before[index].media_ms) / 1000.0 / elapsed);
             min_video_packets = std::min(min_video_packets, video);
             min_audio_packets = std::min(min_audio_packets, audio);
             progressing += video > 0 && (config.video_only || audio > 0) ? 1U : 0U;
         }
         std::ranges::sort(viewer_bytes);
+        std::ranges::sort(viewer_realtime);
+        const auto realtime = [&](std::size_t percentile) { return viewer_realtime[(viewer_realtime.size() - 1U) * percentile / 100U]; };
         const auto viewer_rate = [&](std::size_t percentile)
         { return static_cast<double>(viewer_bytes[(viewer_bytes.size() - 1U) * percentile / 100U]) / elapsed; };
         std::cout << "phase=measurement requested=" << config.viewers << " ready=" << results->media_ready.load()
@@ -670,7 +682,8 @@ int main(int argc, char** argv)
                   << " viewer_bytes_per_second_min=" << viewer_rate(0) << " viewer_bytes_per_second_p10=" << viewer_rate(10)
                   << " viewer_bytes_per_second_p50=" << viewer_rate(50) << " viewer_bytes_per_second_p90=" << viewer_rate(90)
                   << " viewer_bytes_per_second_max=" << viewer_rate(100) << " viewer_video_packets_min=" << min_video_packets
-                  << " viewer_audio_packets_min=" << min_audio_packets
+                  << " viewer_audio_packets_min=" << min_audio_packets << " viewer_realtime_min=" << realtime(0)
+                  << " viewer_realtime_p10=" << realtime(10) << " viewer_realtime_p50=" << realtime(50) << " viewer_realtime_max=" << realtime(100)
                   << " generator_cpu_cores=" << (process_after.cpu_seconds - process_before.cpu_seconds) / elapsed
                   << " generator_rss_kib=" << process_after.rss_kib << " generator_pss_kib=" << process_after.pss_kib
                   << " generator_fds=" << process_after.fds << std::endl;

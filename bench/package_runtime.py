@@ -75,7 +75,7 @@ def main():
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     dirty = subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=all"], text=True)
     submodules = subprocess.check_output(["git", "submodule", "status", "--recursive"], text=True).splitlines()
-    executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "http_flv_fanout", "rtsp_publisher", "gb_ps_fanout")
+    executables = ("media_server", "whep_fanout", "whip_publisher", "rtmp_fanout", "rtsp_fanout", "http_flv_fanout", "gb_fanout", "rtsp_publisher", "gb_ps_fanout")
     files = [(args.build_dir / name, Path("build") / name) for name in executables]
     files.extend((path, Path("bench") / path.name) for path in Path("bench").glob("*.py") if path.name != "package_runtime.py")
     files.append((Path("bench/requirements.txt"), Path("bench/requirements.txt")))

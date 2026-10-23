@@ -19,6 +19,13 @@ extern "C"
 namespace media_server::bench
 {
 
+namespace
+{
+
+constexpr std::uint64_t video_clock_khz = 90;
+
+}
+
 rtsp_client::rtsp_client(boost::asio::io_context& io, std::string path)
     : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path)
 {
@@ -77,6 +84,18 @@ boost::asio::awaitable<boost::system::error_code> rtsp_client::consume_one()
         co_return boost::asio::error::fault;
     }
     co_return boost::system::error_code{};
+}
+
+std::uint64_t rtsp_client::video_media_ms() const noexcept
+{
+    for (std::size_t index = 0; index < audio_channels_.size(); ++index)
+    {
+        if (!audio_channels_[index])
+        {
+            return packet_health_[index].advanced() / video_clock_khz;
+        }
+    }
+    return 0;
 }
 
 void rtsp_client::cancel() noexcept

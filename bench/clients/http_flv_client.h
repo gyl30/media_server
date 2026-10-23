@@ -34,6 +34,7 @@ class http_flv_client final
     [[nodiscard]] std::uint64_t received_messages() const noexcept { return video_messages_; }
     [[nodiscard]] std::uint64_t received_audio_bytes() const noexcept { return audio_bytes_; }
     [[nodiscard]] std::uint64_t received_audio_messages() const noexcept { return audio_messages_; }
+    [[nodiscard]] std::uint64_t video_media_ms() const noexcept { return video_timestamps_.advanced(); }
 
    private:
     boost::asio::awaitable<boost::system::error_code> read_exact(std::span<std::uint8_t> data);

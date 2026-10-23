@@ -12,9 +12,9 @@
 | `bench/perf_validate.py` | 对正式测量框架做无效/过期/重放票据、源停止及取消负对照；不产生容量数据 |
 | `bench/perf_profile.py` | CPU record/stat、off-CPU、已有 jemalloc dump 报告 |
 | `bench/package_runtime.py` | 打包媒体服务、客户端、Python 工具、fixture 和动态依赖 |
-| `bench/hls_client.py`、`bench/gb_sender_fanout.py` | HLS viewer 与 GB sender 网络负载 |
+| `bench/hls_client.py` | HLS viewer 网络负载 |
 | `gb_ps_fanout`、`bench/gb_ps_fanout.py` | 共享 PS 封装微基准，不代表网络吞吐或解码 |
-| `rtmp_fanout`、`rtsp_fanout`、`http_flv_fanout`、`whep_fanout` | 原生协议客户端；对应源码在 `bench/` 和 `bench/clients/` |
+| `rtmp_fanout`、`rtsp_fanout`、`http_flv_fanout`、`whep_fanout`、`gb_fanout` | 原生协议客户端；对应源码在 `bench/` 和 `bench/clients/`。`gb_fanout` 通过控制接口创建 GB sender，按 UDP/TCP active/TCP passive 接收 RTP/PS，结束时删除自己创建的 sender |
 | `rtsp_publisher`、`whip_publisher` | 原生发布客户端 |
 
 同时保留独立负载入口：`performance_baseline.py`、`publish_only.py`、`mixed_fanout.py`、`rtmp_publish.py`、`rtsp_publish.py`、`whip_publish.py`、`rtmp_fanout.py`、`rtsp_fanout.py`、`http_flv_fanout.py`、`hls_fanout.py`、`whep_fanout.py`、`gb_network.py`（均位于 `bench/`）。它们各有进程、地址和窗口约定，不与正式 runner 的结果直接混合；部分使用旧本机固定流名，运行前需核对当前授权条件。
@@ -44,7 +44,9 @@ python3 bench/perf_run.py \
 
 outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
 
-input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、GB UDP/TCP 和 existing。`rtsp_pull` 通过 `POST /pull/create` 创建主动 RTSP 拉流；接口路径已修正，但该模式尚未完成实际运行验证。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
+input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、GB UDP/TCP 和 existing。拉流与 GB 输入先在客户端核上启动一个上游实例，再通过 `POST /pull/create` 或 GB sender/receiver 接口接入被测服务。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
+
+`--fixture` 可以是一路 H.264/H.265 视频加一路 AAC/Opus/G.711 音频；客户端与输出协议是否支持对应编码需另行确认。`--decode-probe` 在测量窗口内用 ffprobe 对 RTMP/RTSP/FLV/HLS 输出各解码 6 秒，结果写入 `decode_probe` 并参与判定。
 
 自管模式启动自己的授权夹具和媒体进程。`--input existing` 必须提供 `--sources-file`、`--signaling-url`、`--server-pid`、`--control-token`，并使用匹配的 `--server-bin`；它只停止自己创建的客户端，不停止外部 DUT。sources.json 每项含 `stream_id` 和 `play_body`（其中指定 source_id、push_device_id 或 live_id）；声明 publisher PID 时还须提供 publisher_starttick。真实发布入口 `perf_publish.py --help` 给出生成这些数据的参数。
 
@@ -53,6 +55,10 @@ input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、GB UDP/TCP 和 existing�
 所有 viewer 就绪后 runner 写入 `measurement.start`，共享单调时钟窗口，并分别采样 server、publisher、client、runner 和系统资源。输出目录包含日志、凭据、命令及 `result.json`，按私有数据保存。
 
 每组需要正常退出、ready/progressing 等于请求数，且实际窗口覆盖率至少 0.99；同时检查服务端退出、队列、UDP drops、客户端资源与清理。结果可能是 PASS、FAIL、INCONCLUSIVE、BLOCKED 或 UNSUPPORTED，必须同时读取 `capacity_boundary`、errors 和 cleanup，不能只看总字节数。
+
+progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱和时帧会在内部队列中累积，viewer 仍然 progressing，但媒体逐渐落后于实时。原生客户端因此按视频媒体时间戳在窗口内的推进量除以窗口时长，输出 `viewer_realtime_min/p10/p50/max`；任一组最小值低于 `--min-realtime-ratio`（默认 0.98）时判为 `SERVER_SATURATED`。准备阶段失败时，如果服务端核在某秒的合计繁忙率达到 95% 或单核达到 98%，且客户端核未饱和、失败原因不是客户端资源或授权，也判为 `SERVER_SATURATED`。`perf_capacity.py` 把 `SERVER_UNSTABLE` 与 `SERVER_SATURATED` 都作为失败边界。
+
+`cpu_busy` 记录窗口内服务端核、其 SMT 兄弟核和客户端核在 `/proc/stat` 中的繁忙核数与 softirq，以及服务端核的 APERF/MPERF 平均工作频率、C0 驻留率和每秒周期数（需要 root 读取 `/dev/cpu/*/msr`）。调频策略会随负载改变频率，低负载下的 CPU 时间不能直接按线性外推到饱和点，比较成本时应结合周期数。
 
 容量入口示例：
 

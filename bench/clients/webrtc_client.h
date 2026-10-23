@@ -15,6 +15,12 @@
 namespace media_server::bench
 {
 
+constexpr std::uint8_t webrtc_h264_payload_type = 102;
+constexpr std::uint8_t webrtc_h265_payload_type = 104;
+constexpr std::uint8_t webrtc_opus_payload_type = 111;
+constexpr std::uint8_t webrtc_pcmu_payload_type = 0;
+constexpr std::uint8_t webrtc_pcma_payload_type = 8;
+
 enum class webrtc_client_direction
 {
     publish,

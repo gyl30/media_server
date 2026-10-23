@@ -17,12 +17,19 @@ class timestamp_health
         {
             return false;
         }
+        if (last_)
+        {
+            advanced_ += timestamp - *last_;
+        }
         last_ = timestamp;
         return true;
     }
 
+    [[nodiscard]] std::uint64_t advanced() const noexcept { return advanced_; }
+
    private:
     std::optional<std::uint32_t> last_;
+    std::uint64_t advanced_{};
 };
 
 class rtp_health
@@ -40,6 +47,7 @@ class rtp_health
         {
             ssrc_ = ssrc;
             sequence_.reset();
+            previous_advanced_ += timestamp_.advanced();
             timestamp_ = {};
         }
         if (sequence_ && static_cast<std::uint16_t>(sequence - *sequence_) != 1)
@@ -49,6 +57,8 @@ class rtp_health
         sequence_ = sequence;
         return timestamp_.observe(read_u32(packet.subspan(4)));
     }
+
+    [[nodiscard]] std::uint64_t advanced() const noexcept { return previous_advanced_ + timestamp_.advanced(); }
 
    private:
     static std::uint32_t read_u32(std::span<const std::uint8_t> bytes)
@@ -60,6 +70,7 @@ class rtp_health
     std::optional<std::uint32_t> ssrc_;
     std::optional<std::uint16_t> sequence_;
     timestamp_health timestamp_;
+    std::uint64_t previous_advanced_{};
 };
 
 }    // namespace media_server::bench

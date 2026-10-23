@@ -34,6 +34,7 @@ class rtmp_client final
     [[nodiscard]] std::uint64_t received_messages() const noexcept { return received_messages_; }
     [[nodiscard]] std::uint64_t received_audio_bytes() const noexcept { return received_audio_bytes_; }
     [[nodiscard]] std::uint64_t received_audio_messages() const noexcept { return received_audio_messages_; }
+    [[nodiscard]] std::uint64_t video_media_ms() const noexcept { return video_timestamps_.advanced(); }
 
    private:
     static int send_callback(void* param, const void* header, std::size_t header_bytes, const void* payload, std::size_t payload_bytes);

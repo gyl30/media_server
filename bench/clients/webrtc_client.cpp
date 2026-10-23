@@ -314,14 +314,15 @@ webrtc_client_context::~webrtc_client_context() = default;
 
 std::string webrtc_client_context::make_offer(webrtc_client_direction direction) const
 {
-    const auto media_direction = direction == webrtc_client_direction::publish ? "sendonly" : "recvonly";
+    const bool play = direction == webrtc_client_direction::play;
+    const auto media_direction = play ? "recvonly" : "sendonly";
     std::ostringstream sdp;
     sdp << "v=0\r\n"
         << "o=- 1000 2 IN IP4 127.0.0.1\r\n"
         << "s=-\r\n"
         << "t=0 0\r\n"
         << "a=group:BUNDLE 0 1\r\n"
-        << "m=video 9 UDP/TLS/RTP/SAVPF 102\r\n"
+        << "m=video 9 UDP/TLS/RTP/SAVPF 102" << (play ? " 104" : "") << "\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "a=ice-ufrag:" << client_ice_ufrag << "\r\n"
         << "a=ice-pwd:" << client_ice_password << "\r\n"
@@ -332,7 +333,8 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:102 H264/90000\r\na=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
-        << "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n"
+        << (play ? "a=rtpmap:104 H265/90000\r\na=fmtp:104 profile-space=0;profile-id=1;tier-flag=0;level-id=186;tx-mode=SRST\r\n" : "")
+        << "m=audio 9 UDP/TLS/RTP/SAVPF 111" << (play ? " 8 0" : "") << "\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "a=ice-ufrag:" << client_ice_ufrag << "\r\n"
         << "a=ice-pwd:" << client_ice_password << "\r\n"
@@ -343,7 +345,8 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:111 opus/48000/2\r\n"
-        << "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n";
+        << "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n"
+        << (play ? "a=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\n" : "");
     return sdp.str();
 }
 

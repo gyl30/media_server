@@ -17,10 +17,18 @@ extern "C"
 namespace media_server::bench
 {
 
+namespace
+{
+
+constexpr std::size_t read_buffer_bytes = 64U * 1024U;
+
+}
+
 http_flv_client::http_flv_client(boost::asio::io_context& io, std::string path)
     : resolver_(io), socket_(io), path_(path.starts_with('/') ? std::move(path) : "/" + path)
 {
     response_.body_limit(std::numeric_limits<std::uint64_t>::max());
+    http_buffer_.reserve(read_buffer_bytes);
 }
 
 boost::asio::awaitable<boost::system::error_code> http_flv_client::play(std::string host, std::uint16_t port, bool expect_audio)

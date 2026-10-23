@@ -72,6 +72,7 @@ class media_fanout final
         std::uint64_t steady_audio_messages{};
         std::vector<std::uint64_t> viewer_video_bytes;
         std::vector<std::uint64_t> viewer_audio_bytes;
+        std::vector<std::uint64_t> viewer_video_media_ms;
         std::uint64_t measurement_start_unix_ns{};
         std::uint64_t measurement_end_unix_ns{};
         std::uint64_t measurement_start_monotonic_ns{};
@@ -299,6 +300,10 @@ class media_fanout final
                                         .count());
                                 state.result.measurement_end_unix_ns = unix_now_ns();
                                 abort_ready_viewers(state);
+                                if (state.result.completed == state.config.viewers)
+                                {
+                                    state.io.stop();
+                                }
                             }
                         });
                     state.result.measurement_end_unix_ns =
@@ -432,13 +437,15 @@ class media_fanout final
                     state->result.steady_audio_messages += after.audio_messages - before.audio_messages;
                     state->result.viewer_video_bytes[index] = video_bytes;
                     state->result.viewer_audio_bytes[index] = audio_bytes;
+                    state->result.viewer_video_media_ms.push_back(after.video_media_ms - before.video_media_ms);
                 }
             }
             state->result.received_video_bytes += client->received_bytes();
             state->result.received_video_messages += client->received_messages();
         }
         ++state->result.completed;
-        if (state->result.completed == state->config.viewers && state->spawned == state->config.viewers)
+        if (state->result.completed == state->config.viewers && state->spawned == state->config.viewers &&
+            (!state->measurement_started || state->measurement_finished))
         {
             state->io.stop();
         }
@@ -477,6 +484,16 @@ class media_fanout final
         return values[index];
     }
 
+    static double realtime_ratio(const results& result, double fraction)
+    {
+        const auto window_ns = result.measurement_end_monotonic_ns - result.measurement_start_monotonic_ns;
+        if (result.measurement_end_monotonic_ns <= result.measurement_start_monotonic_ns || result.viewer_video_media_ms.empty())
+        {
+            return 0;
+        }
+        return static_cast<double>(percentile(result.viewer_video_media_ms, fraction)) * 1e6 / static_cast<double>(window_ns);
+    }
+
     static void print_results(const run_state& state)
     {
         const auto& result = state.result;
@@ -499,6 +516,8 @@ class media_fanout final
                   << " viewer_audio_bytes_p50=" << percentile(result.viewer_audio_bytes, 0.5)
                   << " viewer_audio_bytes_p90=" << percentile(result.viewer_audio_bytes, 0.9)
                   << " viewer_audio_bytes_max=" << percentile(result.viewer_audio_bytes, 1.0)
+                  << " viewer_realtime_min=" << realtime_ratio(result, 0.0) << " viewer_realtime_p10=" << realtime_ratio(result, 0.1)
+                  << " viewer_realtime_p50=" << realtime_ratio(result, 0.5) << " viewer_realtime_max=" << realtime_ratio(result, 1.0)
                   << " measurement_start_unix_ns=" << result.measurement_start_unix_ns
                   << " measurement_start_monotonic_ns=" << result.measurement_start_monotonic_ns
                   << " measurement_end_monotonic_ns=" << result.measurement_end_monotonic_ns
