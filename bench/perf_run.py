@@ -215,6 +215,11 @@ def parse_arguments():
         parser.error("self-managed fixtures and externally owned sources must be separate")
     if args.gb_port_base + sum(args.counts.values()) + args.sources >= 65536:
         parser.error("GB passive port range exceeds 65535")
+    gb_tcp = [protocol for protocol in (args.input, *args.counts, args.churn[0] if args.churn else "") if protocol.startswith("gb_tcp")]
+    gb_port_end = args.gb_port_base + args.sources + sum(args.counts.values()) + (args.churn[1] if args.churn else 0)
+    ephemeral_low, ephemeral_high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+    if gb_tcp and args.gb_port_base <= ephemeral_high and gb_port_end > ephemeral_low:
+        parser.error(f"GB TCP listen ports {args.gb_port_base}-{gb_port_end - 1} overlap ephemeral ports {ephemeral_low}-{ephemeral_high}; lower --gb-port-base")
     return args
 
 
