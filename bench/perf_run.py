@@ -182,7 +182,7 @@ def parse_arguments():
     parser.add_argument("--max-server-pss-mib", type=int, default=0)
     parser.add_argument("--decode-probe", action="store_true", help="decode six seconds of each RTMP/RTSP/FLV/HLS output with ffprobe during the window")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
-    parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles and instructions with perf stat during the window")
+    parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
@@ -637,7 +637,7 @@ def run(args):
             perf_stat = None
             if args.perf_stat:
                 perf_stat = subprocess.Popen(["perf", "stat", "-a", "-C", ",".join(map(str, sorted(server_cpus))), "-x", "\t", "-e",
-                                              "cycles,instructions,ref-cycles", "-o", args.output / "perf-stat.txt", "--", "sleep", str(args.duration)],
+                                              "cycles,instructions,ref-cycles,page-faults,context-switches", "-o", args.output / "perf-stat.txt", "--", "sleep", str(args.duration)],
                                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             while time.monotonic_ns() < deadline_ns:
                 snapshots = {}
