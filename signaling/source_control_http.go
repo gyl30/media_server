@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"strings"
-	"syscall"
 )
 
 func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, request *http.Request) {
@@ -31,13 +30,12 @@ func (s *infrastructureServer) handleSourceStart(writer http.ResponseWriter, req
 // startSource 把期望状态设为 running 并在媒体服务器上建立拉流会话；调用方已进入 source control。
 func (s *infrastructureServer) startSource(ctx context.Context, sourceID string) (string, error) {
 	s.sourceOperationMu.Lock()
+	defer s.sourceOperationMu.Unlock()
 	source, err := s.sources.setDesiredState(ctx, sourceID, sourceDesiredRunning)
 	if err != nil {
-		s.sourceOperationMu.Unlock()
 		return "", err
 	}
 	session, err := s.reserveRTSPPull(sourceID, source.streamName)
-	s.sourceOperationMu.Unlock()
 	if err != nil {
 		return "", err
 	}
@@ -53,57 +51,11 @@ func (s *infrastructureServer) startSource(ctx context.Context, sourceID string)
 		command.Password = &source.password
 	}
 	if err := s.media.createPull(ctx, command); err != nil {
-		// 媒体服务器明确拒绝或拒绝连接时请求一定没有生效；其他错误（超时、连接中断）结果未知，需要补偿删除。
-		var rejection *mediaServerHTTPRejection
-		ambiguousCreate := !errors.As(err, &rejection) && !errors.Is(err, syscall.ECONNREFUSED)
-		cleanupConfirmed := !ambiguousCreate
-		if ambiguousCreate {
-			cleanupContext, cancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
-			cancel()
-			cleanupConfirmed = cleanupErr == nil || isMediaServerNotFound(cleanupErr)
-			if !cleanupConfirmed {
-				s.logger.Warn("rtsp pull compensation failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
-			}
-		}
-		if cleanupConfirmed {
-			s.removeRTSPPull(session)
-		} else {
-			s.finishUnconfirmedRTSPPull(session)
-		}
+		s.removeRTSPPull(sourceID)
 		return "", err
 	}
-	if !s.finishRTSPPull(session) {
-		cleanupContext, cancel := s.media.timeoutContext()
-		cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
-		cancel()
-		if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
-			s.logger.Warn("orphan rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
-		}
-		return "", errRTSPPullStopping
-	}
-
-	currentSource, sourceErr := s.sources.get(ctx, sourceID)
-	if sourceErr != nil {
-		if !errors.Is(sourceErr, errSourceNotFound) {
-			return "", sourceErr
-		}
-		if s.removeRTSPPull(session) {
-			cleanupContext, cancel := s.media.timeoutContext()
-			cleanupErr := s.media.deleteReceiver(cleanupContext, session.streamID)
-			cancel()
-			if cleanupErr != nil && !isMediaServerNotFound(cleanupErr) {
-				s.logger.Warn("deleted source rtsp pull cleanup failed", "source_id", sourceID, "stream_name", session.streamName, "error", cleanupErr)
-			}
-		}
-		return "", errSourceConflict
-	}
-	if currentSource.desiredState == sourceDesiredStopped {
-		if err := s.stopSource(ctx, sourceID, sourceDesiredStopped); err != nil {
-			return "", err
-		}
-		return "", errSourceConflict
-	}
+	s.finishRTSPPull(sourceID)
+	s.logger.Info("rtsp pull started", "source_id", sourceID, "stream_name", session.streamName, "stream_id", session.streamID)
 	return session.streamID, nil
 }
 
@@ -149,37 +101,24 @@ func (s *infrastructureServer) handleSourceStop(writer http.ResponseWriter, requ
 
 // stopSource 结束当前拉流会话并记录期望状态；修改配置后重新拉流时期望状态保持 running。
 func (s *infrastructureServer) stopSource(ctx context.Context, sourceID string, desired sourceDesiredState) error {
-	for {
-		s.sourceOperationMu.Lock()
-		if _, err := s.sources.setDesiredState(ctx, sourceID, desired); err != nil {
-			s.sourceOperationMu.Unlock()
-			return err
-		}
-		session, wait, owner, err := s.beginRTSPPullStop(sourceID)
-		s.sourceOperationMu.Unlock()
-		if err != nil || (!owner && wait == nil) {
-			return err
-		}
-		if !owner {
-			select {
-			case <-wait:
-				continue
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-		deleteErr := s.media.deleteReceiver(ctx, session.streamID)
-		if isMediaServerNotFound(deleteErr) {
-			deleteErr = nil
-		}
-		s.finishRTSPPullStop(session, deleteErr == nil)
-		return deleteErr
+	s.sourceOperationMu.Lock()
+	defer s.sourceOperationMu.Unlock()
+	if _, err := s.sources.setDesiredState(ctx, sourceID, desired); err != nil {
+		return err
 	}
+	session, ok := s.removeRTSPPull(sourceID)
+	if !ok {
+		return nil
+	}
+	if err := s.media.deleteReceiver(ctx, session.streamID); err != nil && !isMediaServerNotFound(err) {
+		return err
+	}
+	s.logger.Info("rtsp pull stopped", "source_id", sourceID, "stream_name", session.streamName, "stream_id", session.streamID)
+	return nil
 }
 
 func (s *infrastructureServer) writeSourceSessionError(writer http.ResponseWriter, operation, sourceID, streamName string, err error) {
-	if errors.Is(err, errRTSPPullExists) || errors.Is(err, errRTSPPullStarting) || errors.Is(err, errRTSPPullStopping) ||
-		errors.Is(err, errRTSPPullUnresolved) {
+	if errors.Is(err, errRTSPPullExists) {
 		writeHTTPError(writer, http.StatusConflict, "conflict")
 		return
 	}

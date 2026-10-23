@@ -165,7 +165,7 @@ func (s *infrastructureServer) confirmedRTSPPulls() []rtspPullSession {
 	defer s.rtspPullMu.Unlock()
 	var pulls []rtspPullSession
 	for _, session := range s.rtspPulls {
-		if session.createConfirmed && !session.starting && session.stopDone == nil {
+		if !session.starting {
 			pulls = append(pulls, session)
 		}
 	}
@@ -180,12 +180,12 @@ func (s *infrastructureServer) collectRTSPPullStreamIDs(ids map[string]struct{})
 	}
 }
 
-// dropEndedRTSPPull 只移除仍处于已确认且未在停止中的同一会话，停止流程自行收尾。
+// dropEndedRTSPPull 只移除仍处于已创建状态的同一会话。
 func (s *infrastructureServer) dropEndedRTSPPull(expected rtspPullSession) bool {
 	s.rtspPullMu.Lock()
 	defer s.rtspPullMu.Unlock()
 	session, ok := s.rtspPulls[expected.sourceID]
-	if !ok || session.streamID != expected.streamID || !session.createConfirmed || session.starting || session.stopDone != nil {
+	if !ok || session.streamID != expected.streamID || session.starting {
 		return false
 	}
 	delete(s.rtspPulls, expected.sourceID)

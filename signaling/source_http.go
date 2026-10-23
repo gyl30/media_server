@@ -188,10 +188,6 @@ func (s *infrastructureServer) makeSourceResponse(source rtspSource) sourceRespo
 		state := "created"
 		if session.starting {
 			state = "starting"
-		} else if session.stopDone != nil {
-			state = "stopping"
-		} else if !session.createConfirmed {
-			state = "unresolved"
 		}
 		response.Session = &sourceSessionResponse{StreamID: session.streamID, State: state, MediaReady: state == "created" && s.mediaReady(session.streamID)}
 	}

@@ -132,12 +132,6 @@ function gbStatus(device) {
 
 // 主动拉流：desired_state 是持久化的接入意图，session 是运行事实；created 表示媒体服务器已建立拉流会话，
 // media_ready 表示媒体源已确定轨道（来自媒体对账，最多滞后一个对账周期）。
-const SESSION_STATUS = {
-  starting: { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" },
-  stopping: { label: "正在停止", tone: "pending", group: "online", detail: "" },
-  unresolved: { label: "正在清理", tone: "warn", group: "attention", detail: "会话结果待确认" },
-};
-
 export function sourceReady(source) {
   return source.session?.state === "created" && source.session.media_ready;
 }
@@ -150,7 +144,7 @@ export function sourceStatus(source) {
     return { label: "接入中", tone: "pending", group: "online", detail: "已连接上游，等待音视频参数" };
   }
   if (source.session) {
-    return SESSION_STATUS[source.session.state] || SESSION_STATUS.unresolved;
+    return { label: "正在连接", tone: "pending", group: "online", detail: "正在建立拉流会话" };
   }
   if (source.desired_state === "running") {
     return { label: "连接失败或已结束", tone: "danger", group: "attention", detail: "上游不可达、认证失败或已断开，可修改地址或重试连接" };

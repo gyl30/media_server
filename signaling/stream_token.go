@@ -197,7 +197,7 @@ func (s *infrastructureServer) streamRunningLocked(streamID string) bool {
 		}
 	}
 	for _, session := range s.rtspPulls {
-		if session.streamID == streamID && session.createConfirmed && !session.starting && session.stopDone == nil {
+		if session.streamID == streamID && !session.starting {
 			return true
 		}
 	}
