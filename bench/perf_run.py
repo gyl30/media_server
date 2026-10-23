@@ -276,9 +276,11 @@ def run(args):
             if category in ("server", "publisher", "client") and process.poll() is None:
                 try:
                     check_identity(name, process.pid)
-                except (FileNotFoundError, ProcessLookupError):
-                    if process.poll() is None:
-                        raise
+                except (FileNotFoundError, ProcessLookupError) as error:
+                    try:
+                        process.wait(timeout=1)
+                    except subprocess.TimeoutExpired:
+                        raise error from None
         if not (args.min_free_memory_mib or args.min_free_disk_mib or args.max_server_pss_mib):
             return
         memory = next(int(line.split()[1]) for line in Path("/proc/meminfo").read_text().splitlines() if line.startswith("MemAvailable:"))
