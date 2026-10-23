@@ -841,7 +841,7 @@ def run(args):
                 result["verification_calls"] = stub.count()
     except (OSError, subprocess.SubprocessError, TimeoutError, RuntimeError, ValueError, KeyboardInterrupt) as error:
         if result["status"] not in ("UNSUPPORTED", "BLOCKED", "INCONCLUSIVE"):
-            result["status"] = "BLOCKED" if isinstance(error, OSError) else "FAIL"
+            result["status"] = "BLOCKED" if isinstance(error, OSError) and not isinstance(error, TimeoutError) else "FAIL"
         result.setdefault("capacity_boundary", "UNCONFIRMED")
         result["errors"].append({"type": type(error).__name__, "message": str(error), "monotonic_ns": time.monotonic_ns()})
     finally:
