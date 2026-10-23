@@ -220,6 +220,9 @@ def parse_arguments():
     ephemeral_low, ephemeral_high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     if gb_tcp and args.gb_port_base <= ephemeral_high and gb_port_end > ephemeral_low:
         parser.error(f"GB TCP listen ports {args.gb_port_base}-{gb_port_end - 1} overlap ephemeral ports {ephemeral_low}-{ephemeral_high}; lower --gb-port-base")
+    service_ports = sorted(port + offset for port in (args.rtmp_port, args.rtsp_port, args.http_port) for offset in (0, 100))
+    if gb_tcp and any(args.gb_port_base <= port < gb_port_end for port in service_ports):
+        parser.error(f"GB TCP listen ports {args.gb_port_base}-{gb_port_end - 1} overlap service ports {service_ports}; move --gb-port-base")
     return args
 
 
