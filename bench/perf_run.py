@@ -381,7 +381,7 @@ def run(args):
             if answer["stream_id"] != source["stream_id"]:
                 raise RuntimeError("source generation changed; obtain a new sources-file before measuring")
             return answer[{"rtmp": "rtmp_url", "rtsp": "rtsp_url", "flv": "flv_url", "hls": "hls_url", "whep": "whep_url"}[protocol]]
-        token = stub.issue("play", source["stream_id"], ttl=60)
+        token = stub.issue("play", source["stream_id"], ttl=args.ready_timeout + 60)
         if args.fault == "invalid_token":
             token = secrets.token_hex(32)
         elif args.fault == "expired_token":
