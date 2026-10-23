@@ -182,6 +182,7 @@ def parse_arguments():
     parser.add_argument("--max-server-pss-mib", type=int, default=0)
     parser.add_argument("--decode-probe", action="store_true", help="decode six seconds of each RTMP/RTSP/FLV/HLS output with ffprobe during the window")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
+    parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles and instructions with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
@@ -623,6 +624,11 @@ def run(args):
             previous_cpu_ns = time.monotonic_ns()
             server_interval_busy_max = 0.0
             counters_start = {"server": cpu_counters(server_cpus), "client": cpu_counters(client_cpus)}
+            perf_stat = None
+            if args.perf_stat:
+                perf_stat = subprocess.Popen(["perf", "stat", "-a", "-C", ",".join(map(str, sorted(server_cpus))), "-x", "\t", "-e",
+                                              "cycles,instructions,ref-cycles", "-o", args.output / "perf-stat.txt", "--", "sleep", str(args.duration)],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             while time.monotonic_ns() < deadline_ns:
                 snapshots = {}
                 netns_queues = {}
@@ -707,6 +713,15 @@ def run(args):
                 frames = {stream.get("codec_type"): int(stream.get("nb_read_frames") or 0) for stream in streams}
                 result.setdefault("decode_probe", {})[protocol] = {"exit_code": process.returncode, "streams": streams,
                     "ok": process.returncode == 0 and frames.get("video", 0) > 0 and all(frames.values())}
+            if perf_stat is not None:
+                perf_stat.wait(timeout=30)
+                perf_counts = {}
+                for line in (args.output / "perf-stat.txt").read_text().splitlines():
+                    fields = line.split("\t")
+                    if len(fields) > 2 and fields[0].replace(".", "", 1).isdigit():
+                        perf_counts[fields[2]] = int(float(fields[0]))
+                result["perf_stat"] = {**perf_counts, "seconds": args.duration,
+                                       "ipc": perf_counts["instructions"] / perf_counts["cycles"] if perf_counts.get("cycles") else None}
             cpu_end = cpu_times()
             frequency = {prefix: cpu_frequency(counters_start[prefix], cpu_counters(cpus)) or {} for prefix, cpus in (("server", server_cpus), ("client", client_cpus))}
             result["cpu_busy"] = {
