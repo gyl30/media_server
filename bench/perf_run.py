@@ -905,10 +905,13 @@ def run(args):
         failed_groups = [group for group in result["groups"] if group.get("failure_category")]
         pre_measurement_failure = "requested_window" not in result or (
             bool(failed_groups) and not any(group["measurement"].get("measurement_started") for group in failed_groups))
+        verification = result.get("verification", {})
+        server_side_authorization = verification.get("rejected") == 0 and (verification.get("handle_ms_max") or 0) < 1000
+        tool_categories = ("CLIENT_RESOURCE", "CLIENT_STARTUP") if server_side_authorization else ("CLIENT_RESOURCE", "AUTHORIZATION", "CLIENT_STARTUP")
         if (result["status"] == "FAIL" and result.get("capacity_boundary") == "UNCONFIRMED" and pre_measurement_failure and
                 (preparation.get("server_busy_max", 0) >= 0.95 * len(server_cpus) or preparation.get("server_max_cpu_busy", 0) >= 0.98) and
                 preparation.get("client_max_cpu_busy", 1) < 0.95 and
-                not any(group.get("failure_category") in ("CLIENT_RESOURCE", "AUTHORIZATION", "CLIENT_STARTUP") for group in result["groups"])):
+                not any(group.get("failure_category") in tool_categories for group in result["groups"])):
             result["capacity_boundary"] = "SERVER_SATURATED"
         if result["cleanup"].get("errors") or result["cleanup"].get("remaining_owned_receivers"):
             result["status"] = "FAIL"
