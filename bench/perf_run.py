@@ -612,6 +612,7 @@ def run(args):
             next_sample = start_ns
             stopped_source = False
             churn_process = None
+            churn_start = None
             churn_next_ns = start_ns
             churn_rounds = []
 
@@ -665,12 +666,17 @@ def run(args):
                     if churn_process is not None and churn_process.poll() is not None:
                         finish_churn(churn_process)
                         churn_process = None
+                        churn_start = None
+                    if churn_start is not None and "phase=media_ready " in (args.output / f"{churn_rounds[-1]['name']}.log").read_text():
+                        temporary = churn_start.with_suffix(".tmp")
+                        temporary.write_text(str(time.monotonic_ns() + 1000000000) + "\n")
+                        temporary.replace(churn_start)
+                        churn_start = None
                     now_ns = time.monotonic_ns()
                     if churn_process is None and now_ns >= churn_next_ns and now_ns + args.churn_period * 1000000000 <= deadline_ns:
                         protocol, count = args.churn
                         name = f"churn-{len(churn_rounds)}"
                         churn_start = args.output / f"{name}.start"
-                        churn_start.write_text(str(now_ns + (math.ceil(count / args.ramp_per_second) + 3) * 1000000000) + "\n")
                         command = client_command(protocol, name, [sources[index % len(sources)] for index in range(count)],
                                                  args.gb_port_base + args.sources + sum(counts.values()), 0, args.churn_period - 8,
                                                  math.ceil(count / args.ramp_per_second) + 10, churn_start)
