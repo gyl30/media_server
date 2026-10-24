@@ -719,7 +719,7 @@ int main(int argc, char** argv)
         { return static_cast<double>(viewer_bytes[(viewer_bytes.size() - 1U) * percentile / 100U]) / elapsed; };
         std::cout << "phase=measurement requested=" << config.viewers << " ready=" << results->media_ready.load()
                   << " measurement_start_monotonic_ns=" << measurement_start_ns << " measurement_end_monotonic_ns=" << measurement_end_ns
-                  << " client_cpu_cores=" << (process_after.cpu_seconds - process_before.cpu_seconds) / elapsed
+                  << " measurement_started=1 client_cpu_cores=" << (process_after.cpu_seconds - process_before.cpu_seconds) / elapsed
                   << " steady_media_bytes=" << after.bytes - before.bytes << " progressing=" << progressing
                   << " runtime_failures=" << results->runtime_failures.load() << " duration_seconds=" << elapsed
                   << " received_bytes=" << after.bytes - before.bytes << " received_packets=" << after.packets - before.packets
