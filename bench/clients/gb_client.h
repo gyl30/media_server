@@ -47,6 +47,8 @@ class gb_client final
 
     static void configure(gb_client_options value);
     static const std::vector<gb_sender_key>& created_senders();
+    static const std::vector<std::uint64_t>& create_milliseconds();
+    static const std::vector<std::uint64_t>& delete_milliseconds();
     static boost::asio::awaitable<bool> delete_sender(std::string host, std::uint16_t port, gb_sender_key key);
 
    public:

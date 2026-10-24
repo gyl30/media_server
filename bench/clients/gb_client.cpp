@@ -1,3 +1,4 @@
+#include <chrono>
 #include <random>
 #include <cstring>
 #include <utility>
@@ -35,6 +36,23 @@ std::vector<gb_sender_key>& senders()
 {
     static std::vector<gb_sender_key> value;
     return value;
+}
+
+std::vector<std::uint64_t>& create_latencies()
+{
+    static std::vector<std::uint64_t> value;
+    return value;
+}
+
+std::vector<std::uint64_t>& delete_latencies()
+{
+    static std::vector<std::uint64_t> value;
+    return value;
+}
+
+std::uint64_t elapsed_milliseconds(std::chrono::steady_clock::time_point started)
+{
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
 }
 
 std::uint16_t next_listen_port()
@@ -178,10 +196,16 @@ void gb_client::configure(gb_client_options value) { options() = std::move(value
 
 const std::vector<gb_sender_key>& gb_client::created_senders() { return senders(); }
 
+const std::vector<std::uint64_t>& gb_client::create_milliseconds() { return create_latencies(); }
+
+const std::vector<std::uint64_t>& gb_client::delete_milliseconds() { return delete_latencies(); }
+
 boost::asio::awaitable<bool> gb_client::delete_sender(std::string host, std::uint16_t port, gb_sender_key key)
 {
     boost::json::object body{{"stream_id", key.stream_id}, {"sender_id", key.sender_id}};
+    const auto started = std::chrono::steady_clock::now();
     const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/delete", std::move(body));
+    delete_latencies().push_back(elapsed_milliseconds(started));
     co_return status == 204U || status == 404U;
 }
 
@@ -303,7 +327,9 @@ boost::asio::awaitable<boost::system::error_code> gb_client::create_sender(std::
         body["listen_port"] = media_port;
     }
     senders().push_back(key_);
+    const auto started = std::chrono::steady_clock::now();
     const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/create", std::move(body));
+    create_latencies().push_back(elapsed_milliseconds(started));
     if (status == 403U)
     {
         co_return boost::system::errc::make_error_code(boost::system::errc::permission_denied);

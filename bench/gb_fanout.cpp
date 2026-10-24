@@ -1,4 +1,6 @@
 #include <string>
+#include <cstdint>
+#include <algorithm>
 #include <vector>
 #include <fstream>
 #include <iostream>
@@ -40,6 +42,16 @@ media_server::bench::gb_transport parse_transport(std::string_view text)
         return media_server::bench::gb_transport::tcp_passive;
     }
     throw std::runtime_error("transport must be udp, tcp_active or tcp_passive");
+}
+
+std::uint64_t percentile(std::vector<std::uint64_t> values, std::size_t percent)
+{
+    if (values.empty())
+    {
+        return 0;
+    }
+    std::sort(values.begin(), values.end());
+    return values[(values.size() - 1U) * percent / 100U];
 }
 
 }    // namespace
@@ -127,5 +139,12 @@ int main(int argc, char** argv)
         boost::asio::detached);
     io.run();
     std::cout << "phase=cleanup created=" << senders.size() << " deleted=" << deleted << std::endl;
+    const auto& creates = media_server::bench::gb_client::create_milliseconds();
+    const auto& deletes = media_server::bench::gb_client::delete_milliseconds();
+    std::cout << "phase=control create_requests=" << creates.size() << " create_ms_p50=" << percentile(creates, 50)
+              << " create_ms_p90=" << percentile(creates, 90) << " create_ms_p99=" << percentile(creates, 99)
+              << " create_ms_max=" << percentile(creates, 100) << " delete_requests=" << deletes.size()
+              << " delete_ms_p50=" << percentile(deletes, 50) << " delete_ms_p90=" << percentile(deletes, 90)
+              << " delete_ms_p99=" << percentile(deletes, 99) << " delete_ms_max=" << percentile(deletes, 100) << std::endl;
     return code == 0 && deleted == senders.size() ? 0 : 1;
 }

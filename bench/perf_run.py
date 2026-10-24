@@ -16,6 +16,7 @@ import signal
 import struct
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -184,6 +185,7 @@ def parse_arguments():
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
+    parser.add_argument("--control-probe-ms", type=int, default=0, help="interval between GET /receivers control requests timed during the window; 0 disables")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
@@ -635,6 +637,22 @@ def run(args):
             previous_cpu_ns = time.monotonic_ns()
             server_interval_busy_max = 0.0
             counters_start = {"server": cpu_counters(server_cpus), "client": cpu_counters(client_cpus)}
+            control_samples = []
+            control_probe = None
+            if args.control_probe_ms:
+                def probe_control():
+                    while time.monotonic_ns() < deadline_ns:
+                        started = time.monotonic_ns()
+                        error = None
+                        try:
+                            request(control, "/receivers", token=control_token)
+                        except (OSError, RuntimeError) as failure:
+                            error = str(failure)[:200]
+                        control_samples.append({"offset_ms": (started - start_ns) / 1e6, "ms": (time.monotonic_ns() - started) / 1e6, "error": error})
+                        time.sleep(max(0, (started + args.control_probe_ms * 1000000 - time.monotonic_ns()) / 1e9))
+
+                control_probe = threading.Thread(target=probe_control, daemon=True)
+                control_probe.start()
             perf_stat = None
             if args.perf_stat:
                 perf_stat = subprocess.Popen(["perf", "stat", "-a", "-C", ",".join(map(str, sorted(server_cpus))), "-x", "\t", "-e",
@@ -732,6 +750,14 @@ def run(args):
                 frames = {stream.get("codec_type"): int(stream.get("nb_read_frames") or 0) for stream in streams}
                 result.setdefault("decode_probe", {})[protocol] = {"exit_code": process.returncode, "streams": streams,
                     "ok": process.returncode == 0 and frames.get("video", 0) > 0 and all(frames.values())}
+            if control_probe is not None:
+                control_probe.join(timeout=30)
+                latencies = sorted(sample["ms"] for sample in control_samples)
+                result["control_probe"] = {"interval_ms": args.control_probe_ms, "requests": len(latencies),
+                                           "errors": sum(sample["error"] is not None for sample in control_samples),
+                                           "over_1s": sum(value >= 1000 for value in latencies),
+                                           **{f"ms_p{percent}": latencies[(len(latencies) - 1) * percent // 100] if latencies else None for percent in (50, 90, 99, 100)},
+                                           "samples": control_samples}
             if perf_stat is not None:
                 perf_stat.wait(timeout=30)
                 perf_counts = {}

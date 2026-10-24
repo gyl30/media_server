@@ -490,6 +490,8 @@ int main(int argc, char** argv)
 
         std::vector<std::shared_ptr<play_session>> sessions;
         sessions.reserve(config.viewers);
+        std::vector<std::uint64_t> post_milliseconds;
+        std::vector<std::uint64_t> establish_milliseconds;
         const auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play);
         const auto ramp_started = clock_type::now();
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
@@ -504,7 +506,9 @@ int main(int argc, char** argv)
                              : config.sources == 1U    ? config.whep_url
                                                     : config.whep_url.substr(0, config.whep_url.size() - 1U) + std::to_string(index % config.sources);
             const auto posted = media_server::bench::post_webrtc_offer(url, offer, response, error);
-            if (!posted || response.status != 201U || !peer->establish(response.body, error))
+            const auto answered = clock_type::now();
+            const auto connected = posted && response.status == 201U && peer->establish(response.body, error);
+            if (!connected)
             {
                 ++results->establishment_failures;
                 results->add_error("viewer=" + std::to_string(index) +
@@ -520,6 +524,10 @@ int main(int argc, char** argv)
             }
             else
             {
+                post_milliseconds.push_back(
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(answered - started).count()));
+                establish_milliseconds.push_back(
+                    static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - answered).count()));
                 auto session = std::make_shared<play_session>(results, peer, response.location, index, !config.video_only, started);
                 sessions.push_back(session);
                 ++results->ready;
@@ -550,6 +558,18 @@ int main(int argc, char** argv)
                       << " p95=" << latencies[(latencies.size() - 1U) * 95U / 100U] << " p99=" << latencies[(latencies.size() - 1U) * 99U / 100U]
                       << " max=" << latencies.back() << '\n';
         }
+        const auto setup_percentile = [](std::vector<std::uint64_t>& values, std::size_t percent)
+        {
+            std::sort(values.begin(), values.end());
+            return values.empty() ? 0U : values[(values.size() - 1U) * percent / 100U];
+        };
+        std::cout << "phase=setup post_ms_p50=" << setup_percentile(post_milliseconds, 50)
+                  << " post_ms_p90=" << setup_percentile(post_milliseconds, 90) << " post_ms_p99=" << setup_percentile(post_milliseconds, 99)
+                  << " post_ms_max=" << setup_percentile(post_milliseconds, 100)
+                  << " establish_ms_p50=" << setup_percentile(establish_milliseconds, 50)
+                  << " establish_ms_p90=" << setup_percentile(establish_milliseconds, 90)
+                  << " establish_ms_p99=" << setup_percentile(establish_milliseconds, 99)
+                  << " establish_ms_max=" << setup_percentile(establish_milliseconds, 100) << '\n';
         std::cout << "phase=established requested=" << config.viewers << " ready=" << results->ready.load()
                   << " media_ready=" << results->media_ready.load() << " establishment_failures=" << results->establishment_failures.load()
                   << " ramp_seconds=" << std::chrono::duration<double>(clock_type::now() - ramp_started).count()
