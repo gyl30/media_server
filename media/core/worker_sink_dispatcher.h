@@ -4,10 +4,12 @@
 #include <map>
 #include <deque>
 #include <mutex>
+#include <chrono>
 #include <memory>
 #include <vector>
 #include <cstddef>
 #include <utility>
+#include <optional>
 #include <algorithm>
 
 #include <boost/asio/post.hpp>
@@ -152,8 +154,9 @@ class worker_sink_dispatcher final
 
    private:
     static constexpr std::size_t max_pending_frames = 2500;
+    static constexpr auto drain_time_slice = std::chrono::milliseconds{20};
 
-    struct sink_group
+    struct sink_group : std::enable_shared_from_this<sink_group>
     {
         worker_context& worker;
         std::mutex mutex;
@@ -182,39 +185,44 @@ class worker_sink_dispatcher final
 
         void drain()
         {
+            const auto deadline = std::chrono::steady_clock::now() + drain_time_slice;
             for (;;)
             {
-                std::deque<Frame> frames;
-                bool finish = false;
+                std::optional<Frame> frame;
                 {
                     std::scoped_lock lock(mutex);
-                    frames.swap(pending);
-                    if (frames.empty() && pending_end)
+                    if (!pending.empty())
+                    {
+                        frame = std::move(pending.front());
+                        pending.pop_front();
+                    }
+                    else if (pending_end)
                     {
                         pending_end = false;
                         drain_queued = false;
-                        finish = true;
                     }
-                    else if (frames.empty())
+                    else
                     {
                         drain_queued = false;
                         return;
                     }
                 }
                 const auto sinks_snapshot = snapshot_sinks();
-                for (const auto& frame : frames)
-                {
-                    for (const auto& sink : sinks_snapshot)
-                    {
-                        (sink.get()->*Deliver)(frame);
-                    }
-                }
-                if (finish)
+                if (!frame)
                 {
                     for (const auto& sink : sinks_snapshot)
                     {
                         sink->on_end();
                     }
+                    return;
+                }
+                for (const auto& sink : sinks_snapshot)
+                {
+                    (sink.get()->*Deliver)(*frame);
+                }
+                if (std::chrono::steady_clock::now() >= deadline)
+                {
+                    boost::asio::post(worker.io(), [self = this->shared_from_this()]() { self->drain(); });
                     return;
                 }
             }

@@ -25,7 +25,7 @@ AAC→Opus 派生流沿用源的 `stream_id` 作为内部关联，不另注册�
 
 ## 分发与关闭
 
-- `worker_sink_dispatcher` 在 source worker 串行处理 add/remove/publish/end。同 worker 直接调用，跨 worker 按目标分组排队；正常 end 在已排队帧之后交付。队列达到 2500 帧上限时丢弃该组待交付帧并结束慢组。
+- `worker_sink_dispatcher` 在 source worker 串行处理 add/remove/publish/end。同 worker 直接调用，跨 worker 按目标分组排队；目标 worker 的 drain 逐帧交付已排队帧，单次执行超过 20 ms 后重新投递，让同一事件循环的控制请求和会话建立交替执行；时间片内积压的多帧仍连续交付，sink 可以把它们合并写出。正常 end 在已排队帧之后交付。待交付帧达到 2500 帧上限时丢弃该组积压并结束慢组。
 - remove sink 不撤销已经取得的 snapshot 或已执行的投递。sink 必须用自己的资源终态处理迟到 frame/end。
 - session 的 `shutdown()` 通常向 owner 投递，`safe_shutdown()` 执行清理；父对象调用子对象 `shutdown()`，不把它当作同步释放屏障。
 - 关闭时取消 timer/协程、解除订阅、断开回调持有并释放资源。异步 I/O 的成功完成可能与取消交错；RTSP/RTMP pull 在恢复边界检查取消、资源及 receiver identity。
