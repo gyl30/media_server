@@ -201,10 +201,16 @@ bool http_flv_session::enqueue(std::vector<std::uint8_t> data)
 void http_flv_session::start_write()
 {
     const auto self = shared_from_this();
-    const auto chunk = boost::beast::http::make_chunk(boost::asio::buffer(output_queue_.front()));
+    std::vector<boost::asio::const_buffer> buffers;
+    buffers.reserve(output_queue_.size());
+    for (const auto& data : output_queue_)
+    {
+        buffers.push_back(boost::asio::buffer(data));
+    }
+    const auto chunk = boost::beast::http::make_chunk(buffers);
     boost::asio::async_write(stream_,
                              chunk,
-                             [self](boost::system::error_code error, std::size_t)
+                             [self, count = buffers.size()](boost::system::error_code error, std::size_t)
                              {
                                  if (error)
                                  {
@@ -214,8 +220,11 @@ void http_flv_session::start_write()
                                      return;
                                  }
 
-                                 self->queued_output_bytes_ -= self->output_queue_.front().size();
-                                 self->output_queue_.pop_front();
+                                 for (std::size_t index = 0; index < count; ++index)
+                                 {
+                                     self->queued_output_bytes_ -= self->output_queue_.front().size();
+                                     self->output_queue_.pop_front();
+                                 }
                                  if (!self->output_queue_.empty())
                                  {
                                      self->start_write();
