@@ -29,7 +29,7 @@ AAC→Opus 派生流沿用源的 `stream_id` 作为内部关联，不另注册�
 - remove sink 不撤销已经取得的 snapshot 或已执行的投递。sink 必须用自己的资源终态处理迟到 frame/end。
 - session 的 `shutdown()` 通常向 owner 投递，`safe_shutdown()` 执行清理；父对象调用子对象 `shutdown()`，不把它当作同步释放屏障。
 - 关闭时取消 timer/协程、解除订阅、断开回调持有并释放资源。异步 I/O 的成功完成可能与取消交错；RTSP/RTMP pull 在恢复边界检查取消、资源及 receiver identity。
-- transport 持有串行写队列和在途 buffer，清空队列不提前释放 completion 所需数据。UDP 队列为空时直接非阻塞发送，只有 EAGAIN 才入队；回调只报告错误。入队拒绝与 socket 发送错误是不同结果，上层决定会话策略。
+- transport 持有串行写队列和在途 buffer，清空队列不提前释放 completion 所需数据。TCP 写在 owner worker 上直接入队并检查 1 MiB 上限；上一次写完成后，队列中的积压一次写出，发送能力不受事件循环轮次限制。UDP 队列为空时直接非阻塞发送，只有 EAGAIN 才入队；回调只报告错误。入队拒绝与 socket 发送错误是不同结果，上层决定会话策略。
 
 服务停机由 [`service.cpp`](../service.cpp) 处理 SIGINT/SIGTERM：关闭 WHIP/WHEP registry、停止已登记 receiver/sender，再请求 worker 停止。`worker_context` 发出任务取消、调用 shutdown subscription 并释放 work guard，让清理完成后退出事件循环。
 

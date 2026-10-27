@@ -39,7 +39,7 @@ class tcp_transport final : public std::enable_shared_from_this<tcp_transport>
 
     void safe_write(std::vector<std::uint8_t> data);
     void post_write();
-    void on_write(boost::system::error_code error, std::size_t bytes);
+    void on_write(boost::system::error_code error, std::size_t bytes, std::size_t count);
     void safe_shutdown();
 
    private:

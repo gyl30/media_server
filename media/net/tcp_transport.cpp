@@ -4,6 +4,7 @@
 #include <boost/asio/error.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/asio/buffer.hpp>
+#include <boost/asio/dispatch.hpp>
 
 #include "media/net/tcp_transport.h"
 
@@ -33,7 +34,7 @@ void tcp_transport::write(std::vector<std::uint8_t> data)
     }
 
     const auto self = shared_from_this();
-    boost::asio::post(socket_.get_executor(), [self, data = std::move(data)]() mutable { self->safe_write(std::move(data)); });
+    boost::asio::dispatch(socket_.get_executor(), [self, data = std::move(data)]() mutable { self->safe_write(std::move(data)); });
 }
 
 boost::asio::ip::tcp::endpoint tcp_transport::local_endpoint(boost::system::error_code& error) const { return socket_.local_endpoint(error); }
@@ -70,13 +71,21 @@ void tcp_transport::safe_write(std::vector<std::uint8_t> data)
 
 void tcp_transport::post_write()
 {
-    const auto data = write_queue_.front();
+    std::vector<buffer> batch(write_queue_.begin(), write_queue_.end());
+    std::vector<boost::asio::const_buffer> buffers;
+    buffers.reserve(batch.size());
+    for (const auto& data : batch)
+    {
+        buffers.push_back(boost::asio::buffer(*data));
+    }
     const auto self = shared_from_this();
-    boost::asio::async_write(
-        socket_, boost::asio::buffer(*data), [self, data](boost::system::error_code error, std::size_t bytes) { self->on_write(error, bytes); });
+    boost::asio::async_write(socket_,
+                             buffers,
+                             [self, batch = std::move(batch)](boost::system::error_code error, std::size_t bytes)
+                             { self->on_write(error, bytes, batch.size()); });
 }
 
-void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
+void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes, std::size_t count)
 {
     if (!socket_.is_open() || write_queue_.empty() || !write_callback_)
     {
@@ -85,8 +94,11 @@ void tcp_transport::on_write(boost::system::error_code error, std::size_t bytes)
 
     if (!error)
     {
-        queued_write_bytes_ -= write_queue_.front()->size();
-        write_queue_.pop_front();
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            queued_write_bytes_ -= write_queue_.front()->size();
+            write_queue_.pop_front();
+        }
     }
 
     write_callback_(error, bytes);
