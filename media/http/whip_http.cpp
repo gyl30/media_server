@@ -2,7 +2,6 @@
 
 #include "media/webrtc/whip.h"
 #include "media/http/whip_http.h"
-#include "media/net/worker_context.h"
 #include "media/http/signaling_verify.h"
 
 namespace media_server
@@ -52,13 +51,12 @@ whip_http_string_response handle_options(const whip_http_request& request, bool 
 }
 
 whip_http_string_response handle_post(const whip_http_request& request,
-                                      worker_context& worker,
                                       std::string_view stream_id,
                                       const config& application_config,
                                       const boost::asio::ip::tcp::socket& socket,
                                       boost::asio::yield_context yield)
 {
-    auto result = whip::create(worker, stream_id, request.body(), application_config, socket, yield);
+    auto result = whip::create(stream_id, request.body(), application_config, socket, yield);
     switch (result.error)
     {
         case whip::create_error::none:
@@ -93,7 +91,6 @@ whip_http_string_response handle_delete(const whip_http_request& request, std::s
 }    // namespace
 
 whip_http_string_response handle_whip_request(const whip_http_request& request,
-                                              worker_context& worker,
                                               const ada::url_aggregator& target,
                                               const config& application_config,
                                               const boost::asio::ip::tcp::socket& socket,
@@ -134,7 +131,7 @@ whip_http_string_response handle_whip_request(const whip_http_request& request,
             return make_string_response(
                 request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
-        return handle_post(request, worker, first, application_config, socket, yield);
+        return handle_post(request, first, application_config, socket, yield);
     }
 
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)

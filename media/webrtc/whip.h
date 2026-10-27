@@ -11,7 +11,7 @@
 
 namespace media_server
 {
-class worker_context;
+class worker_pool;
 }
 
 namespace media_server::whip
@@ -33,8 +33,8 @@ struct create_result
     std::string answer_sdp;
 };
 
-[[nodiscard]] create_result create(worker_context& worker,
-                                   std::string_view stream_id,
+void startup(worker_pool& workers);
+[[nodiscard]] create_result create(std::string_view stream_id,
                                    std::string_view offer_sdp,
                                    const config& application_config,
                                    const boost::asio::ip::tcp::socket& socket,

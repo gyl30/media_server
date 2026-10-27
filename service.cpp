@@ -150,6 +150,7 @@ int service::run()
     configure_log_level();
 
     workers_ = std::make_unique<worker_pool>(config_.threads);
+    whip::startup(*workers_);
     auto& control_worker = workers_->context(0);
     hls::startup(control_worker);
     auto& control_io = control_worker.io();

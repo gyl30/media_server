@@ -72,8 +72,8 @@ bool whip_session::startup(const webrtc_media_offer& transport_offer, const webr
     {
         return false;
     }
-    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     startup_establishment_timeout();
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     spdlog::info("webrtc whip session started {} stream {}", id_, stream_id_);
     return true;
 }
