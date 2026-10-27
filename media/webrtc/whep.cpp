@@ -133,7 +133,7 @@ create_result create(worker_context& worker,
     boost::scope::scope_exit release_port([port]() { media_port_pool::instance().release(*port); });
     auto transport = std::make_shared<udp_transport>(worker.io());
     boost::system::error_code udp_error;
-    transport->startup(advertised_address, *port, udp_error);
+    transport->startup(advertised_address, *port, udp_receive_buffer::system_default, udp_error);
     if (udp_error)
     {
         spdlog::error("webrtc udp socket startup failed error {}", udp_error.message());

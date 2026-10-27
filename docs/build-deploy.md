@@ -62,6 +62,7 @@ cd ..
 | 信令与 SIP | HTTP 9090/TCP、SIP 5060/UDP；SIP 宣告地址必须可被设备访问 |
 | 公网媒体 URL | Go `-media-ip`、`-media-*-port`；HTTP 反向代理可用 `-media-http-origin` 指定 http/https origin |
 | 媒体端口池 | `media_port_pool.h` 定义 49152–65535；RTP/RTCP、WebRTC 按会话使用，另有 GB TCP 显式监听端口 |
+| UDP 媒体接收缓冲 | GB UDP、RTSP UDP 推流 RTP、WHIP、WHEP 拉流的接收 socket 申请 256 KiB `SO_RCVBUF`，内核按 `min(申请值, net.core.rmem_max) × 2` 生效：`rmem_max` 为常见默认 212992 时是 416 KiB，不小于 262144 时是 512 KiB。输出与 RTCP socket 用系统默认值 |
 
 服务间控制使用 HTTP；需要 HTTPS/WSS 的客户端入口由部署网关终止 TLS。网关需保留媒体路径、Location、SDP 和 WebSocket upgrade，并允许长连接/chunked 传输。管理 API 和内部控制应按网络职责隔离；当前没有通用用户账户系统。
 

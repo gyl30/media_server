@@ -41,10 +41,10 @@ bool gb28181_audio_sender::startup(boost::asio::ip::address bind_address)
         return false;
     }
     boost::system::error_code error;
-    rtp_transport_->startup(bind_address, *local_port_, error);
+    rtp_transport_->startup(bind_address, *local_port_, udp_receive_buffer::system_default, error);
     if (!error)
     {
-        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), error);
+        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), udp_receive_buffer::system_default, error);
     }
     if (error)
     {

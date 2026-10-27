@@ -260,7 +260,7 @@ bool whep_pull_session::negotiate(boost::asio::yield_context yield)
     local_port_ = *port;
     udp_transport_ = std::make_shared<udp_transport>(worker_.io());
     boost::system::error_code error;
-    udp_transport_->startup(config_.local_address, local_port_, error);
+    udp_transport_->startup(config_.local_address, local_port_, udp_receive_buffer::media_input, error);
     certificate_ = dtls_certificate::create();
     ice_ufrag_ = random_hex(8);
     ice_pwd_ = random_hex(16);

@@ -20,6 +20,12 @@
 namespace media_server
 {
 
+enum class udp_receive_buffer
+{
+    system_default,
+    media_input,
+};
+
 class udp_transport final : public std::enable_shared_from_this<udp_transport>
 {
    public:
@@ -28,7 +34,7 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
     explicit udp_transport(boost::asio::io_context& owner);
 
    public:
-    void startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error);
+    void startup(boost::asio::ip::address bind_address, std::uint16_t port, udp_receive_buffer receive_buffer, boost::system::error_code& error);
     void connect(const boost::asio::ip::udp::endpoint& endpoint, boost::system::error_code& error);
     std::size_t read(std::span<std::uint8_t> buffer,
                      boost::asio::ip::udp::endpoint& endpoint,

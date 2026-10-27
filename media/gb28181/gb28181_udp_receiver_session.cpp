@@ -47,10 +47,10 @@ std::optional<std::uint16_t> gb28181_udp_receiver_session::startup(boost::asio::
         return std::nullopt;
     }
     boost::system::error_code network_error;
-    rtp_transport_->startup(bind_address, *local_port_, network_error);
+    rtp_transport_->startup(bind_address, *local_port_, udp_receive_buffer::media_input, network_error);
     if (!network_error)
     {
-        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), network_error);
+        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), udp_receive_buffer::system_default, network_error);
     }
     if (network_error)
     {

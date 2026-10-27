@@ -48,10 +48,10 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
         return false;
     }
     boost::system::error_code network_error;
-    rtp_transport_->startup(bind_address, *local_port_, network_error);
+    rtp_transport_->startup(bind_address, *local_port_, udp_receive_buffer::system_default, network_error);
     if (!network_error)
     {
-        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), network_error);
+        rtcp_transport_->startup(bind_address, static_cast<std::uint16_t>(*local_port_ + 1U), udp_receive_buffer::system_default, network_error);
     }
     if (network_error)
     {

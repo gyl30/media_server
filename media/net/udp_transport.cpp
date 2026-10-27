@@ -9,11 +9,15 @@ namespace media_server
 namespace
 {
 constexpr std::size_t write_high_water_mark = 1024U * 1024U;
-}
+constexpr int media_receive_buffer_bytes = 256 * 1024;
+}    // namespace
 
 udp_transport::udp_transport(boost::asio::io_context& owner) : socket_(owner) {}
 
-void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t port, boost::system::error_code& error)
+void udp_transport::startup(boost::asio::ip::address bind_address,
+                            std::uint16_t port,
+                            udp_receive_buffer receive_buffer,
+                            boost::system::error_code& error)
 {
     error.clear();
     if (bind_address.is_unspecified())
@@ -24,6 +28,10 @@ void udp_transport::startup(boost::asio::ip::address bind_address, std::uint16_t
 
     const boost::asio::ip::udp::endpoint endpoint{bind_address, port};
     socket_.open(endpoint.protocol(), error);
+    if (!error && receive_buffer == udp_receive_buffer::media_input)
+    {
+        socket_.set_option(boost::asio::socket_base::receive_buffer_size(media_receive_buffer_bytes), error);
+    }
     if (!error)
     {
         socket_.non_blocking(true, error);

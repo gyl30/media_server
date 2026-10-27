@@ -137,10 +137,10 @@ int rtsp_publish_udp_session::on_setup(rtsp_server_t* server,
     const auto local_port = *state.local_port;
 
     boost::system::error_code network_error;
-    state.rtp_transport->startup(bind_address_, local_port, network_error);
+    state.rtp_transport->startup(bind_address_, local_port, udp_receive_buffer::media_input, network_error);
     if (!network_error)
     {
-        state.rtcp_transport->startup(bind_address_, static_cast<std::uint16_t>(local_port + 1U), network_error);
+        state.rtcp_transport->startup(bind_address_, static_cast<std::uint16_t>(local_port + 1U), udp_receive_buffer::system_default, network_error);
     }
     if (!network_error)
     {
