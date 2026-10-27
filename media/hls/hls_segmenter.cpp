@@ -110,7 +110,7 @@ bool hls_segmenter::startup(const std::shared_ptr<media_stream>& source)
     bool has_video = false;
     for (const auto& track : source->tracks())
     {
-        if (track.codec == codec_id::opus)
+        if (track.codec == codec_id::opus || track.codec == codec_id::g711a || track.codec == codec_id::g711u)
         {
             spdlog::warn("hls skip unsupported track {} codec {}", track.id, to_string(track.codec));
             continue;
@@ -293,13 +293,7 @@ int hls_segmenter::add_track_to_muxer(void* muxer, const media_track& track)
         case codec_id::aac:
             return mpeg_ts_add_stream(muxer, PSI_STREAM_AAC, nullptr, 0);
         case codec_id::g711a:
-            return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                       ? mpeg_ts_add_stream(muxer, PSI_STREAM_AUDIO_G711A, nullptr, 0)
-                       : -1;
         case codec_id::g711u:
-            return track.clock_rate == 8'000 && track.channel_count == 1 && track.codec_config.empty()
-                       ? mpeg_ts_add_stream(muxer, PSI_STREAM_AUDIO_G711U, nullptr, 0)
-                       : -1;
         case codec_id::opus:
             return -1;
     }

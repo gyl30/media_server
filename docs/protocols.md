@@ -42,7 +42,7 @@ WHIP/WHEP 使用 `Content-Type: application/sdp` 提交完整 offer，成功返�
 - 主动 WHEP Pull 的 offer/answer 范围是 H.264 与 Opus，不能从 WHIP 的 H.265 分支推导出 H.265 Pull。
 - 主动 WHEP Pull 只向 answer 中与本端同地址族的 candidate 直接发起连通性检查，不使用 STUN/TURN；上游 candidate 必须能从媒体服务直接到达。源码：[`whep_pull_session.cpp`](../media/webrtc/whep_pull_session.cpp)。
 - GB PS receiver 收集单路视频和可选音频后注册固定轨道，支持 H.264/H.265、AAC、G.711 A/U；PS sender 同样要求一路视频、至多一路支持的音频。TCP PS-RTP 使用两字节长度前缀。
-- HLS 使用 MPEG-TS 分片，支持 H.264/H.265、AAC 及符合参数限制的 G.711 分支，拒绝 Opus。实际播放器能否解码应单独验证。
+- HLS 使用 MPEG-TS 分片，支持 H.264/H.265 和 AAC。Opus 与 G.711 没有通用播放器支持的 TS stream type，HLS 跳过这类音轨，只输出视频。
 - Qt 客户端视频只接受 H.264，音频接受 AAC、PCMA、PCMU；不因服务器支持 H.265 就宣称桌面支持 H.265。
 
 具体校验位于 `media/rtmp/rtmp_publish_session.cpp`、`media/rtsp/rtsp_play_session.cpp`、`media/webrtc/webrtc_sdp.cpp`、`media/webrtc/whip_media_receiver.cpp`、`media/flv/flv_tag_output.cpp`、`media/hls/hls_segmenter.cpp` 和 `media/ps/mpeg_ps_output.cpp`。
