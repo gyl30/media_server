@@ -182,6 +182,10 @@ def parse_arguments():
     parser.add_argument("--min-free-disk-mib", type=int, default=0)
     parser.add_argument("--max-server-pss-mib", type=int, default=0)
     parser.add_argument("--decode-probe", action="store_true", help="decode six seconds of each RTMP/RTSP/FLV/HLS output with ffprobe during the window")
+    parser.add_argument("--stalled-viewers", type=int, default=0, metavar="COUNT",
+                        help="per RTMP/RTSP/FLV output, start COUNT extra ffmpeg readers at the window start and SIGSTOP them after 5 s; report whether the server closed them")
+    parser.add_argument("--av-probe", type=float, default=0, metavar="SECONDS",
+                        help="decode each RTMP/RTSP/FLV/HLS output with ffmpeg for SECONDS from the window start; report cadence, timestamp order, arrival lag and A/V marker offsets")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
@@ -606,6 +610,22 @@ def run(args):
                     command += ["-rtsp_transport", "tcp"] if protocol == "rtsp" else []
                     command.append(play_value(sources[0], protocol, stub))
                     decode_probes.append((protocol, launch(f"decode-{protocol}", command, args.client_cpus, "decode")))
+            stalled = []
+            for protocol in [protocol for protocol in counts if protocol in ("rtmp", "rtsp", "flv")] if args.stalled_viewers > 0 else []:
+                for index in range(args.stalled_viewers):
+                    command = [args.ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "error"]
+                    command += ["-rtsp_transport", "tcp"] if protocol == "rtsp" else []
+                    command += ["-i", play_value(sources[0], protocol, stub), "-c", "copy", "-f", "null", "-"]
+                    stalled.append((protocol, launch(f"stalled-{protocol}-{index}", command, args.client_cpus, "decode")))
+            stall_timer = threading.Timer(5, lambda: [os.kill(process.pid, signal.SIGSTOP) for _, process in stalled if process.poll() is None])
+            if stalled:
+                stall_timer.start()
+            av_probes = []
+            if args.av_probe > 0:
+                for protocol in [protocol for protocol in counts if protocol in ("rtmp", "rtsp", "flv", "hls")]:
+                    command = [sys.executable, Path(__file__).with_name("av_probe.py"), "--seconds", args.av_probe, "--ffmpeg-bin", args.ffmpeg_bin,
+                               play_value(sources[0], protocol, stub)]
+                    av_probes.append((protocol, launch(f"av-{protocol}", command, args.client_cpus, "decode")))
             server_log_path = args.output / "server.log" if owned else args.server_log
             server_log_offset = server_log_path.stat().st_size if server_log_path else 0
             monitored = [("server", server_pid), ("runner", os.getpid())] + [(name, process.pid) for name, process, _, category in processes if category in ("publisher", "client")]
@@ -750,6 +770,35 @@ def run(args):
                 frames = {stream.get("codec_type"): int(stream.get("nb_read_frames") or 0) for stream in streams}
                 result.setdefault("decode_probe", {})[protocol] = {"exit_code": process.returncode, "streams": streams,
                     "ok": process.returncode == 0 and frames.get("video", 0) > 0 and all(frames.values())}
+            stall_timer.cancel()
+            exited_before_stall = {process.pid for _, process in stalled if process.poll() is not None}
+            for _, process in stalled:
+                if process.pid not in exited_before_stall:
+                    os.kill(process.pid, signal.SIGCONT)
+            closed_deadline = time.monotonic() + 20
+            for protocol, process in stalled:
+                item = result.setdefault("stalled_viewers", {}).setdefault(protocol, {"count": 0, "exited_before_stall": 0, "closed_by_server": 0})
+                item["count"] += 1
+                if process.pid in exited_before_stall:
+                    item["exited_before_stall"] += 1
+                    continue
+                try:
+                    process.wait(timeout=max(0, closed_deadline - time.monotonic()))
+                    item["closed_by_server"] += 1
+                except subprocess.TimeoutExpired:
+                    stop_process(process)
+            for protocol, process in av_probes:
+                try:
+                    process.wait(timeout=60)
+                except subprocess.TimeoutExpired:
+                    stop_process(process)
+                lines = (args.output / f"av-{protocol}.log").read_text().splitlines()
+                try:
+                    probe = json.loads(lines[-1])
+                except (IndexError, ValueError):
+                    probe = {"exit_code": process.returncode}
+                probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
+                result.setdefault("av_probe", {})[protocol] = probe
             if control_probe is not None:
                 control_probe.join(timeout=30)
                 latencies = sorted(sample["ms"] for sample in control_samples)
@@ -807,6 +856,7 @@ def run(args):
                           item["measurement"].get("progressing") == item["requested"] and item["window"]["coverage"] >= 0.99
                           for item in result["groups"])
             success = success and all(probe["ok"] for probe in result.get("decode_probe", {}).values())
+            success = success and all(probe["ok"] for probe in result.get("av_probe", {}).values())
             success = success and not result.get("churn", {}).get("failed_rounds")
             result["status"] = "PASS" if success else "FAIL"
             result["capacity_boundary"] = "HEALTHY" if success else "UNCONFIRMED"
