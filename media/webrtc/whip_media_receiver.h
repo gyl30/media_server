@@ -60,6 +60,8 @@ class whip_media_receiver final
     std::optional<media_track> audio_track_;
     std::optional<std::uint32_t> video_ssrc_;
     std::optional<std::uint32_t> audio_ssrc_;
+    bool video_synced_{};
+    bool audio_synced_{};
     struct rtcp_sync
     {
         std::uint64_t ntp{};

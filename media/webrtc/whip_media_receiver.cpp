@@ -159,13 +159,16 @@ bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
 
     const auto ssrc = read_u32(packet, 4);
     rtsp_demuxer_t* demuxer{};
+    bool* synced{};
     if (video_ssrc_ && *video_ssrc_ == ssrc)
     {
         demuxer = video_demuxer_;
+        synced = &video_synced_;
     }
     else if (audio_ssrc_ && *audio_ssrc_ == ssrc)
     {
         demuxer = audio_demuxer_;
+        synced = &audio_synced_;
     }
     if (demuxer == nullptr)
     {
@@ -173,7 +176,16 @@ bool whip_media_receiver::input_rtcp(std::span<const std::uint8_t> packet)
     }
 
     const auto result = rtsp_demuxer_input(demuxer, packet.data(), static_cast<int>(packet.size()));
-    return result >= 0 && (result != RTCP_SR || apply_sender_report(demuxer));
+    if (result < 0)
+    {
+        return false;
+    }
+    if (result != RTCP_SR || *synced)
+    {
+        return true;
+    }
+    *synced = true;
+    return apply_sender_report(demuxer);
 }
 
 whip_media_receiver::~whip_media_receiver()
@@ -237,7 +249,7 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
     const auto payload = std::make_shared<const std::vector<std::uint8_t>>(bitstream_.ptr, bitstream_.ptr + bytes);
     const media_frame frame{
         .track = video ? video_track_id : audio_track_id,
-        .dts_ns = milliseconds_to_ns(packet->dts),
+        .dts_ns = milliseconds_to_ns(video ? packet->pts : packet->dts),
         .pts_ns = milliseconds_to_ns(packet->pts),
         .key_frame = video && (packet->flags & AVPACKET_FLAG_KEY) != 0,
         .payload = payload,

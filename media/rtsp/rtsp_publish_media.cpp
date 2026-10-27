@@ -41,6 +41,7 @@ bool rtsp_publish_media::startup(const std::string& rtcp_cname)
     media_stream_ = std::make_shared<media_stream>(media_stream_id_, worker_);
     avpkt2bs_create(&bitstream_);
     demuxers_.resize(descriptions_.size());
+    synced_tracks_.resize(descriptions_.size());
     for (std::size_t index = 0; index < descriptions_.size(); ++index)
     {
         const auto& description = descriptions_[index];
@@ -101,7 +102,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
         return true;
     }
     const auto result = rtsp_demuxer_input(demuxer, data.data(), static_cast<int>(data.size()));
-    if (result != RTCP_SR)
+    if (result != RTCP_SR || synced_tracks_[track_index])
     {
         return result >= 0;
     }
@@ -126,6 +127,7 @@ bool rtsp_publish_media::input_packet(std::size_t track_index, std::span<const s
         pts = rtcp_sync_->pts + (delta / ntp_fraction) * 1'000 + (delta % ntp_fraction) * 1'000 / ntp_fraction;
     }
     rtsp_demuxer_set_timestamp(demuxer, rtp_timestamp, pts);
+    synced_tracks_[track_index] = true;
     return true;
 }
 

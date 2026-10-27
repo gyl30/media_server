@@ -63,6 +63,7 @@ class rtsp_publish_media final
     std::string media_stream_id_;
     std::vector<rtsp_publish_track_description> descriptions_;
     std::vector<rtsp_demuxer_t*> demuxers_;
+    std::vector<bool> synced_tracks_;
     std::shared_ptr<media_stream> media_stream_;
     avpkt2bs_t bitstream_{};
     struct rtcp_sync
