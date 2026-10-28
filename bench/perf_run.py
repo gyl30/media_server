@@ -196,6 +196,8 @@ def parse_arguments():
                         help="distinct upstream publishers for pull and GB inputs; sources beyond it reuse them round-robin; 0 gives every source its own")
     parser.add_argument("--pull-interleave-seed", type=int, default=0,
                         help="before each /pull/create send 0-7 other control requests (seeded) so pulls land on workers like mixed production traffic; 0 disables")
+    parser.add_argument("--viewer-interleave-seed", type=int, default=0,
+                        help="while viewers connect, send 0-7 other control requests (seeded) per ramp slot so viewer connections land on workers like mixed production traffic; 0 disables")
     parser.add_argument("--gb-peer", choices=("quiet", "rtcp", "rtcp_rr", "rr", "rtp_noise"), default="quiet",
                         help="GB UDP viewer peer behaviour: remote RTCP port, RTCP RR or junk datagrams back to the sender")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
@@ -578,6 +580,17 @@ def run(args):
                     result["preparation_cpu"][f"{prefix}_max_cpu_busy"] = max(result["preparation_cpu"][f"{prefix}_max_cpu_busy"], usage["max_cpu_busy"])
                 preparation_sample.update(cpu=current, monotonic_ns=time.monotonic_ns())
 
+            viewers_connected = threading.Event()
+
+            def interleave_viewers():
+                interleave = random.Random(args.viewer_interleave_seed)
+                while not viewers_connected.is_set():
+                    for _ in range(interleave.randint(0, 7)):
+                        request(control, "/receivers", token=control_token)
+                    time.sleep(1 / args.ramp_per_second)
+
+            if args.viewer_interleave_seed:
+                threading.Thread(target=interleave_viewers, daemon=True).start()
             next_client_start = time.monotonic()
             for protocol, count in counts.items():
                 for offset in range(0, count, args.group_size):
@@ -600,6 +613,7 @@ def run(args):
                 if any(process.poll() is not None for _, process, _ in clients):
                     raise RuntimeError("client exited before all media_ready; inspect group logs")
                 if all("phase=media_ready " in (args.output / f"{name}.log").read_text() for name, _, _ in clients):
+                    viewers_connected.set()
                     break
                 if time.monotonic() > deadline:
                     raise TimeoutError("all-viewer readiness timed out")
