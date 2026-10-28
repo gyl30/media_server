@@ -243,10 +243,8 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
         return start_session(
             request,
             *stream_id,
-            std::make_shared<whep_pull_session>(
-                worker,
-                whep_pull_config{
-                    .stream_id = *stream_id, .url = std::string(url->get_href()), .token = std::move(token), .local_address = local_address}));
+            whep_pull::create(whep_pull_config{
+                .stream_id = *stream_id, .url = std::string(url->get_href()), .token = std::move(token), .local_address = local_address}));
     }
     return invalid();
 }

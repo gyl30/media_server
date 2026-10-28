@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <cstddef>
 #include <cstdint>
 #include <chrono>
 #include <optional>
@@ -26,6 +27,7 @@
 
 namespace media_server
 {
+class worker_pool;
 class worker_context;
 
 struct whep_pull_config
@@ -39,7 +41,7 @@ struct whep_pull_config
 class whep_pull_session final : public session, public std::enable_shared_from_this<whep_pull_session>
 {
    public:
-    whep_pull_session(worker_context& worker, whep_pull_config config);
+    whep_pull_session(std::size_t worker_index, worker_context& worker, whep_pull_config config);
     ~whep_pull_session();
 
    public:
@@ -66,6 +68,7 @@ class whep_pull_session final : public session, public std::enable_shared_from_t
     void safe_shutdown();
 
    private:
+    std::size_t worker_index_;
     worker_context& worker_;
     whep_pull_config config_;
     boost::asio::ip::tcp::resolver resolver_;
@@ -96,6 +99,14 @@ class whep_pull_session final : public session, public std::enable_shared_from_t
     std::vector<pending_check> pending_checks_;
     std::chrono::steady_clock::time_point consent_received_{};
 };
+
+namespace whep_pull
+{
+
+void startup(worker_pool& workers);
+[[nodiscard]] std::shared_ptr<whep_pull_session> create(whep_pull_config config);
+
+}    // namespace whep_pull
 
 }    // namespace media_server
 

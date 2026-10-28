@@ -18,6 +18,7 @@
 #include "media/http/http_session.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/core/session_registry.h"
+#include "media/webrtc/whep_pull_session.h"
 #include "media/rtsp/rtsp_server_connection.h"
 
 namespace media_server
@@ -151,6 +152,7 @@ int service::run()
 
     workers_ = std::make_unique<worker_pool>(config_.threads);
     whip::startup(*workers_);
+    whep_pull::startup(*workers_);
     auto& control_worker = workers_->context(0);
     hls::startup(control_worker);
     auto& control_io = control_worker.io();
