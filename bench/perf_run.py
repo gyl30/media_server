@@ -8,6 +8,7 @@ import http.client
 import json
 import math
 import os
+import random
 import re
 import resource
 import secrets
@@ -190,6 +191,11 @@ def parse_arguments():
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--control-probe-ms", type=int, default=0, help="interval between GET /receivers control requests timed during the window; 0 disables")
+    parser.add_argument("--upstream-workers", type=int, default=0, help="worker threads of the upstream media_server for pull and GB inputs; 0 uses --workers")
+    parser.add_argument("--upstream-sources", type=int, default=0,
+                        help="distinct upstream publishers for pull and GB inputs; sources beyond it reuse them round-robin; 0 gives every source its own")
+    parser.add_argument("--pull-interleave-seed", type=int, default=0,
+                        help="before each /pull/create send 0-7 other control requests (seeded) so pulls land on workers like mixed production traffic; 0 disables")
     parser.add_argument("--gb-peer", choices=("quiet", "rtcp", "rtcp_rr", "rr", "rtp_noise"), default="quiet",
                         help="GB UDP viewer peer behaviour: remote RTCP port, RTCP RR or junk datagrams back to the sender")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
@@ -364,7 +370,7 @@ def run(args):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
 
     def media_server(name, host, ports, verifier):
-        process = launch(name, [args.server_bin, "--threads", args.workers, "--bind-address", host, "--webrtc-address", host,
+        process = launch(name, [args.server_bin, "--threads", args.workers if name == "server" or not args.upstream_workers else args.upstream_workers, "--bind-address", host, "--webrtc-address", host,
                                "--rtmp-port", ports[0], "--rtsp-port", ports[1], "--http-port", ports[2],
                                "--control-token", control_token, "--signaling-url", verifier], args.server_cpus if name == "server" else args.client_cpus, "server" if name == "server" else "publisher")
         wait_for_listener(host, ports[2], check=lambda: check_budget(server_pid=process.pid if name == "server" else None))
@@ -474,6 +480,8 @@ def run(args):
                     upstream = media_server("upstream", args.client_address, upstream_ports, stub.url)
                 sources = []
                 whip_ids = []
+                upstream_streams = []
+                interleave = random.Random(args.pull_interleave_seed)
                 if args.input == "whip":
                     result["whip_fixture_sha256"] = sha256(args.whip_fixture)
                     for offset in range(0, args.sources, args.group_size):
@@ -492,13 +500,20 @@ def run(args):
                         if args.input != "whip":
                             ffmpeg_source(f"publisher-{index}", stream, args.input, args.host, (args.rtmp_port, args.rtsp_port, args.http_port))
                     else:
-                        upstream_stream = stub.issue("publish", ttl=60)
-                        ffmpeg_source(f"publisher-{index}", upstream_stream, "rtmp", args.client_address, upstream_ports)
-                        probe({"stream_id": upstream_stream}, f"upstream-ready-{index}", stub, args.client_address, upstream_ports)
+                        if args.upstream_sources and index >= args.upstream_sources:
+                            upstream_stream = upstream_streams[index % args.upstream_sources]
+                        else:
+                            upstream_stream = stub.issue("publish", ttl=60)
+                            ffmpeg_source(f"publisher-{index}", upstream_stream, "rtmp", args.client_address, upstream_ports)
+                            probe({"stream_id": upstream_stream}, f"upstream-ready-{index}", stub, args.client_address, upstream_ports)
+                            upstream_streams.append(upstream_stream)
                         stream = str(uuid.uuid4())
                         source = {"stream_id": stream}
                         if args.input.endswith("_pull"):
                             url = play_value({"stream_id": upstream_stream}, args.input[:-5], stub, args.client_address, upstream_ports)
+                            if args.pull_interleave_seed:
+                                for _ in range(interleave.randint(0, 7)):
+                                    request(control, "/receivers", token=control_token)
                             request(control, "/pull/create", {"stream_id": stream, "url": url}, control_token)
                         else:
                             ssrc = 100000000 + index
