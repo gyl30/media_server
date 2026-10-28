@@ -42,7 +42,10 @@ whep_session::whep_session(worker_context& worker,
 {
 }
 
-bool whep_session::startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate)
+bool whep_session::startup(const webrtc_media_offer& transport_offer,
+                           const webrtc_answer& answer,
+                           const dtls_certificate& certificate,
+                           worker_pool& workers)
 {
     const auto self = shared_from_this();
     udp_transport_->set_error_callback(
@@ -69,7 +72,7 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer, const webr
     if (answer.audio_payload_type && answer.audio_codec == codec_id::aac)
     {
         audio_egress_ = acquire_whep_audio_egress(stream_,
-                                                  worker_,
+                                                  workers,
                                                   whep_audio_settings{
                                                       .channels = answer.audio_channel_count.value_or(1),
                                                       .bitrate = answer.audio_bitrate.value_or(64'000 * answer.audio_channel_count.value_or(1)),
@@ -118,9 +121,9 @@ bool whep_session::startup(const webrtc_media_offer& transport_offer, const webr
         answer.audio_channel_count.value_or(0),
         answer.audio_bitrate.value_or(0),
         answer.audio_max_playback_rate.value_or(0));
+    startup_establishment_timeout();
     worker_.spawn([self](boost::asio::yield_context yield) { self->run_udp(yield); });
     stream_->add_sink(self);
-    startup_establishment_timeout();
     spdlog::info("webrtc whep session started {} stream {}", id_, stream_->stream_id());
     return true;
 }

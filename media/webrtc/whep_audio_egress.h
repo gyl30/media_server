@@ -12,6 +12,7 @@
 
 namespace media_server
 {
+class worker_pool;
 class worker_context;
 
 struct whep_audio_settings
@@ -32,7 +33,7 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
 
    private:
     friend std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
-                                                                        worker_context& worker,
+                                                                        worker_pool& workers,
                                                                         whep_audio_settings settings);
     friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
@@ -50,7 +51,7 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
 };
 
 [[nodiscard]] std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
-                                                                           worker_context& worker,
+                                                                           worker_pool& workers,
                                                                            whep_audio_settings settings);
 void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 

@@ -13,7 +13,7 @@
 
 namespace media_server
 {
-class worker_context;
+class worker_pool;
 class media_stream;
 }    // namespace media_server
 
@@ -35,8 +35,8 @@ struct create_result
     std::string answer_sdp;
 };
 
-[[nodiscard]] create_result create(worker_context& worker,
-                                   std::shared_ptr<media_stream> stream,
+void startup(worker_pool& workers);
+[[nodiscard]] create_result create(std::shared_ptr<media_stream> stream,
                                    std::string_view token,
                                    std::string_view offer_sdp,
                                    const config& application_config,

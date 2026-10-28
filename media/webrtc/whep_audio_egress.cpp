@@ -7,6 +7,7 @@
 #include <boost/asio/dispatch.hpp>
 
 #include "media/codec/codec_utils.h"
+#include "media/net/worker_pool.h"
 #include "media/net/worker_context.h"
 #include "media/webrtc/whep_audio_egress.h"
 
@@ -25,8 +26,24 @@ struct egress_key
     auto operator<=>(const egress_key&) const = default;
 };
 
+struct egress_entry
+{
+    std::weak_ptr<whep_audio_egress> egress;
+    std::size_t worker_index{};
+};
+
 std::mutex egress_mutex;
-std::map<egress_key, std::weak_ptr<whep_audio_egress>> egresses;
+std::map<egress_key, egress_entry> egresses;
+
+std::size_t least_loaded_worker(std::size_t worker_count)
+{
+    std::vector<std::size_t> egress_counts(worker_count);
+    for (const auto& [key, entry] : egresses)
+    {
+        ++egress_counts[entry.worker_index];
+    }
+    return static_cast<std::size_t>(std::ranges::min_element(egress_counts) - egress_counts.begin());
+}
 
 }    // namespace
 
@@ -88,12 +105,20 @@ bool whep_audio_egress::startup(whep_audio_settings settings)
         return false;
     }
     const auto self = shared_from_this();
-    shutdown_subscription_ = worker_.subscribe_shutdown([self]() { self->finish(); });
-    if (!shutdown_subscription_)
-    {
-        return false;
-    }
-    source_->add_sink(shared_from_this());
+    source_->add_sink(self);
+    boost::asio::dispatch(worker_.io(),
+                          [self]()
+                          {
+                              if (self->finished_.load(std::memory_order_acquire))
+                              {
+                                  return;
+                              }
+                              self->shutdown_subscription_ = self->worker_.subscribe_shutdown([self]() { self->finish(); });
+                              if (!self->shutdown_subscription_)
+                              {
+                                  self->finish();
+                              }
+                          });
     return true;
 }
 
@@ -141,29 +166,30 @@ void whep_audio_egress::on_frame(const media_frame& frame)
 void whep_audio_egress::on_end() { finish(); }
 
 std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_ptr<media_stream>& source,
-                                                             worker_context& worker,
+                                                             worker_pool& workers,
                                                              whep_audio_settings settings)
 {
     const egress_key key{source.get(), settings.channels, settings.bitrate, settings.max_playback_rate};
     std::scoped_lock lock(egress_mutex);
-    std::erase_if(egresses, [](const auto& entry) { return entry.second.expired(); });
+    std::erase_if(egresses, [](const auto& entry) { return entry.second.egress.expired(); });
     if (const auto it = egresses.find(key); it != egresses.end())
     {
-        if (auto existing = it->second.lock(); existing && existing->viewers_ != 0 && !existing->finished_.load(std::memory_order_acquire))
+        if (auto existing = it->second.egress.lock(); existing && existing->viewers_ != 0 && !existing->finished_.load(std::memory_order_acquire))
         {
             ++existing->viewers_;
             return existing;
         }
     }
 
-    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, worker));
+    const auto worker_index = least_loaded_worker(workers.size());
+    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, workers.context(worker_index)));
     if (!created->startup(settings))
     {
         created->finish();
         return {};
     }
     created->viewers_ = 1;
-    egresses[key] = created;
+    egresses[key] = egress_entry{.egress = created, .worker_index = worker_index};
     return created;
 }
 

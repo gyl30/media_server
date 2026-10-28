@@ -152,6 +152,7 @@ int service::run()
 
     workers_ = std::make_unique<worker_pool>(config_.threads);
     whip::startup(*workers_);
+    whep::startup(*workers_);
     whep_pull::startup(*workers_);
     auto& control_worker = workers_->context(0);
     hls::startup(control_worker);

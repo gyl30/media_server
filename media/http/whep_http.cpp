@@ -2,7 +2,6 @@
 
 #include "media/webrtc/whep.h"
 #include "media/http/whep_http.h"
-#include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_verify.h"
 
@@ -69,7 +68,6 @@ whep_http_string_response handle_whep_session_get(const whep_http_request& reque
 }
 
 whep_http_string_response handle_whep_post(const whep_http_request& request,
-                                           worker_context& worker,
                                            std::string_view stream_id,
                                            std::string_view token,
                                            const config& application_config,
@@ -83,7 +81,7 @@ whep_http_string_response handle_whep_post(const whep_http_request& request,
         response.set(boost::beast::http::field::retry_after, std::to_string(whep_retry_after_seconds));
         return response;
     }
-    auto result = whep::create(worker, std::move(stream), token, request.body(), application_config, socket, yield);
+    auto result = whep::create(std::move(stream), token, request.body(), application_config, socket, yield);
     switch (result.error)
     {
         case whep::create_error::none:
@@ -116,7 +114,6 @@ whep_http_string_response handle_whep_delete(const whep_http_request& request, s
 }    // namespace
 
 whep_http_string_response handle_whep_request(const whep_http_request& request,
-                                              worker_context& worker,
                                               const ada::url_aggregator& target,
                                               const config& application_config,
                                               const boost::asio::ip::tcp::socket& socket,
@@ -164,7 +161,7 @@ whep_http_string_response handle_whep_request(const whep_http_request& request,
             return make_string_response(
                 request, boost::beast::http::status::unsupported_media_type, "text/plain", "content type must be application/sdp\n");
         }
-        return handle_whep_post(request, worker, first, second, application_config, socket, yield);
+        return handle_whep_post(request, first, second, application_config, socket, yield);
     }
     if (request.method() == boost::beast::http::verb::delete_ && session_resource)
     {

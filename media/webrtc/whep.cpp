@@ -12,6 +12,7 @@
 #include <boost/scope/scope_exit.hpp>
 
 #include "media/webrtc/whep.h"
+#include "media/net/worker_pool.h"
 #include "media/net/worker_context.h"
 #include "media/net/media_port_pool.h"
 #include "media/webrtc/whep_session.h"
@@ -23,10 +24,17 @@ namespace media_server::whep
 namespace
 {
 
+struct session_entry
+{
+    std::weak_ptr<whep_session> session;
+    std::size_t worker_index{};
+};
+
 struct state
 {
     std::mutex mutex;
-    std::map<std::string, std::weak_ptr<whep_session>, std::less<>> sessions;
+    worker_pool* workers{};
+    std::map<std::string, session_entry, std::less<>> sessions;
 };
 
 state& runtime()
@@ -39,7 +47,17 @@ create_result failed(create_error error) { return {.error = error, .session_id =
 
 void cleanup_expired(state& current)
 {
-    std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
+    std::erase_if(current.sessions, [](const auto& entry) { return entry.second.session.expired(); });
+}
+
+std::size_t least_loaded_worker(state& current)
+{
+    std::vector<std::size_t> session_counts(current.workers->size());
+    for (const auto& [id, entry] : current.sessions)
+    {
+        ++session_counts[entry.worker_index];
+    }
+    return static_cast<std::size_t>(std::ranges::min_element(session_counts) - session_counts.begin());
 }
 
 std::string random_hex(std::size_t byte_count)
@@ -62,8 +80,14 @@ std::string random_hex(std::size_t byte_count)
 
 }    // namespace
 
-create_result create(worker_context& worker,
-                     std::shared_ptr<media_stream> stream,
+void startup(worker_pool& workers)
+{
+    auto& current = runtime();
+    std::scoped_lock lock(current.mutex);
+    current.workers = &workers;
+}
+
+create_result create(std::shared_ptr<media_stream> stream,
                      std::string_view token,
                      std::string_view offer_sdp,
                      const config& application_config,
@@ -124,6 +148,16 @@ create_result create(worker_context& worker,
         }
     }
 
+    std::size_t worker_index{};
+    {
+        auto& current = runtime();
+        std::scoped_lock lock(current.mutex);
+        cleanup_expired(current);
+        worker_index = least_loaded_worker(current);
+    }
+    auto& workers = *runtime().workers;
+    auto& worker = workers.context(worker_index);
+
     const auto port = media_port_pool::instance().acquire();
     if (!port)
     {
@@ -165,7 +199,7 @@ create_result create(worker_context& worker,
     }
     auto session = std::make_shared<whep_session>(worker, stream, std::move(transport), std::move(answer_config));
     release_port.set_active(false);
-    if (!session->startup(*transport_media, *answer, *certificate))
+    if (!session->startup(*transport_media, *answer, *certificate, workers))
     {
         session->shutdown();
         return failed(create_error::internal_error);
@@ -176,7 +210,7 @@ create_result create(worker_context& worker,
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        session_id_collision = !current.sessions.emplace(session_id, session).second;
+        session_id_collision = !current.sessions.emplace(session_id, session_entry{.session = session, .worker_index = worker_index}).second;
     }
     if (session_id_collision)
     {
@@ -209,7 +243,7 @@ bool remove(std::string_view session_id)
             spdlog::debug("whep session remove not found {}", session_id);
             return false;
         }
-        session = iterator->second.lock();
+        session = iterator->second.session.lock();
         current.sessions.erase(iterator);
     }
     if (!session)
@@ -228,7 +262,7 @@ void shutdown()
     std::scoped_lock lock(current.mutex);
     for (const auto& [id, entry] : current.sessions)
     {
-        if (const auto session = entry.lock())
+        if (const auto session = entry.session.lock())
         {
             session->shutdown();
         }

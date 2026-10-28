@@ -35,7 +35,7 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
 
 ## 执行与共享边界
 
-每个 worker 拥有一个 `io_context`，由一个线程运行。连接按轮转分配，session 的资源在所属 worker 操作。WHIP 发布会话和 WHEP 拉流会话要同步完成 Opus→AAC 转码，单路成本是普通连接的数十倍，因此不跟随 HTTP 连接，而是分别放到现有同类会话最少的 worker；会话对象在启动接收协程前构造完成，此后只在该 worker 上操作。同 worker 的 sink 直接收到帧；跨 worker 按目标 worker 分组，共享有界队列和 drain 调度，算法位于 [`worker_sink_dispatcher.h`](../media/core/worker_sink_dispatcher.h)。
+每个 worker 拥有一个 `io_context`，由一个线程运行。连接按轮转分配，session 的资源在所属 worker 操作。WHIP 发布会话和 WHEP 拉流会话要同步完成 Opus→AAC 转码，单路成本是普通连接的数十倍，因此不跟随 HTTP 连接，而是分别放到现有同类会话最少的 worker；会话对象在启动接收协程前构造完成，此后只在该 worker 上操作。WHEP 播放会话同样放到播放会话最少的 worker，按源共享的 AAC→Opus 转码器另按转码器数量放到最少的 worker，其关闭订阅在所属 worker 上登记。同 worker 的 sink 直接收到帧；跨 worker 按目标 worker 分组，共享有界队列和 drain 调度，算法位于 [`worker_sink_dispatcher.h`](../media/core/worker_sink_dispatcher.h)。
 
 TCP/UDP transport 负责 socket、串行写入和在途 buffer，上层 session 决定错误后的关闭策略。HTTP-FLV 的 HTTP 输出队列、HLS 的片段保留分别具有协议职责。
 

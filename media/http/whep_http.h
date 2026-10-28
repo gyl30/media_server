@@ -13,13 +13,11 @@
 
 namespace media_server
 {
-class worker_context;
 
 using whep_http_request = boost::beast::http::request<boost::beast::http::string_body>;
 using whep_http_string_response = boost::beast::http::response<boost::beast::http::string_body>;
 
 [[nodiscard]] whep_http_string_response handle_whep_request(const whep_http_request& request,
-                                                            worker_context& worker,
                                                             const ada::url_aggregator& target,
                                                             const config& application_config,
                                                             const boost::asio::ip::tcp::socket& socket,

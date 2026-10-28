@@ -23,6 +23,7 @@
 
 namespace media_server
 {
+class worker_pool;
 class worker_context;
 class whep_audio_egress;
 
@@ -32,7 +33,10 @@ class whep_session final : public media_sink, public std::enable_shared_from_thi
     whep_session(worker_context& worker, std::shared_ptr<media_stream> stream, std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
 
    public:
-    [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate);
+    [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer,
+                               const webrtc_answer& answer,
+                               const dtls_certificate& certificate,
+                               worker_pool& workers);
     void shutdown();
 
    public:
