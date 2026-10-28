@@ -1,3 +1,4 @@
+#include <array>
 #include <chrono>
 #include <random>
 #include <cstring>
@@ -6,6 +7,8 @@
 #include <boost/json.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/asio/connect.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
 #include <boost/beast/core/tcp_stream.hpp>
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/redirect_error.hpp>
@@ -25,6 +28,10 @@ constexpr int udp_receive_buffer_bytes = 4 * 1024 * 1024;
 constexpr std::uint8_t pack_start = 0xBA;
 constexpr std::uint8_t system_header = 0xBB;
 constexpr std::uint8_t stream_map = 0xBC;
+constexpr auto feedback_interval = std::chrono::seconds{1};
+constexpr std::uint8_t rtcp_sender_report = 200;
+constexpr std::uint8_t rtcp_receiver_report = 201;
+constexpr std::uint8_t rtcp_source_description = 202;
 
 gb_client_options& options()
 {
@@ -48,6 +55,39 @@ std::vector<std::uint64_t>& delete_latencies()
 {
     static std::vector<std::uint64_t> value;
     return value;
+}
+
+gb_peer_counters& counters()
+{
+    static gb_peer_counters value;
+    return value;
+}
+
+void write_u32(std::uint8_t* data, std::uint32_t value)
+{
+    data[0] = static_cast<std::uint8_t>(value >> 24U);
+    data[1] = static_cast<std::uint8_t>(value >> 16U);
+    data[2] = static_cast<std::uint8_t>(value >> 8U);
+    data[3] = static_cast<std::uint8_t>(value);
+}
+
+std::array<std::uint8_t, 52> receiver_report(std::uint32_t reporter, std::uint32_t source, std::uint32_t highest_sequence)
+{
+    std::array<std::uint8_t, 52> packet{};
+    packet[0] = 0x81;
+    packet[1] = rtcp_receiver_report;
+    packet[3] = 7;
+    write_u32(packet.data() + 4, reporter);
+    write_u32(packet.data() + 8, source);
+    write_u32(packet.data() + 16, highest_sequence);
+    packet[32] = 0x81;
+    packet[33] = rtcp_source_description;
+    packet[35] = 4;
+    write_u32(packet.data() + 36, reporter);
+    packet[40] = 1;
+    packet[41] = 8;
+    std::memcpy(packet.data() + 42, "gbclient", 8);
+    return packet;
 }
 
 std::uint64_t elapsed_milliseconds(std::chrono::steady_clock::time_point started)
@@ -180,7 +220,8 @@ boost::asio::awaitable<unsigned> control_request(std::string host, std::uint16_t
 
 }    // namespace
 
-gb_client::gb_client(boost::asio::io_context& io, const std::string& path) : udp_socket_(io), tcp_socket_(io), acceptor_(io)
+gb_client::gb_client(boost::asio::io_context& io, const std::string& path)
+    : udp_socket_(io), rtcp_socket_(io), feedback_timer_(io), tcp_socket_(io), acceptor_(io)
 {
     const auto separator = path.find('/');
     if (separator == std::string::npos || separator == 0 || separator + 1U == path.size())
@@ -199,6 +240,8 @@ const std::vector<gb_sender_key>& gb_client::created_senders() { return senders(
 const std::vector<std::uint64_t>& gb_client::create_milliseconds() { return create_latencies(); }
 
 const std::vector<std::uint64_t>& gb_client::delete_milliseconds() { return delete_latencies(); }
+
+const gb_peer_counters& gb_client::peer_counters() { return counters(); }
 
 boost::asio::awaitable<bool> gb_client::delete_sender(std::string host, std::uint16_t port, gb_sender_key key)
 {
@@ -226,6 +269,14 @@ boost::asio::awaitable<boost::system::error_code> gb_client::play(std::string ho
         if (!error)
         {
             udp_socket_.bind({settings.bind_address, 0}, error);
+        }
+        if (!error && settings.peer != gb_peer::quiet && settings.peer != gb_peer::rtp_noise)
+        {
+            rtcp_socket_.open(udp_socket_.local_endpoint().protocol(), error);
+            if (!error)
+            {
+                rtcp_socket_.bind({settings.bind_address, 0}, error);
+            }
         }
         if (error)
         {
@@ -291,7 +342,59 @@ boost::asio::awaitable<boost::system::error_code> gb_client::play(std::string ho
             co_return error;
         }
     }
+    if (settings.transport == gb_transport::udp && (settings.peer == gb_peer::rtcp || settings.peer == gb_peer::rtcp_rr))
+    {
+        boost::asio::co_spawn(udp_socket_.get_executor(), receive_rtcp(), boost::asio::detached);
+    }
+    if (settings.transport == gb_transport::udp && settings.peer != gb_peer::quiet && settings.peer != gb_peer::rtcp)
+    {
+        boost::asio::co_spawn(udp_socket_.get_executor(), send_feedback(), boost::asio::detached);
+    }
     co_return boost::system::error_code{};
+}
+
+boost::asio::awaitable<void> gb_client::send_feedback()
+{
+    const bool noise = options().peer == gb_peer::rtp_noise;
+    for (;;)
+    {
+        boost::system::error_code error;
+        feedback_timer_.expires_after(feedback_interval);
+        co_await feedback_timer_.async_wait(boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        if (error || !udp_socket_.is_open())
+        {
+            co_return;
+        }
+        if (noise)
+        {
+            std::array<std::uint8_t, 52> datagram{};
+            udp_socket_.send_to(boost::asio::buffer(datagram), media_source_, 0, error);
+            ++counters().noise_datagrams;
+            continue;
+        }
+        const auto report = receiver_report(ssrc_ ^ 0x80000000U, ssrc_, sequence_.value_or(0));
+        const boost::asio::ip::udp::endpoint target{media_source_.address(), static_cast<std::uint16_t>(media_source_.port() + 1U)};
+        rtcp_socket_.send_to(boost::asio::buffer(report), target, 0, error);
+        ++counters().receiver_reports;
+    }
+}
+
+boost::asio::awaitable<void> gb_client::receive_rtcp()
+{
+    std::array<std::uint8_t, 1500> buffer{};
+    for (;;)
+    {
+        boost::system::error_code error;
+        const auto bytes =
+            co_await rtcp_socket_.async_receive(boost::asio::buffer(buffer), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        if (error)
+        {
+            co_return;
+        }
+        const bool sender_report = bytes >= 28U && (buffer[0] >> 6U) == 2U && buffer[1] == rtcp_sender_report &&
+                                   read_u32(buffer.data() + 4) == ssrc_ && read_u32(buffer.data() + 20) != 0;
+        ++(sender_report ? counters().sender_reports : counters().invalid_rtcp);
+    }
 }
 
 boost::asio::awaitable<boost::system::error_code> gb_client::consume_one() { co_return co_await receive(); }
@@ -300,6 +403,8 @@ void gb_client::cancel() noexcept
 {
     boost::system::error_code error;
     udp_socket_.close(error);
+    rtcp_socket_.close(error);
+    feedback_timer_.cancel();
     tcp_socket_.close(error);
     acceptor_.close(error);
 }
@@ -316,6 +421,10 @@ boost::asio::awaitable<boost::system::error_code> gb_client::create_sender(std::
     {
         body["remote_address"] = settings.bind_address.to_string();
         body["remote_rtp_port"] = media_port;
+        if (settings.peer == gb_peer::rtcp || settings.peer == gb_peer::rtcp_rr)
+        {
+            body["remote_rtcp_port"] = rtcp_socket_.local_endpoint().port();
+        }
     }
     else if (settings.transport == gb_transport::tcp_active)
     {
@@ -342,8 +451,8 @@ boost::asio::awaitable<boost::system::error_code> gb_client::receive()
     boost::system::error_code error;
     if (options().transport == gb_transport::udp)
     {
-        const auto bytes =
-            co_await udp_socket_.async_receive(boost::asio::buffer(buffer_), boost::asio::redirect_error(boost::asio::use_awaitable, error));
+        const auto bytes = co_await udp_socket_.async_receive_from(
+            boost::asio::buffer(buffer_), media_source_, boost::asio::redirect_error(boost::asio::use_awaitable, error));
         if (error)
         {
             co_return error;

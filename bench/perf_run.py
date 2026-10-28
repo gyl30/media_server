@@ -190,6 +190,8 @@ def parse_arguments():
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--control-probe-ms", type=int, default=0, help="interval between GET /receivers control requests timed during the window; 0 disables")
+    parser.add_argument("--gb-peer", choices=("quiet", "rtcp", "rtcp_rr", "rr", "rtp_noise"), default="quiet",
+                        help="GB UDP viewer peer behaviour: remote RTCP port, RTCP RR or junk datagrams back to the sender")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
@@ -342,7 +344,7 @@ def run(args):
             credentials.write_text("\n".join(f"{item['stream_id']}/{item['sender_id']}" for item in senders) + "\n")
             return [args.client_dir / "gb_fanout", "--play-paths-file", credentials, "--media-host", args.host,
                     "--media-port", args.http_port, "--control-token-file", token_file, "--transport", protocol[3:],
-                    "--bind-address", args.client_address, "--listen-port", gb_listen_port,
+                    "--bind-address", args.client_address, "--listen-port", gb_listen_port, "--peer", args.gb_peer,
                     "--progress-interval", args.progress_interval, *common]
         urls = [play_value(source, protocol, stub) for source in selected]
         if protocol in ("rtmp", "rtsp", "flv"):

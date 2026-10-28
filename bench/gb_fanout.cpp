@@ -44,6 +44,31 @@ media_server::bench::gb_transport parse_transport(std::string_view text)
     throw std::runtime_error("transport must be udp, tcp_active or tcp_passive");
 }
 
+media_server::bench::gb_peer parse_peer(std::string_view text)
+{
+    if (text == "quiet")
+    {
+        return media_server::bench::gb_peer::quiet;
+    }
+    if (text == "rtcp")
+    {
+        return media_server::bench::gb_peer::rtcp;
+    }
+    if (text == "rtcp_rr")
+    {
+        return media_server::bench::gb_peer::rtcp_rr;
+    }
+    if (text == "rr")
+    {
+        return media_server::bench::gb_peer::rr;
+    }
+    if (text == "rtp_noise")
+    {
+        return media_server::bench::gb_peer::rtp_noise;
+    }
+    throw std::runtime_error("peer must be quiet, rtcp, rtcp_rr, rr or rtp_noise");
+}
+
 std::uint64_t percentile(std::vector<std::uint64_t> values, std::size_t percent)
 {
     if (values.empty())
@@ -62,6 +87,8 @@ int main(int argc, char** argv)
     {
         std::cout << "--control-token-file FILE --transport udp|tcp_active|tcp_passive\n"
                      "--bind-address ADDRESS --listen-port PORT (TCP sessions use consecutive ports)\n"
+                     "--peer quiet|rtcp|rtcp_rr|rr|rtp_noise (UDP: configure remote RTCP, send RR to RTP source port + 1 or junk to the RTP "
+                     "source port each second)\n"
                      "--play-paths-file FILE (one stream_id/sender_id per viewer)\n";
         return media_server::bench::media_fanout<media_server::bench::gb_client>::run(argc, argv, default_control_port);
     }
@@ -86,6 +113,10 @@ int main(int argc, char** argv)
             else if (argument == "--bind-address")
             {
                 options.bind_address = boost::asio::ip::make_address(option_value(index, argc, argv));
+            }
+            else if (argument == "--peer")
+            {
+                options.peer = parse_peer(option_value(index, argc, argv));
             }
             else if (argument == "--listen-port")
             {
@@ -138,6 +169,9 @@ int main(int argc, char** argv)
         },
         boost::asio::detached);
     io.run();
+    const auto& peer = media_server::bench::gb_client::peer_counters();
+    std::cout << "phase=peer sender_reports=" << peer.sender_reports << " invalid_rtcp=" << peer.invalid_rtcp
+              << " receiver_reports=" << peer.receiver_reports << " noise_datagrams=" << peer.noise_datagrams << std::endl;
     std::cout << "phase=cleanup created=" << senders.size() << " deleted=" << deleted << std::endl;
     const auto& creates = media_server::bench::gb_client::create_milliseconds();
     const auto& deletes = media_server::bench::gb_client::delete_milliseconds();

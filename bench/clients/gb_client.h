@@ -12,6 +12,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/io_context.hpp>
+#include <boost/asio/steady_timer.hpp>
 
 #include "bench/packet_health.h"
 
@@ -25,6 +26,23 @@ enum class gb_transport
     tcp_passive,
 };
 
+enum class gb_peer
+{
+    quiet,
+    rtcp,
+    rtcp_rr,
+    rr,
+    rtp_noise,
+};
+
+struct gb_peer_counters
+{
+    std::uint64_t sender_reports{};
+    std::uint64_t invalid_rtcp{};
+    std::uint64_t receiver_reports{};
+    std::uint64_t noise_datagrams{};
+};
+
 struct gb_client_options
 {
     gb_transport transport{gb_transport::udp};
@@ -32,6 +50,7 @@ struct gb_client_options
     boost::asio::ip::address bind_address;
     std::uint16_t listen_port{};
     std::uint8_t payload_type{96};
+    gb_peer peer{gb_peer::quiet};
 };
 
 struct gb_sender_key
@@ -49,6 +68,7 @@ class gb_client final
     static const std::vector<gb_sender_key>& created_senders();
     static const std::vector<std::uint64_t>& create_milliseconds();
     static const std::vector<std::uint64_t>& delete_milliseconds();
+    static const gb_peer_counters& peer_counters();
     static boost::asio::awaitable<bool> delete_sender(std::string host, std::uint16_t port, gb_sender_key key);
 
    public:
@@ -67,9 +87,14 @@ class gb_client final
     boost::asio::awaitable<boost::system::error_code> create_sender(std::string host, std::uint16_t port, std::uint16_t media_port);
     boost::asio::awaitable<boost::system::error_code> receive();
     bool on_packet(std::span<const std::uint8_t> packet);
+    boost::asio::awaitable<void> send_feedback();
+    boost::asio::awaitable<void> receive_rtcp();
 
    private:
     boost::asio::ip::udp::socket udp_socket_;
+    boost::asio::ip::udp::socket rtcp_socket_;
+    boost::asio::steady_timer feedback_timer_;
+    boost::asio::ip::udp::endpoint media_source_;
     boost::asio::ip::tcp::socket tcp_socket_;
     boost::asio::ip::tcp::acceptor acceptor_;
     gb_sender_key key_;
