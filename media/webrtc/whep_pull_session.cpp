@@ -197,12 +197,6 @@ whep_pull_session::~whep_pull_session()
 void whep_pull_session::startup()
 {
     const auto self = shared_from_this();
-    idle_timer_.start(self,
-                      [this]()
-                      {
-                          spdlog::info("whep pull idle timeout {}", config_.stream_id);
-                          shutdown();
-                      });
     worker_.spawn([self](boost::asio::yield_context yield) { self->run(yield); });
 }
 
@@ -249,6 +243,12 @@ bool whep_pull_session::aborted(const boost::asio::yield_context& yield) const
 
 void whep_pull_session::run(boost::asio::yield_context yield)
 {
+    idle_timer_.start(shared_from_this(),
+                      [this]()
+                      {
+                          spdlog::info("whep pull idle timeout {}", config_.stream_id);
+                          shutdown();
+                      });
     if (!negotiate(yield))
     {
         shutdown();
