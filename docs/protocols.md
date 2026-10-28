@@ -13,6 +13,8 @@
 | HTTP | 控制；有限历史 PS 消费入口 | HTTP-FLV、HLS MPEG-TS、有限历史 PS |
 | GB 音频上传 | WebSocket PCMA | 独立 GB RTP 音频发送 |
 
+GB UDP sender 绑定相邻的 RTP/RTCP 本地端口，只有请求带 `remote_rtcp_port` 时才发送 SR。接收端按惯例会向 RTP 源端口 + 1 回 RR，sender 读出后丢弃，不据此调整发送，也避免它们积压在内核接收队列里。
+
 RTSP Play/Pull 没有 UDP 模式。主动拉流由 `POST /pull/create` 按 URL scheme 选择 RTSP、RTMP 或 HTTP WHEP；WHEP Pull 当前只接受 `http://`。RTMP URL 需要 `/app/stream`；RTSP 凭据单独传 username/password；WHEP 凭据使用 token。源码：[`pull_http.cpp`](../media/http/pull_http.cpp)。
 
 ## 授权 URL

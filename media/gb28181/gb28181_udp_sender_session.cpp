@@ -89,6 +89,7 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     {
         return false;
     }
+    worker_.spawn([self](boost::asio::yield_context yield) { self->run_rtcp(yield); });
 
     spdlog::info("gb28181 udp sender started stream {} local_rtp_port {} local_rtcp_port {} remote_rtp {}:{} remote_rtcp {}:{} rtcp {}",
                  stream_->stream_id(),
@@ -106,6 +107,26 @@ void gb28181_udp_sender_session::shutdown()
 {
     const auto self = shared_from_this();
     boost::asio::post(worker_.io(), [self]() { self->safe_shutdown(); });
+}
+
+void gb28181_udp_sender_session::run_rtcp(boost::asio::yield_context yield)
+{
+    std::array<std::uint8_t, 1500> buffer{};
+    boost::system::error_code error;
+    for (;;)
+    {
+        boost::asio::ip::udp::endpoint endpoint;
+        rtcp_transport_->read(buffer, endpoint, yield, error);
+        if (!stream_)
+        {
+            return;
+        }
+        if (error)
+        {
+            shutdown();
+            return;
+        }
+    }
 }
 
 void gb28181_udp_sender_session::schedule_rtcp()
