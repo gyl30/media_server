@@ -2,23 +2,26 @@
 
 ## 媒体服务
 
-根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、Threads、OpenSSL、pkg-config、Boost ≥1.89（context/program_options 及 Asio/Beast 头文件）和 jemalloc（普通构建），FFmpeg 构建另需 make 与 nasm。其余依赖都在 `third/`：ada、libsrtp（使用 OpenSSL）、spdlog（仅头文件，使用自带 fmt）、simdjson（关闭异常接口）直接参与构建，ireader 源码在仓库内；FFmpeg、opus、fdk-aac 由 [`cmake/ffmpeg.cmake`](../cmake/ffmpeg.cmake) 以 ExternalProject 在构建目录内编译为静态库（安装到 `<构建目录>/third-install`），只启用服务端用到的组件。
+根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、pkg-config、make、perl 与 nasm。Boost（context/program_options 及 Asio/Beast 等头文件，≥1.89）、OpenSSL 和 jemalloc（普通构建）由 [`deps/build.sh`](../deps/build.sh) 按 [`deps/sources.txt`](../deps/sources.txt) 下载固定版本源码、校验 sha256 后编译为静态库，安装到尚不存在的 `--prefix`，并写入 `BUILD-INFO`；用 `CC`/`CXX` 指定与服务端相同的编译器，源码包缓存在 `~/.cache/media_server-deps`。其余依赖都在 `third/`：ada、libsrtp（使用 OpenSSL）、spdlog（仅头文件，使用自带 fmt）、simdjson（关闭异常接口）直接参与构建，ireader 源码在仓库内；FFmpeg、opus、fdk-aac 由 [`cmake/ffmpeg.cmake`](../cmake/ffmpeg.cmake) 以 ExternalProject 在构建目录内编译为静态库（安装到 `<构建目录>/third-install`），只启用服务端用到的组件。
 
-在新 checkout 中先按 `.gitmodules` 初始化依赖（FFmpeg 等使用浅克隆）；已有工作区保持第三方目录及其本地状态。Boost 安装在非标准前缀时给 CMake 指定 `Boost_DIR`。每个构建目录首次构建会先编译 FFmpeg 等依赖。
+在新 checkout 中先按 `.gitmodules` 初始化依赖（FFmpeg 等使用浅克隆）；已有工作区保持第三方目录及其本地状态。依赖前缀通过 `CMAKE_PREFIX_PATH` 传给 CMake；产物只动态链接 libc 与编译器运行时。每个构建目录首次构建会先编译 FFmpeg 等依赖。
 
 ```sh
 git submodule update --init --recursive
-cmake -S . -B build-prod -DCMAKE_BUILD_TYPE=RelWithDebInfo
+CC=gcc-16 CXX=g++-16 deps/build.sh --prefix "$DEPS_PREFIX"
+cmake -S . -B build-prod -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_C_COMPILER=gcc-16 -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_PREFIX_PATH="$DEPS_PREFIX"
 cmake --build build-prod --target media_server -j4
 ./build-prod/media_server --help
 
 # 性能客户端采用独立构建目录。
 cmake -S . -B build-perf -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DCMAKE_C_COMPILER=gcc-16 -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_PREFIX_PATH="$DEPS_PREFIX" \
   -DMEDIA_SERVER_BUILD_BENCHMARKS=ON
 cmake --build build-perf -j4
 ```
 
-`MEDIA_SERVER_HARDENING` 默认 ON；`MEDIA_SERVER_SANITIZER` 接受 `none/address/undefined/thread`。address 模式要求与 ucontext/ASan 配置匹配的 Boost.Context，不能随意混用系统库。构建配置检查不等于 sanitizer 运行验证。第一方旧测试目标和 CTest 注册已移除，不再使用 `BUILD_TESTING` 开关。
+`MEDIA_SERVER_HARDENING` 默认 ON；`MEDIA_SERVER_SANITIZER` 接受 `none/address/undefined/thread`。address 模式要求与 ucontext/ASan 配置匹配的 Boost.Context：`deps/build.sh` 同时把它安装在 `<前缀>/asan`，配置时另加 `-Dboost_context_DIR=<前缀>/asan/lib/cmake/boost_context-1.92.0`。构建配置检查不等于 sanitizer 运行验证。第一方旧测试目标和 CTest 注册已移除，不再使用 `BUILD_TESTING` 开关。
 
 服务端 AAC 编码固定使用 libfdk-aac（关闭 afterburner）。FDK 许可不授予 AAC 专利许可，且要求分发二进制时随附其源码；该组合只用于内部部署，对外分发前需另行评估。
 
