@@ -67,8 +67,10 @@ def main():
         subprocess.run(["taskset", "-pc", args.client_cpus, str(os.getpid())], check=True,
                        capture_output=True, stdin=subprocess.DEVNULL)
         result["fixture_sha256"] = sha256(args.whip_fixture if args.input == "whip" else args.fixture)
+        protocol = "whip" if args.input == "whip" else "rtmp" if args.input == "rtmp" else "rtsp"
         for index in range(args.sources):
-            device = request(args.signaling_url, "/api/push-devices", {"name": f"perf-source-{index}"})
+            credential = request(args.signaling_url, "/api/push-devices/credentials", {})
+            device = request(args.signaling_url, "/api/push-devices", {"name": f"perf-source-{index}", "protocol": protocol, "token": credential["token"]})
             devices.append(device["device_id"])
         for generation in range(args.cycles):
             sources = []
