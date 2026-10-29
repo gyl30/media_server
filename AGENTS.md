@@ -12,4 +12,4 @@
 
 第一方旧测试和 CTest 注册已清理。按任务执行实际需要的构建与验证，报告真实范围，不把历史 PASS 当作当前结果，也不自动恢复旧测试。
 
-`docs/` 维护上述六篇当前文档；`.agent/` 保留设计决定和历史经验，不自动转为待办。`docs/performance_reports/`、`docs/verification_results/` 只跟踪报告与脚本（`.md/.py/.sh/.patch/.c`），其中的凭据、token、抓包、二进制和原始结果仍被忽略；`designs/`、已有 build 及其他未跟踪或忽略的原始数据由本地使用者管理；清理已跟踪文档时保留这些内容。`third/` 按任务授权处理，不顺带修改依赖。
+`docs/` 维护上述六篇当前文档；`.agent/` 保留设计决定和历史经验，不自动转为待办。`docs/performance_reports/`、`docs/verification_results/` 只跟踪报告、脚本与补丁源码（`.md/.py/.sh/.patch/.diff/.c/.cpp/.h`），其中的凭据、token、抓包、二进制和原始结果仍被忽略；`designs/`、已有 build 及其他未跟踪或忽略的原始数据由本地使用者管理；清理已跟踪文档时保留这些内容。`third/` 按任务授权处理，不顺带修改依赖。
