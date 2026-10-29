@@ -360,7 +360,8 @@ bool audio_transcoder::transcode(const media_frame& input, std::vector<media_fra
     }
     if (!state_->timeline_started)
     {
-        state_->next_output_pts_ns = input.pts_ns;
+        state_->next_output_pts_ns =
+            input.pts_ns - av_rescale_q(state_->encoder->initial_padding, AVRational{1, state_->encoder->sample_rate}, nanoseconds_time_base);
         state_->output_track = input.track;
         state_->timeline_started = true;
     }
@@ -647,6 +648,13 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
             return false;
         }
 
+        const auto pts_ns = state_->next_output_pts_ns;
+        state_->next_output_pts_ns += av_rescale_q(sample_count, AVRational{1, state_->encoder->sample_rate}, nanoseconds_time_base);
+        if (pts_ns < 0)
+        {
+            continue;
+        }
+
         std::vector<std::uint8_t> payload;
         if (state_->output_codec == codec_id::aac)
         {
@@ -664,8 +672,6 @@ bool audio_transcoder::receive_encoded(std::vector<media_frame>& output)
             payload.assign(state_->output_packet->data, state_->output_packet->data + state_->output_packet->size);
         }
 
-        const auto pts_ns = state_->next_output_pts_ns;
-        state_->next_output_pts_ns += av_rescale_q(sample_count, AVRational{1, state_->encoder->sample_rate}, AVRational{1, 1'000'000'000});
         output.push_back(media_frame{
             .track = state_->output_track,
             .dts_ns = pts_ns,
