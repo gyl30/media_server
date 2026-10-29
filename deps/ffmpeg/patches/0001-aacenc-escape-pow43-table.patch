@@ -1,0 +1,71 @@
+--- a/libavcodec/aaccoder.c
++++ b/libavcodec/aaccoder.c
+@@ -35,6 +35,7 @@
+ #include <float.h>
+ 
+ #include "libavutil/mathematics.h"
++#include "libavutil/thread.h"
+ #include "mathops.h"
+ #include "avcodec.h"
+ #include "put_bits.h"
+@@ -66,6 +67,23 @@
+                                                const float lambda, const float uplim,
+                                                int *bits, float *energy);
+ 
++#define POW43_TAB_SIZE (1 << 13)
++
++/* c*cbrtf(c) exactly as the escape path computed it per coefficient */
++static float aac_pow43_tab[POW43_TAB_SIZE];
++
++static av_cold void aac_pow43_tab_init(void)
++{
++    for (int c = 0; c < POW43_TAB_SIZE; c++)
++        aac_pow43_tab[c] = c*cbrtf(c);
++}
++
++av_cold void ff_aac_coder_init_tables(void)
++{
++    static AVOnce init_once = AV_ONCE_INIT;
++    ff_thread_once(&init_once, aac_pow43_tab_init);
++}
++
+ /**
+  * Calculate rate distortion cost for quantizing with given codebook
+  *
+@@ -131,13 +149,13 @@
+             for (int j = 0; j < dim; j++) {
+                 float t = fabsf(in[i+j]);
+                 float di;
+-                if (BT_ESC && vec[j] == 64.0f) { //FIXME: slow
++                if (BT_ESC && vec[j] == 64.0f) {
+                     if (t >= CLIPPED_ESCAPE) {
+                         quantized = CLIPPED_ESCAPE;
+                         curbits += 21;
+                     } else {
+                         int c = av_clip_uintp2(quant(t, Q, ROUNDING), 13);
+-                        quantized = c*cbrtf(c)*IQ;
++                        quantized = aac_pow43_tab[c]*IQ;
+                         curbits += av_log2(c)*2 - 4 + 1;
+                     }
+                 } else {
+--- a/libavcodec/aacenc.c
++++ b/libavcodec/aacenc.c
+@@ -1245,6 +1245,7 @@
+ 
+     // Initialize static tables
+     ff_aac_float_common_init();
++    ff_aac_coder_init_tables();
+ 
+     if ((ret = dsp_init(avctx, s)) < 0)
+         return ret;
+--- a/libavcodec/aacenc.h
++++ b/libavcodec/aacenc.h
+@@ -156,6 +156,8 @@
+ 
+ extern const AACCoefficientsEncoder ff_aac_coders[];
+ 
++void ff_aac_coder_init_tables(void);
++
+ typedef struct AACQuantizeBandCostCacheEntry {
+     float rd;
+     float energy;

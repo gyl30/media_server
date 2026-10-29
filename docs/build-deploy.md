@@ -20,6 +20,8 @@ cmake --build build-perf -j4
 
 `MEDIA_SERVER_HARDENING` 默认 ON；`MEDIA_SERVER_SANITIZER` 接受 `none/address/undefined/thread`。address 模式要求与 ucontext/ASan 配置匹配的 Boost.Context，不能随意混用系统库。构建配置检查不等于 sanitizer 运行验证。第一方旧测试目标和 CTest 注册已移除，不再使用 `BUILD_TESTING` 开关。
 
+服务端可用 [`deps/ffmpeg/build.sh`](../deps/ffmpeg/build.sh) 构建最小静态 FFmpeg SDK：按 `sources.txt` 下载固定版本并校验 sha256，构建 opus 和 LGPL 2.1+ FFmpeg（只含服务端用到的 AAC/Opus 编解码器、swresample、swscale 及 bench 用的 Matroska 解复用），安装到尚不存在的 `--prefix` 并写入 `BUILD-INFO`。`--patched` 应用 `patches/` 中的补丁，目前只有原生 AAC 编码器 ESC 码本的 x^(4/3) 查表，输出与上游逐字节一致。`--fdk-aac` 另外构建 Fraunhofer FDK AAC 并启用 `libfdk_aac`，仅用于隔离评估：FDK 许可要求随二进制提供其源码与许可全文，且不授予 AAC 专利许可，发行前需另行确认。
+
 ## Go 信令与模拟器
 
 [`signaling/go.mod`](../signaling/go.mod) 要求 Go 1.26 或更新版本；SQLite 使用 modernc 驱动。Web 静态文件由 Go embed 打包，无独立 npm 构建步骤。
