@@ -47,6 +47,7 @@ add_library(media_server_link_options INTERFACE)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_link_options(media_server_link_options INTERFACE -static-libstdc++ -static-libgcc)
+    list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES gcc_s gcc_s_asneeded)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
