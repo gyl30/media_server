@@ -188,7 +188,7 @@
 | mix336 s11（gk） | FAIL | 1.00，丢包 34 万 | 866/1152 | 55.0 | 47.4 | 551 | 705 |
 | 280 路浸泡 20 min（decode probe） | PASS | 0.85 | 82/215 | 56.6 | 16.4 | 403→417（5 min 后持平） | 593 |
 
-### 4.3 afterburner=0（实验时使用 `tools/experiments/fdk-afterburner0.patch`，后作为 fdk 构建的固定行为提交为 `24c80ec`）
+### 4.3 afterburner=0（实验时使用 `tools/experiments/fdk-afterburner0.patch`，后作为 fdk 构建的固定行为提交为 `2a06998`）
 
 | 轮次 | 结果 | 最忙 CPU | 滞后 p50/max ms | 每路 Mcyc/s | 控制 p99 ms | PSS MiB | FD |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -247,8 +247,8 @@ FINAL_HEAD `24c80ec`（main，未推送）。工作区内没有本任务未提�
 | `6813359` | 性能工具支持固定上游二进制 |
 | `d159efd` | 转码输出时间线扣除编码器延迟 |
 | `29a7d82` | AAC 编码器改为编译期选择 |
-| `24c80ec` | FFmpeg SDK 构建支持指定编译器 |
-| `24c80ec` | fdk AAC 编码关闭 afterburner |
+| `abb90ef` | FFmpeg SDK 构建支持指定编译器 |
+| `2a06998` | fdk AAC 编码关闭 afterburner |
 | `24c80ec` | AAC 编码固定使用 libfdk-aac |
 
 后续决定（用户，2026-10-29）：内部部署、闭源、不对外分发，因此不触发 LGPL/FDK 的分发义务。`24c80ec` 去掉编译期开关，固定使用关闭 afterburner 的 libfdk_aac，并删除 pow43 补丁（原生编码器已不再使用）。最终 SDK `~/ffmpeg-ms/9.0.1-fdk`（gcc-16）上 WHEP Pull 与 WHEP 播放生命周期测试均通过（`san/runs/pull-final-fdk-r1`、`play-final-fdk-r1`）。

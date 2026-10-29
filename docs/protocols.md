@@ -63,4 +63,6 @@ WHIP/WHEP 使用 `Content-Type: application/sdp` 提交完整 offer，成功返�
 | POST | `/gb28181/sender/create`、`/gb28181/sender/delete` | 管理独立 PS-RTP sender |
 | POST | `/gb28181/audio/create`、`configure`、`status`、`delete` | 管理音频会话及控制租约；后三项沿用同一路径前缀 |
 
+请求体为 JSON 对象，未知字段、重复字段、类型或范围不符都返回 400 和 `{"error":"..."}`；Go 信令的解码器同样拒绝未知字段，重复字段不会在两侧被解释成不同的值。回归用例见 [`regression/control_api.py`](../regression/control_api.py)。
+
 创建 receiver 成功不等于轨道或首帧已到达。receiver 删除和 SSRC 更新的 204 表示已提交操作，不是跨 worker 资源释放完成通知。GB SIP 控制由 Go 服务处理，媒体服务不承担设备注册或 SIP dialog 管理。
