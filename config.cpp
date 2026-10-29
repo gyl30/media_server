@@ -8,6 +8,7 @@
 #include <boost/program_options.hpp>
 
 #include "config.h"
+#include "build_info.h"
 
 namespace media_server
 {
@@ -41,7 +42,8 @@ int parse_config(int argc, char** argv, config* cfg)
     std::string signaling_url{result.signaling_url.get_href()};
 
     boost::program_options::options_description options("options");
-    options.add_options()("help", "show help")("rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
+    options.add_options()("help", "show help")("version", "show build information")(
+        "rtmp-port", boost::program_options::value<std::string>(&rtmp_port), "rtmp listen port")(
         "rtsp-port", boost::program_options::value<std::string>(&rtsp_port), "rtsp listen port")(
         "http-port", boost::program_options::value<std::string>(&http_port), "http listen port")(
         "bind-address", boost::program_options::value<std::string>(&result.bind_address), "server listen address")(
@@ -108,6 +110,12 @@ int parse_config(int argc, char** argv, config* cfg)
     {
         print_usage(options);
         return 1;
+    }
+
+    if (values.count("version") != 0U)
+    {
+        result.version = true;
+        std::cout << build_info() << '\n';
     }
 
     if (values.count("help") != 0U)

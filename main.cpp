@@ -12,7 +12,7 @@ int main(int argc, char** argv)
     {
         return result;
     }
-    if (cfg.help)
+    if (cfg.help || cfg.version)
     {
         return 0;
     }

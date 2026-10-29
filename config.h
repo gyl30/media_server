@@ -23,6 +23,7 @@ struct config
     ada::url_aggregator signaling_url{*ada::parse<ada::url_aggregator>("http://127.0.0.1:9090")};
     std::size_t threads{std::max(1U, std::thread::hardware_concurrency())};
     bool help{};
+    bool version{};
 };
 
 int parse_config(int argc, char** argv, config* cfg);

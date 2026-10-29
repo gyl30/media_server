@@ -8,6 +8,7 @@
 #include <spdlog/spdlog.h>
 
 #include "service.h"
+#include "build_info.h"
 #include "media/hls/hls.h"
 #include "media/core/log.h"
 #include "media/webrtc/whip.h"
@@ -149,6 +150,7 @@ bool service::run_server()
 int service::run()
 {
     configure_log_level();
+    spdlog::info("{}", build_info());
 
     workers_ = std::make_unique<worker_pool>(config_.threads);
     whip::startup(*workers_);

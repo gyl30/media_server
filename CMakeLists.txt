@@ -11,17 +11,21 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-list(APPEND CMAKE_PREFIX_PATH ${PROJECT_SOURCE_DIR}/deps/install)
+
+option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
+set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, undefined, thread")
+set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefined thread)
+
+set(media_server_sanitizers none address undefined thread)
+if(NOT MEDIA_SERVER_SANITIZER IN_LIST media_server_sanitizers)
+    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, undefined, or thread")
+endif()
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL REQUIRED)
-find_package(PkgConfig REQUIRED)
 
 include(CheckCXXCompilerFlag)
-include(CheckCXXSourceCompiles)
 include(CheckLinkerFlag)
-include(CMakePushCheckState)
-include(cmake/boost.cmake)
+include(cmake/deps.cmake)
 include(cmake/ffmpeg.cmake)
 include(cmake/spdlog.cmake)
 include(cmake/simdjson.cmake)
@@ -38,20 +42,12 @@ add_subdirectory(third/ada EXCLUDE_FROM_ALL)
 unset(BUILD_SHARED_LIBS)
 target_include_directories(ada SYSTEM INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third/ada/include>)
 
-option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
-set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, undefined, thread")
-set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefined thread)
-
-set(media_server_sanitizers none address undefined thread)
-if(NOT MEDIA_SERVER_SANITIZER IN_LIST media_server_sanitizers)
-    message(FATAL_ERROR "MEDIA_SERVER_SANITIZER must be none, address, undefined, or thread")
-endif()
-if(MEDIA_SERVER_SANITIZER STREQUAL "none")
-    pkg_check_modules(JEMALLOC REQUIRED IMPORTED_TARGET jemalloc)
-endif()
-
 add_library(media_server_build_options INTERFACE)
 add_library(media_server_link_options INTERFACE)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_link_options(media_server_link_options INTERFACE -static-libstdc++ -static-libgcc)
+endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(media_server_build_options INTERFACE
@@ -113,34 +109,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
                 BOOST_USE_UCONTEXT
                 BOOST_USE_ASAN
             )
-
-            cmake_push_check_state(RESET)
-            set(CMAKE_REQUIRED_DEFINITIONS -DBOOST_USE_UCONTEXT -DBOOST_USE_ASAN)
-            set(CMAKE_REQUIRED_FLAGS "-fsanitize=address,undefined")
-            set(CMAKE_REQUIRED_LINK_OPTIONS -fsanitize=address,undefined)
-            set(CMAKE_REQUIRED_LIBRARIES Boost::context)
-            set(CMAKE_REQUIRED_INCLUDES "${Boost_INCLUDE_DIRS}")
-            unset(MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE CACHE)
-            check_cxx_source_compiles([=[
-                #include <utility>
-                #include <boost/context/fiber.hpp>
-
-                int main()
-                {
-                    boost::context::fiber context([](boost::context::fiber&& caller) {
-                        return std::move(caller);
-                    });
-                    return 0;
-                }
-            ]=] MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE)
-            cmake_pop_check_state()
-            if(NOT MEDIA_SERVER_BOOST_CONTEXT_ASAN_COMPATIBLE)
-                message(FATAL_ERROR
-                    "MEDIA_SERVER_SANITIZER=address requires BOOST_CONTEXT_LIBRARY "
-                    "built with context-impl=ucontext and sanitizer options")
-            endif()
+            set(media_server_sanitizer_runtime -static-libasan -static-libubsan)
         else()
             set(media_server_sanitizer_flags undefined)
+            set(media_server_sanitizer_runtime -static-libubsan)
         endif()
         target_compile_options(media_server_build_options INTERFACE
             -U_FORTIFY_SOURCE
@@ -165,7 +137,14 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_link_options(media_server_link_options INTERFACE
             -fsanitize=${media_server_sanitizer_flags}
         )
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_link_options(media_server_link_options INTERFACE ${media_server_sanitizer_runtime})
+        endif()
     elseif(MEDIA_SERVER_SANITIZER STREQUAL "thread")
+        target_compile_definitions(media_server_build_options INTERFACE
+            BOOST_USE_UCONTEXT
+            BOOST_USE_TSAN
+        )
         target_compile_options(media_server_build_options INTERFACE
             -U_FORTIFY_SOURCE
             -O2
@@ -186,6 +165,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_link_options(media_server_link_options INTERFACE
             -fsanitize=thread
         )
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_link_options(media_server_link_options INTERFACE -static-libtsan)
+        endif()
     elseif(MEDIA_SERVER_HARDENING)
         target_compile_definitions(media_server_build_options INTERFACE
             _GLIBCXX_ASSERTIONS
@@ -313,18 +295,31 @@ target_link_libraries(media_core PUBLIC
     libSRTP::srtp2
     spdlog::spdlog_header_only
     simdjson::simdjson
-    ${MEDIA_SERVER_BOOST_LIBS}
+    Boost::context
+)
+
+add_custom_target(media_server_source_version
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${PROJECT_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/generated/source_version.h
+        -P ${PROJECT_SOURCE_DIR}/cmake/source_version.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/source_version.h
+    VERBATIM
 )
 
 add_executable(media_server
     main.cpp
     config.cpp
     service.cpp
+    build_info.cpp
 )
+add_dependencies(media_server media_server_source_version)
+target_include_directories(media_server PRIVATE ${CMAKE_BINARY_DIR}/generated)
+if(NOT MEDIA_SERVER_SANITIZER STREQUAL "none")
+    target_compile_definitions(media_server PRIVATE MEDIA_SERVER_SANITIZER_BUILD)
+endif()
 target_link_libraries(media_server PRIVATE
     media_core
     media_server_link_options
-    ${MEDIA_SERVER_BOOST_PROGRAM_OPTIONS_LIB}
+    Boost::program_options
 )
 if(MEDIA_SERVER_SANITIZER STREQUAL "none")
     target_link_libraries(media_server PRIVATE PkgConfig::JEMALLOC)

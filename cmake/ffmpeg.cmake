@@ -56,6 +56,14 @@ ExternalProject_Add(ffmpeg_external
     BUILD_BYPRODUCTS ${ffmpeg_byproducts}
 )
 
+foreach(submodule IN ITEMS opus fdk-aac ffmpeg)
+    execute_process(COMMAND git -C ${PROJECT_SOURCE_DIR}/third/${submodule} rev-parse --path-format=absolute --git-path HEAD
+        OUTPUT_VARIABLE ffmpeg_head_${submodule} OUTPUT_STRIP_TRAILING_WHITESPACE COMMAND_ERROR_IS_FATAL ANY)
+endforeach()
+ExternalProject_Add_StepDependencies(opus_external configure ${ffmpeg_head_opus})
+ExternalProject_Add_StepDependencies(fdk_aac_external configure ${ffmpeg_head_fdk-aac})
+ExternalProject_Add_StepDependencies(ffmpeg_external configure ${ffmpeg_head_opus} ${ffmpeg_head_fdk-aac} ${ffmpeg_head_ffmpeg})
+
 file(MAKE_DIRECTORY ${ffmpeg_prefix}/include)
 
 add_library(ffmpeg_opus STATIC IMPORTED)
