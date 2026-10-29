@@ -49,7 +49,7 @@ fetch openssl
 fetch jemalloc
 (cd "$work/jemalloc" &&
     ./configure --prefix="$prefix" CC="$cc" CXX="$cxx" EXTRA_CFLAGS=-fPIC EXTRA_CXXFLAGS=-fPIC \
-        --disable-shared --enable-stats --enable-prof &&
+        --disable-shared --disable-cxx --enable-stats --enable-prof &&
     make -j"$jobs" && make install)
 
 fetch boost
