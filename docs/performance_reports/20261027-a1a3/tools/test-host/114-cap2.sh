@@ -1,0 +1,11 @@
+T=/var/tmp/ms-perf-891aec1
+S="--perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-final $T/pr2.sh cap-rtmp11000-FIN-r1 --outputs rtmp:11000 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-rtsp10500-FIN-r1 --outputs rtsp:10500 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-flv10500-FIN-r1 --outputs flv:10500 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh cap-rtmp8500-BASE-r1 --outputs rtmp:8500 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh cap-rtsp8000-BASE-r1 --outputs rtsp:8000 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh cap-flv8000-BASE-r1 --outputs flv:8000 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-rtmp12000-FIN-r1 --outputs rtmp:12000 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-rtsp11500-FIN-r1 --outputs rtsp:11500 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-flv11500-FIN-r1 --outputs flv:11500 --duration 60 $S

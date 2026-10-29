@@ -1,0 +1,13 @@
+T=/var/tmp/ms-perf-891aec1
+G="--gb-port-base 18700 --input rtmp --sources 1 --warmup 15 --duration 70 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-a2A-c999003 $T/wb.sh gba12000-pre $G --outputs gb_tcp_active:12000
+RT=rt-p1-base $T/wb.sh gba12000-a2 $G --outputs gb_tcp_active:12000
+RT=rt-p1-base $T/wb.sh gbp9500-a2 $G --outputs gb_tcp_passive:9500
+RT=rt-a2A-c999003 $T/wb.sh gbp9500-pre $G --outputs gb_tcp_passive:9500
+RT=rt-p1-base $T/wb.sh gba6000-a2 $G --outputs gb_tcp_active:6000
+RT=rt-a2A-c999003 $T/wb.sh gba6000-pre $G --outputs gb_tcp_active:6000
+RT=rt-p1-base $T/wb.sh rtmp6500-a2 $G --outputs rtmp:6500
+RT=rt-a11gd $T/wb.sh rtmp6500-gd $G --outputs rtmp:6500
+RT=rt-cfe80a0 $T/wb.sh rtmp8500-head $G --outputs rtmp:8500
+RT=rt-a11gd $T/wb.sh rtmp8500-gd $G --outputs rtmp:8500
+RT=rt-a11gd $T/wb.sh gba12000-gd $G --outputs gb_tcp_active:12000

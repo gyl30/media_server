@@ -1,0 +1,10 @@
+T=/var/tmp/ms-perf-891aec1
+X=/var/tmp/ms-perf-891aec1/fixtures-a1
+O="--sources 1 --outputs rtmp:2,flv:2,rtsp:2,hls:1,whep:2 --av-probe 40 --warmup 10 --duration 45 --cleanup-settle 5"
+OB="--sources 1 --outputs rtmp:2,flv:2,rtsp:2,hls:1 --av-probe 40 --warmup 10 --duration 45 --cleanup-settle 5"
+OG="--sources 1 --outputs rtmp:2,flv:2,rtsp:2,hls:1 --decode-probe --av-probe 40 --warmup 10 --duration 45 --cleanup-settle 5"
+RT=rt-p1-base $T/pr2.sh p1-g711-pcma-base-r1 --input rtmp --fixture $X/h264_pcma.mkv $OG
+RT=rt-p1-f2 $T/pr2.sh p1-g711-pcma-f2-r1 --input rtmp --fixture $X/h264_pcma.mkv $OG
+RT=rt-p1-f2 $T/pr2.sh p1-g711-pcmu-f2-r1 --input rtmp --fixture $X/h264_pcmu.mkv $OG
+RT=rt-p1-base $T/pr2.sh p1-g711-pcmu-base-r1 --input rtmp --fixture $X/h264_pcmu.mkv $OG
+RT=rt-p1-f2 $T/pr2.sh p1-g711-h265pcma-f2-r1 --input rtmp --fixture $X/h265_pcma.mkv $OG

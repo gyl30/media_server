@@ -43,9 +43,21 @@ __pycache__/
 /core
 /core.[0-9]*
 
-# Local measurement results: retained outside version control
-/docs/performance_reports/
-/docs/verification_results/
+# Measurement results: only reports and scripts are versioned, raw data stays local
+/docs/performance_reports/**
+!/docs/performance_reports/**/
+!/docs/performance_reports/**/*.md
+!/docs/performance_reports/**/*.py
+!/docs/performance_reports/**/*.sh
+!/docs/performance_reports/**/*.patch
+!/docs/performance_reports/**/*.c
+/docs/verification_results/**
+!/docs/verification_results/**/
+!/docs/verification_results/**/*.md
+!/docs/verification_results/**/*.py
+!/docs/verification_results/**/*.sh
+!/docs/verification_results/**/*.patch
+!/docs/verification_results/**/*.c
 
 # Dependencies built by deps/build.sh
 /deps/install/

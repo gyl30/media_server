@@ -1,0 +1,14 @@
+Experimental only (not committed): build-ffk0 / rt-fk0 = HEAD 29a7d82 + this change, MEDIA_SERVER_AAC_ENCODER=libfdk_aac.
+--- a/media/codec/audio_transcoder.cpp
++++ b/media/codec/audio_transcoder.cpp
+@@ -204,6 +204,10 @@
+         state_->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
+     }
+ 
++    if (config.output.codec == codec_id::aac)
++    {
++        av_opt_set_int(state_->encoder->priv_data, "afterburner", 0, 0);
++    }
+     result = avcodec_open2(state_->encoder, encoder, nullptr);
+     if (result < 0)
+     {

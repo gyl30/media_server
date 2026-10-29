@@ -1,0 +1,10 @@
+T=/var/tmp/ms-perf-891aec1
+S="--perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 240 --ramp-per-second 200 --group-size 256"
+RT=rt-cfe80a0 $T/pr2.sh f-flv8500-A-r1 --outputs flv:8500 --duration 60 $S
+RT=rt-a11gdf $T/pr2.sh f-flv8500-F-r1 --outputs flv:8500 --duration 60 $S
+RT=rt-a11gdf $T/pr2.sh f-flv6500-F-r1 --outputs flv:6500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh f-flv6500-A-r1 --outputs flv:6500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh f-flv8500-A-r2 --outputs flv:8500 --duration 60 $S
+RT=rt-a11gdf $T/pr2.sh f-flv8500-F-r2 --outputs flv:8500 --duration 60 $S
+RT=rt-a11gdf $T/pr2.sh f-flv6500-F-r2 --outputs flv:6500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh f-flv6500-A-r2 --outputs flv:6500 --duration 60 $S

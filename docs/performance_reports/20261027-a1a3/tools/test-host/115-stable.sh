@@ -1,0 +1,14 @@
+T=/var/tmp/ms-perf-891aec1
+S="--perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-final $T/pr2.sh st-rtmp8000-FIN-r1 --outputs rtmp:8000 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh st-rtmp7500-BASE-r1 --outputs rtmp:7500 --duration 60 $S
+RT=rt-final $T/pr2.sh st-rtsp7500-FIN-r1 --outputs rtsp:7500 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh st-rtsp7000-BASE-r1 --outputs rtsp:7000 --duration 60 $S
+RT=rt-final $T/pr2.sh st-flv7500-FIN-r1 --outputs flv:7500 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh st-flv7000-BASE-r1 --outputs flv:7000 --duration 60 $S
+RT=rt-final $T/pr2.sh st-mix6600-FIN-r1 --outputs rtmp:1100,flv:1100,rtsp:1100,whep:1100,gb_udp:1100,gb_tcp_passive:1100 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh st-mix6600-BASE-r1 --outputs rtmp:1100,flv:1100,rtsp:1100,whep:1100,gb_udp:1100,gb_tcp_passive:1100 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-rtmp14000-FIN-r1 --outputs rtmp:14000 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-rtsp13000-FIN-r1 --outputs rtsp:13000 --duration 60 $S
+RT=rt-final $T/pr2.sh cap-flv13000-FIN-r1 --outputs flv:13000 --duration 60 $S
+RT=rt-p1-base $T/pr2.sh cap-rtmp10000-BASE-r1 --outputs rtmp:10000 --duration 60 $S

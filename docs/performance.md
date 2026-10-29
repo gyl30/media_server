@@ -104,4 +104,4 @@ python3 bench/package_runtime.py --output /tmp/media-runtime-new \
 
 后两项可选。工具收集所需 ELF/库、Python 文件及 NSS 模块，输出 manifest 和 `run.sh`；不包含浏览器、模拟器、profiler 或宿主系统运行库。`manifest.head` 表示打包源码树，`binary_source_head` 当前为 NOT_RECORDED，不能据此推断 ELF 的编译提交；应另存构建日志和校验和。
 
-`docs/performance_reports/`、`docs/verification_results/`、本地 build 和原始采样文件由实际运行者管理，未跟踪/忽略内容不随文档清理删除。历史记录缺少环境或原始数据时，不补造结果，也不转写成当前成绩。
+`docs/performance_reports/`、`docs/verification_results/` 只跟踪报告与脚本；其中的原始数据、本地 build 和原始采样文件由实际运行者管理，未跟踪/忽略内容不随文档清理删除。历史记录缺少环境或原始数据时，不补造结果，也不转写成当前成绩。

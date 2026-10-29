@@ -1,0 +1,15 @@
+T=/var/tmp/ms-perf-891aec1
+U="--perf-stat --warmup 15 --duration 60 --ready-timeout 240 --ramp-per-second 200 --group-size 256"
+S="--perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-a3f $T/a3.sh a3f-gbudp300-A3-r1 --input gb_udp --sources 300 --outputs flv:300 $U
+RT=rt-a11gdf $T/a3.sh a3f-gbudp300-F-r1 --input gb_udp --sources 300 --outputs flv:300 $U
+RT=rt-a11gdf $T/a3.sh a3f-whip200-F-r1 --input whip --sources 200 --outputs flv:200 $U
+RT=rt-a3f $T/a3.sh a3f-whip200-A3-r1 --input whip --sources 200 --outputs flv:200 $U
+RT=rt-a3f $T/a3.sh a3f-whep100-A3-r1 --input whep_pull --sources 100 --outputs flv:100 $U
+RT=rt-a11gdf $T/a3.sh a3f-whep100-F-r1 --input whep_pull --sources 100 --outputs flv:100 $U
+RT=rt-a3f $T/a3.sh a3f-gbudp500-A3-r1 --input gb_udp --sources 500 --outputs flv:500 $U
+RT=rt-a3f $T/a3.sh a3f-whip250-A3-r1 --input whip --sources 250 --outputs flv:250 $U
+RT=rt-a3f $T/a3.sh a3f-whep150-A3-r1 --input whep_pull --sources 150 --outputs flv:150 $U
+RT=rt-a3f $T/a3.sh a3f-rtspudp300-A3-r1 --input rtsp_udp --sources 300 --outputs flv:300 $U
+RT=rt-a11gdf $T/a3.sh a3f-rtspudp300-F-r1 --input rtsp_udp --sources 300 --outputs flv:300 $U
+RT=rt-a3f $T/a3.sh a3f-gbudpout7500-A3-r1 --outputs gb_udp:7500 --duration 60 $S

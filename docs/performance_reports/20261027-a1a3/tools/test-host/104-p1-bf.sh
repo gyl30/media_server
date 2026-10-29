@@ -1,0 +1,11 @@
+T=/var/tmp/ms-perf-891aec1
+X=/var/tmp/ms-perf-891aec1/fixtures-a1
+OB="--sources 1 --outputs rtmp:2,flv:2,hls:1 --av-probe 40 --warmup 10 --duration 45 --cleanup-settle 5"
+RT=rt-p1-base $T/pr2.sh p1-bf-rtmp-base-r1 --input rtmp --fixture $X/avsync_bframes.flv $OB
+RT=rt-p1-base $T/pr2.sh p1-bf-rtsp-base-r1 --input rtsp_tcp --fixture $X/avsync_bframes.flv $OB
+RT=rt-p1-f1 $T/pr2.sh p1-bf-rtsp-f1-r1 --input rtsp_tcp --fixture $X/avsync_bframes.flv $OB
+RT=rt-p1-f1 $T/pr2.sh p1-bf-rtsp_udp-f1-r1 --input rtsp_udp --fixture $X/avsync_bframes.flv $OB
+RT=rt-p1-base $T/pr2.sh p1-f1-whep_pull-base-r2 --input whep_pull --sources 1 --outputs rtmp:4,flv:4,rtsp:4,whep:4,gb_udp:4,hls:2 --av-probe 40 --warmup 10 --duration 60 --cleanup-settle 5
+RT=rt-p1-f1 $T/pr2.sh p1-f1-whep_pull-f1-r1 --input whep_pull --sources 1 --outputs rtmp:4,flv:4,rtsp:4,whep:4,gb_udp:4,hls:2 --av-probe 40 --warmup 10 --duration 60 --cleanup-settle 5
+RT=rt-p1-base $T/pr2.sh p1-f1-whep_pull-base-r3 --input whep_pull --sources 1 --outputs rtmp:4,flv:4,rtsp:4,whep:4,gb_udp:4,hls:2 --av-probe 40 --warmup 10 --duration 60 --cleanup-settle 5
+RT=rt-p1-f1 $T/pr2.sh p1-f1-whep_pull-f1-r2 --input whep_pull --sources 1 --outputs rtmp:4,flv:4,rtsp:4,whep:4,gb_udp:4,hls:2 --av-probe 40 --warmup 10 --duration 60 --cleanup-settle 5

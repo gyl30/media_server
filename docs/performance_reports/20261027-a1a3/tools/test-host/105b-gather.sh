@@ -1,0 +1,19 @@
+T=/var/tmp/ms-perf-891aec1
+while pgrep -f "pr2.sh a11-sn-B-r1" > /dev/null; do sleep 10; done
+S="--perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 240 --ramp-per-second 200 --group-size 256"
+G="--gb-port-base 18700 --perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-a11gd $T/pr2.sh g-rtmp9000-GD-r1 --outputs rtmp:9000 --duration 60 $S
+RT=rt-a11g $T/pr2.sh g-rtmp9000-G-r1 --outputs rtmp:9000 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh g-rtmp9000-A-r1 --outputs rtmp:9000 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh g-sn-A-r1 --outputs rtmp:6500 --duration 60 $S
+RT=rt-a11g $T/pr2.sh g-sn-G-r1 --outputs rtmp:6500 --duration 60 $S
+RT=rt-a11gd $T/pr2.sh g-sn-GD-r1 --outputs rtmp:6500 --duration 60 $S
+RT=rt-a11gd $T/pr2.sh g-rtsp8500-GD-r1 --outputs rtsp:8500 --duration 60 $S
+RT=rt-a11g $T/pr2.sh g-rtsp8500-G-r1 --outputs rtsp:8500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh g-rtsp8500-A-r1 --outputs rtsp:8500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh g-rtmp9000-A-r2 --outputs rtmp:9000 --duration 60 $S
+RT=rt-a11g $T/pr2.sh g-rtmp9000-G-r2 --outputs rtmp:9000 --duration 60 $S
+RT=rt-a11gd $T/pr2.sh g-rtmp9000-GD-r2 --outputs rtmp:9000 --duration 60 $S
+RT=rt-a11gd $T/pr2.sh g-sn-GD-r2 --outputs rtmp:6500 --duration 60 $S
+RT=rt-a11g $T/pr2.sh g-sn-G-r2 --outputs rtmp:6500 --duration 60 $S
+RT=rt-cfe80a0 $T/pr2.sh g-sn-A-r2 --outputs rtmp:6500 --duration 60 $S

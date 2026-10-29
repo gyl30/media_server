@@ -1,0 +1,10 @@
+T=/var/tmp/ms-perf-891aec1
+G="--gb-port-base 18700 --perf-stat --control-probe-ms 200 --input rtmp --sources 1 --warmup 15 --ready-timeout 300 --ramp-per-second 200 --group-size 256"
+RT=rt-a2A-c999003 $T/pr2.sh ab4-gbtcpactive13000-A-r3 --outputs gb_tcp_active:13000 --duration 60 $G
+RT=rt-a2B3s20-c999003 $T/pr2.sh ab4-gbtcpactive13000-B-r3 --outputs gb_tcp_active:13000 --duration 60 $G
+RT=rt-a2B3s20-c999003 $T/pr2.sh ab4-gbtcpactive13000-B-r4 --outputs gb_tcp_active:13000 --duration 60 $G
+RT=rt-a2A-c999003 $T/pr2.sh ab4-gbtcpactive13000-A-r4 --outputs gb_tcp_active:13000 --duration 60 $G
+RT=rt-a2B3s20-c999003 $T/pr2.sh ab4-gbtcpactive13750-B-r1 --outputs gb_tcp_active:13750 --duration 60 $G
+RT=rt-a2A-c999003 $T/pr2.sh ab4-gbtcpactive13750-A-r1 --outputs gb_tcp_active:13750 --duration 60 $G
+RT=rt-a2A-c999003 $T/pr2.sh ab4-gbtcpactive13750-A-r2 --outputs gb_tcp_active:13750 --duration 60 $G
+RT=rt-a2B3s20-c999003 $T/pr2.sh ab4-gbtcpactive13750-B-r2 --outputs gb_tcp_active:13750 --duration 60 $G
