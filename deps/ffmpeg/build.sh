@@ -13,6 +13,7 @@ patched=0
 fdk_aac=0
 cache="${XDG_CACHE_HOME:-$HOME/.cache}/media_server-deps"
 jobs=$(nproc)
+cc=${CC:-cc}
 while [ $# -gt 0 ]; do
     case $1 in
         --prefix) prefix=$2; shift 2 ;;
@@ -44,12 +45,12 @@ fetch()
 }
 
 opus=$(fetch opus)
-(cd "$opus" && ./configure --prefix="$prefix" --enable-static --disable-shared --with-pic --disable-doc --disable-extra-programs && make -j"$jobs" && make install)
+(cd "$opus" && CC=$cc ./configure --prefix="$prefix" --enable-static --disable-shared --with-pic --disable-doc --disable-extra-programs && make -j"$jobs" && make install)
 
 aac_encoders=aac
 if [ "$fdk_aac" = 1 ]; then
     fdk=$(fetch fdk-aac)
-    (cd "$fdk" && ./configure --prefix="$prefix" --enable-static --disable-shared --with-pic && make -j"$jobs" && make install)
+    (cd "$fdk" && CC=$cc CXX=${CXX:-c++} ./configure --prefix="$prefix" --enable-static --disable-shared --with-pic && make -j"$jobs" && make install)
     aac_encoders=aac,libfdk_aac
 fi
 
@@ -61,6 +62,7 @@ if [ "$patched" = 1 ]; then
 fi
 (cd "$ffmpeg" && PKG_CONFIG_PATH="$prefix/lib/pkgconfig" ./configure \
     --prefix="$prefix" \
+    --cc="$cc" \
     --pkg-config-flags=--static \
     --enable-static --disable-shared --enable-pic \
     --disable-programs --disable-doc \
@@ -76,7 +78,7 @@ fi
 
 {
     echo "patched=$patched fdk_aac=$fdk_aac"
-    cc --version | head -1
+    "$cc" --version | head -1
     sha256sum "$here"/sources.txt "$here"/build.sh
     [ "$patched" = 0 ] || sha256sum "$here"/patches/*.patch
     grep -E "FFMPEG_(CONFIGURATION|LICENSE)" "$ffmpeg/config.h"
