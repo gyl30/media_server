@@ -70,10 +70,11 @@ std::shared_ptr<dtls_certificate> dtls_certificate::create()
         return {};
     }
 
-    X509_NAME* subject = X509_get_subject_name(certificate.get());
+    std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> subject(X509_NAME_new(), &X509_NAME_free);
     constexpr unsigned char common_name[] = "media_server";
-    if (subject == nullptr || X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC, common_name, -1, -1, 0) != 1 ||
-        X509_set_issuer_name(certificate.get(), subject) != 1 || X509_sign(certificate.get(), private_key.get(), EVP_sha256()) <= 0)
+    if (!subject || X509_NAME_add_entry_by_txt(subject.get(), "CN", MBSTRING_ASC, common_name, -1, -1, 0) != 1 ||
+        X509_set_subject_name(certificate.get(), subject.get()) != 1 || X509_set_issuer_name(certificate.get(), subject.get()) != 1 ||
+        X509_sign(certificate.get(), private_key.get(), EVP_sha256()) <= 0)
     {
         return {};
     }
