@@ -46,3 +46,8 @@ __pycache__/
 # Local measurement results: retained outside version control
 /docs/performance_reports/
 /docs/verification_results/
+
+# Dependencies built by deps/build.sh
+/deps/install/
+/deps/install.build/
+/deps/cache/

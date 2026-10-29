@@ -3,27 +3,23 @@ set -euo pipefail
 
 usage()
 {
-    echo "usage: $0 --prefix DIR [--cache DIR] [--jobs N]" >&2
+    echo "usage: $0 [--jobs N]" >&2
     exit 2
 }
 
 here=$(cd "$(dirname "$0")" && pwd)
-prefix=""
-cache="${XDG_CACHE_HOME:-$HOME/.cache}/media_server-deps"
+prefix=$here/install
+cache=$here/cache
 jobs=$(nproc)
 cc=${CC:-cc}
 cxx=${CXX:-c++}
 while [ $# -gt 0 ]; do
     case $1 in
-        --prefix) prefix=$2; shift 2 ;;
-        --cache) cache=$2; shift 2 ;;
         --jobs) jobs=$2; shift 2 ;;
         *) usage ;;
     esac
 done
-[ -n "$prefix" ] || usage
 [ ! -e "$prefix" ] || { echo "prefix $prefix exists" >&2; exit 1; }
-prefix=$(realpath -m "$prefix")
 work=$prefix.build
 [ ! -e "$work" ] || { echo "work directory $work exists" >&2; exit 1; }
 mkdir -p "$cache" "$work"
