@@ -2,7 +2,7 @@
 
 ## 媒体服务
 
-根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、Threads、OpenSSL、spdlog、pkg-config、Boost ≥1.89（context/json/program_options）和 FFmpeg 开发库（avcodec/avutil/swresample/swscale）。bench 的 WHIP publisher 另需 avformat。普通构建链接 jemalloc；ada 和 libsrtp 从 `third/` 构建，libsrtp 使用 OpenSSL。
+根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、Threads、OpenSSL、spdlog、pkg-config、Boost ≥1.89（context/json/program_options）和 FFmpeg 开发库（avcodec/avutil/swresample/swscale，avcodec 须含 libfdk_aac）。bench 的 WHIP publisher 另需 avformat。普通构建链接 jemalloc；ada 和 libsrtp 从 `third/` 构建，libsrtp 使用 OpenSSL。
 
 在新 checkout 中先按 `.gitmodules` 初始化依赖；已有工作区保持第三方目录及其本地状态。依赖安装在非标准前缀时，用 `PKG_CONFIG_PATH` 指向 FFmpeg 的 pkgconfig，必要时给 CMake 指定 `Boost_DIR`。
 
@@ -20,7 +20,7 @@ cmake --build build-perf -j4
 
 `MEDIA_SERVER_HARDENING` 默认 ON；`MEDIA_SERVER_SANITIZER` 接受 `none/address/undefined/thread`。address 模式要求与 ucontext/ASan 配置匹配的 Boost.Context，不能随意混用系统库。构建配置检查不等于 sanitizer 运行验证。第一方旧测试目标和 CTest 注册已移除，不再使用 `BUILD_TESTING` 开关。
 
-服务端可用 [`deps/ffmpeg/build.sh`](../deps/ffmpeg/build.sh) 构建最小静态 FFmpeg SDK：按 `sources.txt` 下载固定版本并校验 sha256，构建 opus 和 LGPL 2.1+ FFmpeg（只含服务端用到的 AAC/Opus 编解码器、swresample、swscale 及 bench 用的 Matroska 解复用），安装到尚不存在的 `--prefix` 并写入 `BUILD-INFO`。用 `CC`/`CXX` 指定与服务端相同的编译器，默认使用 `cc`。`--patched` 应用 `patches/` 中的补丁，目前只有原生 AAC 编码器 ESC 码本的 x^(4/3) 查表，输出与上游逐字节一致。`--fdk-aac` 另外构建 Fraunhofer FDK AAC 并启用 `libfdk_aac`，仅用于隔离评估：FDK 许可要求随二进制提供其源码与许可全文，且不授予 AAC 专利许可，发行前需另行确认。服务端 AAC 编码器由 `MEDIA_SERVER_AAC_ENCODER` 在编译期选择，默认 `aac`（FFmpeg 原生），`libfdk_aac` 要求所用 SDK 含该编码器，并关闭 afterburner：单路 CPU 再降约 40%，试听与原生无可闻差异。
+服务端 AAC 编码固定使用 libfdk-aac（关闭 afterburner），FFmpeg SDK 必须包含 `libfdk_aac` 编码器。用 [`deps/ffmpeg/build.sh`](../deps/ffmpeg/build.sh) 构建：按 `sources.txt` 下载固定版本的 FFmpeg、opus、fdk-aac 并校验 sha256，生成只含服务端所需组件的静态 SDK（AAC/Opus 解码、libfdk_aac/libopus 编码、swresample、swscale 及 bench 用的 Matroska 解复用），安装到尚不存在的 `--prefix` 并写入 `BUILD-INFO`；用 `CC`/`CXX` 指定与服务端相同的编译器，默认 `cc`。构建服务端时让 `PKG_CONFIG_PATH` 指向该前缀。FDK 许可不授予 AAC 专利许可，且要求分发二进制时随附其源码；该组合只用于内部部署，对外分发前需另行评估。
 
 ## Go 信令与模拟器
 

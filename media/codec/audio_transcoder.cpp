@@ -165,7 +165,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     }
     else
     {
-        encoder = avcodec_find_encoder_by_name(MEDIA_SERVER_AAC_ENCODER);
+        encoder = avcodec_find_encoder_by_name("libfdk_aac");
     }
     if (encoder == nullptr)
     {
@@ -202,13 +202,10 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     {
         state_->encoder->profile = AV_PROFILE_AAC_LOW;
         state_->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
-    }
-    if (std::strcmp(encoder->name, "libfdk_aac") == 0)
-    {
         result = av_opt_set_int(state_->encoder->priv_data, "afterburner", 0, 0);
         if (result < 0)
         {
-            spdlog::error("audio transcoder fdk afterburner option failed {}", ffmpeg_error(result));
+            spdlog::error("audio transcoder aac afterburner option failed {}", ffmpeg_error(result));
             return false;
         }
     }
