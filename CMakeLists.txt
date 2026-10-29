@@ -14,7 +14,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
-find_package(spdlog REQUIRED)
 find_package(PkgConfig REQUIRED)
 
 include(CheckCXXCompilerFlag)
@@ -23,6 +22,7 @@ include(CheckLinkerFlag)
 include(CMakePushCheckState)
 include(cmake/boost.cmake)
 include(cmake/ffmpeg.cmake)
+include(cmake/spdlog.cmake)
 include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
 
@@ -308,9 +308,8 @@ target_link_libraries(media_core PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     FFmpeg::audio
-    FFmpeg::scale
     libSRTP::srtp2
-    spdlog::spdlog
+    spdlog::spdlog_header_only
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 
@@ -364,7 +363,6 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
         bench/whip_publisher.cpp
         bench/clients/webrtc_client.cpp
     )
-    pkg_check_modules(FFMPEG_FORMAT REQUIRED IMPORTED_TARGET libavformat)
-    target_link_libraries(whip_publisher PRIVATE media_core media_server_link_options PkgConfig::FFMPEG_FORMAT)
+    target_link_libraries(whip_publisher PRIVATE media_core media_server_link_options FFmpeg::format)
 
 endif()

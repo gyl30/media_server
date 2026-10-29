@@ -252,7 +252,7 @@ int gb28181_rtp_receiver::on_demuxed_packet(avpacket_t* packet)
     {
         if (video_codec_)
         {
-            spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_id_, packet->stream->codecid);
+            spdlog::warn("gb28181 unsupported raw codec stream {} codecid {}", stream_id_, static_cast<int>(packet->stream->codecid));
             return -1;
         }
         return 0;

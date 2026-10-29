@@ -4,3 +4,19 @@
 [submodule "third/ada"]
 	path = third/ada
 	url = https://github.com/ada-url/ada.git
+[submodule "third/ffmpeg"]
+	path = third/ffmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
+	shallow = true
+[submodule "third/opus"]
+	path = third/opus
+	url = https://github.com/xiph/opus.git
+	shallow = true
+[submodule "third/fdk-aac"]
+	path = third/fdk-aac
+	url = https://github.com/mstorsjo/fdk-aac.git
+	shallow = true
+[submodule "third/spdlog"]
+	path = third/spdlog
+	url = https://github.com/gabime/spdlog.git
+	shallow = true
