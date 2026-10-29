@@ -165,7 +165,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     }
     else
     {
-        encoder = avcodec_find_encoder(AV_CODEC_ID_AAC);
+        encoder = avcodec_find_encoder_by_name(MEDIA_SERVER_AAC_ENCODER);
     }
     if (encoder == nullptr)
     {
@@ -201,6 +201,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     else
     {
         state_->encoder->profile = AV_PROFILE_AAC_LOW;
+        state_->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     }
 
     result = avcodec_open2(state_->encoder, encoder, nullptr);

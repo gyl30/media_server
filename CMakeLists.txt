@@ -37,6 +37,11 @@ unset(BUILD_SHARED_LIBS)
 target_include_directories(ada SYSTEM INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third/ada/include>)
 
 option(MEDIA_SERVER_HARDENING "Enable production compiler and linker hardening" ON)
+set(MEDIA_SERVER_AAC_ENCODER "aac" CACHE STRING "FFmpeg AAC encoder: aac or libfdk_aac")
+set_property(CACHE MEDIA_SERVER_AAC_ENCODER PROPERTY STRINGS aac libfdk_aac)
+if(NOT MEDIA_SERVER_AAC_ENCODER MATCHES "^(aac|libfdk_aac)$")
+    message(FATAL_ERROR "MEDIA_SERVER_AAC_ENCODER must be aac or libfdk_aac")
+endif()
 set(MEDIA_SERVER_SANITIZER "none" CACHE STRING "Sanitizer: none, address, undefined, thread")
 set_property(CACHE MEDIA_SERVER_SANITIZER PROPERTY STRINGS none address undefined thread)
 
@@ -291,6 +296,8 @@ add_library(media_core STATIC
     media/rtsp/rtsp_publish_media.cpp
     media/rtsp/rtsp_server_connection.cpp
 )
+
+set_source_files_properties(media/codec/audio_transcoder.cpp PROPERTIES COMPILE_DEFINITIONS MEDIA_SERVER_AAC_ENCODER="${MEDIA_SERVER_AAC_ENCODER}")
 
 target_include_directories(media_core PUBLIC
     ${PROJECT_SOURCE_DIR}
