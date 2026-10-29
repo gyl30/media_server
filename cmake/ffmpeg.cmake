@@ -46,7 +46,7 @@ ExternalProject_Add(ffmpeg_external
         --disable-avdevice --disable-avfilter --disable-swscale
         --enable-libopus --enable-libfdk-aac
         --enable-decoder=aac,opus
-        --enable-encoder=libfdk_aac,libopus,opus
+        --enable-encoder=libfdk_aac,libopus
         --enable-parser=aac,opus,h264
         --enable-demuxer=matroska
         --enable-protocol=file

@@ -154,19 +154,7 @@ bool audio_transcoder::initialize_decoder(const audio_transcoder_config& config)
 
 bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
 {
-    const AVCodec* encoder{};
-    if (config.output.codec == codec_id::opus)
-    {
-        encoder = avcodec_find_encoder_by_name("libopus");
-        if (encoder == nullptr)
-        {
-            encoder = avcodec_find_encoder(AV_CODEC_ID_OPUS);
-        }
-    }
-    else
-    {
-        encoder = avcodec_find_encoder_by_name("libfdk_aac");
-    }
+    const AVCodec* encoder = avcodec_find_encoder_by_name(config.output.codec == codec_id::opus ? "libopus" : "libfdk_aac");
     if (encoder == nullptr)
     {
         spdlog::error("audio transcoder {} encoder not found", to_string(config.output.codec));
@@ -194,11 +182,7 @@ bool audio_transcoder::initialize_encoder(const audio_transcoder_config& config)
     state_->encoder->bit_rate = config.output_bit_rate;
     state_->encoder->cutoff = config.output_cutoff;
     state_->encoder->time_base = AVRational{1, state_->encoder->sample_rate};
-    if (config.output.codec == codec_id::opus)
-    {
-        state_->encoder->strict_std_compliance = FF_COMPLIANCE_EXPERIMENTAL;
-    }
-    else
+    if (config.output.codec == codec_id::aac)
     {
         state_->encoder->profile = AV_PROFILE_AAC_LOW;
         state_->encoder->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
