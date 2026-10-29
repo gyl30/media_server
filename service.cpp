@@ -6,7 +6,6 @@
 
 #include <boost/asio.hpp>
 #include <spdlog/spdlog.h>
-#include <boost/scope/scope_exit.hpp>
 
 #include "service.h"
 #include "media/hls/hls.h"
@@ -14,6 +13,7 @@
 #include "media/webrtc/whip.h"
 #include "media/webrtc/whep.h"
 #include "media/net/worker_pool.h"
+#include "media/core/scope_exit.h"
 #include "media/net/tcp_listener.h"
 #include "media/http/http_session.h"
 #include "media/rtmp/rtmp_session.h"
@@ -89,7 +89,7 @@ void service::stop()
 
 bool service::run_server()
 {
-    boost::scope::scope_exit stop_on_startup_failure([this]() { stop(); });
+    scope_exit stop_on_startup_failure([this]() { stop(); });
 
     boost::system::error_code network_error;
     const auto bind_address = boost::asio::ip::make_address(config_.bind_address);
@@ -135,7 +135,7 @@ bool service::run_server()
         spdlog::error("http listen failed port {} error {}", config_.http_port, network_error.message());
         return false;
     }
-    stop_on_startup_failure.set_active(false);
+    stop_on_startup_failure.release();
 
     spdlog::info("rtmp listen {}:{}", config_.bind_address, config_.rtmp_port);
     spdlog::info("rtsp listen {}:{}", config_.bind_address, config_.rtsp_port);
