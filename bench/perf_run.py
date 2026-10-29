@@ -192,6 +192,7 @@ def parse_arguments():
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
     parser.add_argument("--control-probe-ms", type=int, default=0, help="interval between GET /receivers control requests timed during the window; 0 disables")
     parser.add_argument("--upstream-workers", type=int, default=0, help="worker threads of the upstream media_server for pull and GB inputs; 0 uses --workers")
+    parser.add_argument("--upstream-bin", type=Path, help="media_server binary for the upstream instance of pull and GB inputs; default --server-bin")
     parser.add_argument("--upstream-sources", type=int, default=0,
                         help="distinct upstream publishers for pull and GB inputs; sources beyond it reuse them round-robin; 0 gives every source its own")
     parser.add_argument("--pull-interleave-seed", type=int, default=0,
@@ -372,7 +373,7 @@ def run(args):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
 
     def media_server(name, host, ports, verifier):
-        process = launch(name, [args.server_bin, "--threads", args.workers if name == "server" or not args.upstream_workers else args.upstream_workers, "--bind-address", host, "--webrtc-address", host,
+        process = launch(name, [args.server_bin if name == "server" else args.upstream_bin or args.server_bin, "--threads", args.workers if name == "server" or not args.upstream_workers else args.upstream_workers, "--bind-address", host, "--webrtc-address", host,
                                "--rtmp-port", ports[0], "--rtsp-port", ports[1], "--http-port", ports[2],
                                "--control-token", control_token, "--signaling-url", verifier], args.server_cpus if name == "server" else args.client_cpus, "server" if name == "server" else "publisher")
         wait_for_listener(host, ports[2], check=lambda: check_budget(server_pid=process.pid if name == "server" else None))
