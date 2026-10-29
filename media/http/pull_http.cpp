@@ -73,7 +73,22 @@ std::optional<simdjson::dom::object> parse_object(simdjson::dom::parser& parser,
 
 bool has_only_fields(const simdjson::dom::object& object, std::initializer_list<std::string_view> fields)
 {
-    return std::ranges::all_of(object, [fields](const auto& member) { return std::find(fields.begin(), fields.end(), member.key) != fields.end(); });
+    std::uint32_t seen = 0;
+    for (const auto member : object)
+    {
+        const auto position = std::find(fields.begin(), fields.end(), member.key);
+        if (position == fields.end())
+        {
+            return false;
+        }
+        const auto bit = 1U << static_cast<unsigned int>(position - fields.begin());
+        if ((seen & bit) != 0)
+        {
+            return false;
+        }
+        seen |= bit;
+    }
+    return true;
 }
 
 bool has_field(const simdjson::dom::object& object, std::string_view key) { return object.at_key(key).error() != simdjson::NO_SUCH_FIELD; }

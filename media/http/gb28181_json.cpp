@@ -27,12 +27,20 @@ std::optional<json_object> parse_object(simdjson::dom::parser& parser, std::stri
 
 bool has_only_fields(const json_object& object, std::initializer_list<std::string_view> fields)
 {
+    std::uint32_t seen = 0;
     for (const auto field : object)
     {
-        if (std::find(fields.begin(), fields.end(), field.key) == fields.end())
+        const auto position = std::find(fields.begin(), fields.end(), field.key);
+        if (position == fields.end())
         {
             return false;
         }
+        const auto bit = 1U << static_cast<unsigned int>(position - fields.begin());
+        if ((seen & bit) != 0)
+        {
+            return false;
+        }
+        seen |= bit;
     }
     return true;
 }
