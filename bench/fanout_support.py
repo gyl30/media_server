@@ -66,7 +66,12 @@ def proc_snapshot(pid, netns_queues=None, sockets=True):
         if line.startswith("Pss:"):
             pss_kib = int(line.split()[1])
             break
-    descriptors = os.listdir(f"/proc/{pid}/fd")
+    try:
+        descriptors = os.listdir(f"/proc/{pid}/fd")
+    except PermissionError:
+        if os.stat(f"/proc/{pid}").st_uid != os.getuid():
+            raise
+        raise ProcessLookupError(pid) from None
     queues_by_family = {}
     if sockets:
         inodes = set()

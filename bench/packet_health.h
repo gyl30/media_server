@@ -8,33 +8,41 @@
 namespace media_server::bench
 {
 
+constexpr std::uint32_t video_reorder_ticks = 90'000;
+
 class timestamp_health
 {
    public:
+    explicit timestamp_health(std::uint32_t reorder_window = 0) : reorder_window_(reorder_window) {}
+
     bool observe(std::uint32_t timestamp)
     {
-        if (last_ && timestamp - *last_ > 0x80000000U)
+        if (latest_)
         {
-            return false;
+            const auto forward = timestamp - *latest_;
+            if (forward > 0x80000000U)
+            {
+                return *latest_ - timestamp <= reorder_window_;
+            }
+            advanced_ += forward;
         }
-        if (last_)
-        {
-            advanced_ += timestamp - *last_;
-        }
-        last_ = timestamp;
+        latest_ = timestamp;
         return true;
     }
 
     [[nodiscard]] std::uint64_t advanced() const noexcept { return advanced_; }
 
    private:
-    std::optional<std::uint32_t> last_;
+    std::uint32_t reorder_window_;
+    std::optional<std::uint32_t> latest_;
     std::uint64_t advanced_{};
 };
 
 class rtp_health
 {
    public:
+    explicit rtp_health(std::uint32_t reorder_window = 0) : reorder_window_(reorder_window), timestamp_(reorder_window) {}
+
     bool observe(std::span<const std::uint8_t> packet)
     {
         if (packet.size() < 12 || packet[0] >> 6U != 2)
@@ -48,7 +56,7 @@ class rtp_health
             ssrc_ = ssrc;
             sequence_.reset();
             previous_advanced_ += timestamp_.advanced();
-            timestamp_ = {};
+            timestamp_ = timestamp_health(reorder_window_);
         }
         if (sequence_ && static_cast<std::uint16_t>(sequence - *sequence_) != 1)
         {
@@ -67,6 +75,7 @@ class rtp_health
                (static_cast<std::uint32_t>(bytes[2]) << 8U) | bytes[3];
     }
 
+    std::uint32_t reorder_window_;
     std::optional<std::uint32_t> ssrc_;
     std::optional<std::uint16_t> sequence_;
     timestamp_health timestamp_;

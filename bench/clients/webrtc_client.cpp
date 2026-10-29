@@ -322,7 +322,7 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "s=-\r\n"
         << "t=0 0\r\n"
         << "a=group:BUNDLE 0 1\r\n"
-        << "m=video 9 UDP/TLS/RTP/SAVPF 102" << (play ? " 104" : "") << "\r\n"
+        << "m=video 9 UDP/TLS/RTP/SAVPF 102" << (play ? " 106 108 104" : "") << "\r\n"
         << "c=IN IP4 0.0.0.0\r\n"
         << "a=ice-ufrag:" << client_ice_ufrag << "\r\n"
         << "a=ice-pwd:" << client_ice_password << "\r\n"
@@ -333,6 +333,9 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:102 H264/90000\r\na=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n"
+        << (play ? "a=rtpmap:106 H264/90000\r\na=fmtp:106 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f\r\n"
+                   "a=rtpmap:108 H264/90000\r\na=fmtp:108 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=64001f\r\n"
+                 : "")
         << (play ? "a=rtpmap:104 H265/90000\r\na=fmtp:104 profile-space=0;profile-id=1;tier-flag=0;level-id=186;tx-mode=SRST\r\n" : "")
         << "m=audio 9 UDP/TLS/RTP/SAVPF 111" << (play ? " 8 0" : "") << "\r\n"
         << "c=IN IP4 0.0.0.0\r\n"

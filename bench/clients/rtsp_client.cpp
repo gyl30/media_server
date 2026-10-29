@@ -180,13 +180,14 @@ int rtsp_client::describe_callback(void* param, const char* sdp, int len)
         return -1;
     }
     self->audio_channels_.clear();
+    self->packet_health_.clear();
     const auto count = sdp_media_count(parsed);
     for (int index = 0; index < count; ++index)
     {
-        const std::string_view kind(sdp_media_type(parsed, index));
-        self->audio_channels_.push_back(kind == "audio");
+        const bool audio = std::string_view(sdp_media_type(parsed, index)) == "audio";
+        self->audio_channels_.push_back(audio);
+        self->packet_health_.emplace_back(audio ? 0 : video_reorder_ticks);
     }
-    self->packet_health_.resize(self->audio_channels_.size());
     sdp_destroy(parsed);
     return rtsp_client_setup(self->client_, self->sdp_.c_str(), static_cast<int>(self->sdp_.size()));
 }

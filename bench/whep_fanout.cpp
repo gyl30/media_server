@@ -284,7 +284,8 @@ class play_session final : public std::enable_shared_from_this<play_session>
             return;
         }
         const auto payload_type = static_cast<std::uint8_t>(packet[1] & 0x7fU);
-        if (payload_type == media_server::bench::webrtc_h264_payload_type || payload_type == media_server::bench::webrtc_h265_payload_type)
+        if (payload_type == media_server::bench::webrtc_h264_payload_type || payload_type == media_server::bench::webrtc_h264_main_payload_type ||
+            payload_type == media_server::bench::webrtc_h264_high_payload_type || payload_type == media_server::bench::webrtc_h265_payload_type)
         {
             if (!video_health_.observe(packet))
             {
@@ -373,7 +374,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
     std::atomic_uint64_t video_media_ticks_{};
     std::atomic_int64_t lag_min_{std::numeric_limits<std::int64_t>::max()};
     std::atomic_int64_t lag_max_{std::numeric_limits<std::int64_t>::min()};
-    media_server::bench::rtp_health video_health_;
+    media_server::bench::rtp_health video_health_{media_server::bench::video_reorder_ticks};
     media_server::bench::rtp_health audio_health_;
     bool pli_sent_{};
     bool media_ready_{};

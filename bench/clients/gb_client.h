@@ -104,7 +104,7 @@ class gb_client final
     std::optional<std::uint16_t> sequence_;
     std::optional<std::uint32_t> frame_timestamp_;
     bool video_frame_{};
-    timestamp_health video_timestamps_;
+    timestamp_health video_timestamps_{video_reorder_ticks};
     timestamp_health audio_timestamps_;
     std::uint64_t video_bytes_{};
     std::uint64_t video_frames_{};

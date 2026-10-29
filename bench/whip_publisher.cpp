@@ -247,15 +247,18 @@ media_fixture make_media_fixture(const configuration& config)
     const auto free_packet = [](AVPacket* pointer) { av_packet_free(&pointer); };
     std::unique_ptr<AVPacket, decltype(free_packet)> packet(av_packet_alloc(), free_packet);
     media_fixture fixture;
+    std::array<std::int64_t, 2> previous_pts{AV_NOPTS_VALUE, AV_NOPTS_VALUE};
     int result{};
     while ((result = av_read_frame(input, packet.get())) >= 0)
     {
         if (packet->stream_index == video || packet->stream_index == audio)
         {
-            if (packet->pts == AV_NOPTS_VALUE || packet->dts != packet->pts)
+            auto& previous = previous_pts[packet->stream_index == video ? 0 : 1];
+            if (packet->pts == AV_NOPTS_VALUE || (previous != AV_NOPTS_VALUE && packet->pts <= previous))
             {
                 throw std::runtime_error("fixture requires presentation timestamps without B frames");
             }
+            previous = packet->pts;
             const auto* stream = input->streams[packet->stream_index];
             fixture_frame frame;
             frame.video = packet->stream_index == video;
