@@ -18,6 +18,7 @@
 | [20261028-whep-pull-profile](20261028-whep-pull-profile/report.md) | `cb03380` | WHEP Pull 分布审查，建议按会话数放置（OPTIMIZE） | 建议已在下一份报告实现 |
 | [20261029-whep-pull-optimize](20261029-whep-pull-optimize/report.md) | `cb03380` 起 | 会话最少放置 `a636699`；FFmpeg pow43 补丁与 fdk 隔离实验 | `tools/ffmpeg/*.diff` 丢失；pow43 补丁等价内容可用 `git show 24c80ec^:deps/ffmpeg/patches/0001-aacenc-escape-pow43-table.patch` 取回；fdk 接入已进入主线 |
 | [20261029-aac-whep-capacity](20261029-aac-whep-capacity/report.md) | `415e8aa`→`24c80ec` | fdk AAC 与 afterburner=0，WHEP Pull 496 路（仅作参考） | 报告中的 `deps/ffmpeg/build.sh`、`~/ffmpeg-ms` SDK 已由 `46d31ca` 的子模块构建取代；主观试听证据见下文 |
+| [20261030-deps-regression](20261030-deps-regression/report.md) | `1d5cfc7` 起 | 依赖重组验收、全协议回归与性能哨兵；jemalloc 5.4.0 回归二分到 `a952a3b8`、`3c14707b`，固定 5.3.0 | 原始结果、二分用共享库只在测试机 |
 
 ## 验证记录
 
