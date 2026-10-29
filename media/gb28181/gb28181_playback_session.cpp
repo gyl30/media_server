@@ -9,9 +9,9 @@
 #include <boost/asio/post.hpp>
 #include <boost/asio/write.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/scope/scope_exit.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
+#include "media/core/scope_exit.h"
 #include "media/net/media_port_pool.h"
 #include "media/gb28181/gb28181_playback_session.h"
 
@@ -96,13 +96,13 @@ void gb28181_playback_session::attach(tcp::socket socket, unsigned http_version)
                           {
                               return;
                           }
-                          boost::scope::scope_exit close_native([native]() { ::close(native); });
+                          scope_exit close_native([native]() { ::close(native); });
                           rebound.assign(endpoint.protocol(), native, error);
                           if (error)
                           {
                               return;
                           }
-                          close_native.set_active(false);
+                          close_native.release();
                           self->worker_.spawn([self, socket = std::move(rebound), http_version](boost::asio::yield_context yield) mutable
                                               { self->run(std::move(socket), http_version, yield); });
                       });

@@ -9,8 +9,8 @@
 #include <openssl/err.h>
 #include <openssl/srtp.h>
 #include <spdlog/spdlog.h>
-#include <boost/scope/scope_exit.hpp>
 
+#include "media/core/scope_exit.h"
 #include "media/webrtc/dtls_transport.h"
 
 namespace media_server
@@ -150,7 +150,7 @@ bool dtls_transport::startup(const dtls_certificate& certificate, dtls_role role
 
     auto* read_bio = BIO_new(BIO_s_mem());
     auto* write_bio = BIO_new(BIO_s_mem());
-    boost::scope::scope_exit cleanup_bio(
+    scope_exit cleanup_bio(
         [&]()
         {
             if (read_bio != nullptr)
@@ -172,7 +172,7 @@ bool dtls_transport::startup(const dtls_certificate& certificate, dtls_role role
     BIO_set_mem_eof_return(write_bio, -1);
     SSL_set0_rbio(ssl_.get(), read_bio);
     SSL_set0_wbio(ssl_.get(), write_bio);
-    cleanup_bio.set_active(false);
+    cleanup_bio.release();
     if (role == dtls_role::server)
     {
         SSL_set_accept_state(ssl_.get());

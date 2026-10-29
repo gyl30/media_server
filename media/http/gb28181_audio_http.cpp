@@ -1,7 +1,7 @@
 #include <limits>
 #include <utility>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/async_result.hpp>
 #include <boost/asio/associated_executor.hpp>
@@ -27,7 +27,11 @@ response_type response(const request_type& request, http::status status, std::st
     if (!error.empty())
     {
         result.set(http::field::content_type, "application/json");
-        result.body() = boost::json::serialize(boost::json::object{{"error", error}});
+        simdjson::builder::string_builder body;
+        body.start_object();
+        body.append_key_value("error", error);
+        body.end_object();
+        result.body() = body.view().value_unsafe();
     }
     result.prepare_payload();
     return result;
@@ -55,20 +59,20 @@ response_type handle_gb28181_audio_request(const request_type& request,
     {
         return response(request, http::status::unsupported_media_type, "unsupported_media_type");
     }
-    boost::system::error_code error;
-    const auto value = boost::json::parse(request.body(), error);
-    if (target.has_search() || error || !value.is_object())
+    simdjson::dom::parser parser;
+    simdjson::dom::object object;
+    if (target.has_search() || parser.parse(request.body().data(), request.body().size()).get(object) != simdjson::SUCCESS)
     {
         return response(request, http::status::bad_request, "invalid_request");
     }
-    const auto& object = value.as_object();
-    const auto* identity = object.if_contains("session_id");
+    std::string_view identity;
     const bool configuring = path == "/gb28181/audio/configure";
-    if (!identity || !identity->is_string() || !valid_stream_token(identity->as_string()) || object.size() != (configuring ? 6U : 1U))
+    if (object.at_key("session_id").get_string().get(identity) != simdjson::SUCCESS || !valid_stream_token(identity) ||
+        object.size() != (configuring ? 6U : 1U))
     {
         return response(request, http::status::bad_request, "invalid_request");
     }
-    const std::string id(identity->as_string());
+    const std::string id(identity);
     if (path == "/gb28181/audio/create")
     {
         if (!bind_address.is_v4())
@@ -90,7 +94,11 @@ response_type handle_gb28181_audio_request(const request_type& request,
         auto result = response(request, http::status::created);
         result.set(http::field::content_type, "application/json");
         result.set(http::field::location, "/gb28181/audio/session/" + id);
-        result.body() = boost::json::serialize(boost::json::object{{"rtp_port", *port}});
+        simdjson::builder::string_builder body;
+        body.start_object();
+        body.append_key_value("rtp_port", *port);
+        body.end_object();
+        result.body() = body.view().value_unsafe();
         result.prepare_payload();
         return result;
     }
@@ -101,27 +109,23 @@ response_type handle_gb28181_audio_request(const request_type& request,
     std::uint32_t ssrc{};
     if (configuring)
     {
-        const auto* ticket = object.if_contains("upload_token");
-        const auto* address = object.if_contains("remote_address");
-        if (!ticket || !ticket->is_string() || !valid_stream_token(ticket->as_string()) || !address || !address->is_string())
+        std::string_view ticket;
+        std::string_view address;
+        if (object.at_key("upload_token").get_string().get(ticket) != simdjson::SUCCESS || !valid_stream_token(ticket) ||
+            object.at_key("remote_address").get_string().get(address) != simdjson::SUCCESS)
         {
             return response(request, http::status::bad_request, "invalid_request");
         }
-        auto remote = boost::asio::ip::make_address(address->as_string(), error);
+        boost::system::error_code error;
+        auto remote = boost::asio::ip::make_address(address, error);
         if (error || !remote.is_v4() || remote.is_unspecified() || remote.is_multicast())
         {
             return response(request, http::status::bad_request, "invalid_request");
         }
         const auto number = [&object](std::string_view key, std::uint64_t maximum) -> std::optional<std::uint32_t>
         {
-            const auto* item = object.if_contains(key);
-            if (!item || (!item->is_int64() && !item->is_uint64()))
-            {
-                return std::nullopt;
-            }
-            boost::system::error_code conversion;
-            const auto integer = item->to_number<std::uint64_t>(conversion);
-            if (conversion || integer == 0 || integer > maximum)
+            std::uint64_t integer = 0;
+            if (object.at_key(key).get_uint64().get(integer) != simdjson::SUCCESS || integer == 0 || integer > maximum)
             {
                 return std::nullopt;
             }
@@ -137,7 +141,7 @@ response_type handle_gb28181_audio_request(const request_type& request,
         rtp = {remote, static_cast<std::uint16_t>(*rtp_port)};
         rtcp = {remote, static_cast<std::uint16_t>(*rtcp_port)};
         ssrc = *source;
-        token = ticket->as_string();
+        token = ticket;
     }
     const auto session = std::dynamic_pointer_cast<gb28181_audio_session>(session_registry::instance().find_sender_session(id, id));
     if (!session)

@@ -8,10 +8,10 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/scope/scope_exit.hpp>
 #include <boost/endian/conversion.hpp>
 
 #include "media/rtsp/rtsp_uri.h"
+#include "media/core/scope_exit.h"
 #include "media/codec/codec_utils.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -486,7 +486,7 @@ int rtsp_play_session::prepare_presentation()
     {
         return 500;
     }
-    boost::scope::scope_exit cleanup_muxer([&]() { rtsp_muxer_destroy(prepared_muxer); });
+    scope_exit cleanup_muxer([&]() { rtsp_muxer_destroy(prepared_muxer); });
 
     std::map<track_id, track_state> prepared_tracks;
     int next_payload_type = 96;
@@ -584,7 +584,7 @@ int rtsp_play_session::prepare_presentation()
 
     track_states_ = std::move(prepared_tracks);
     muxer_ = prepared_muxer;
-    cleanup_muxer.set_active(false);
+    cleanup_muxer.release();
     return 0;
 }
 

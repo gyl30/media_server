@@ -9,10 +9,10 @@
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/ip/address.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "media/webrtc/whip.h"
 #include "media/net/worker_pool.h"
+#include "media/core/scope_exit.h"
 #include "media/net/worker_context.h"
 #include "media/net/media_port_pool.h"
 #include "media/webrtc/whip_session.h"
@@ -146,7 +146,7 @@ create_result create(std::string_view stream_id,
         spdlog::error("webrtc udp socket startup failed: no available media port");
         return failed(create_error::internal_error);
     }
-    boost::scope::scope_exit release_port([port]() { media_port_pool::instance().release(*port); });
+    scope_exit release_port([port]() { media_port_pool::instance().release(*port); });
     auto transport = std::make_shared<udp_transport>(worker.io());
     boost::system::error_code udp_error;
     transport->startup(advertised_address, *port, udp_receive_buffer::media_input, udp_error);
@@ -180,7 +180,7 @@ create_result create(std::string_view stream_id,
         return failed(create_error::invalid_offer);
     }
     auto session = std::make_shared<whip_session>(worker, std::string(stream_id), std::move(transport), std::move(answer_config));
-    release_port.set_active(false);
+    release_port.release();
     if (!session->startup(*transport_media, *answer, *certificate))
     {
         session->shutdown();

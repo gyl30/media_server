@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <initializer_list>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <boost/asio/ip/address.hpp>
 
 #include "media/http/gb28181_json.h"
@@ -13,25 +13,23 @@ namespace media_server
 namespace
 {
 
-using json_object = boost::json::object;
-using json_value = boost::json::value;
+using json_object = simdjson::dom::object;
 
-std::optional<json_object> parse_object(std::string_view body)
+std::optional<json_object> parse_object(simdjson::dom::parser& parser, std::string_view body)
 {
-    boost::system::error_code error;
-    auto value = boost::json::parse(body, error);
-    if (error || !value.is_object())
+    json_object object;
+    if (parser.parse(body.data(), body.size()).get(object) != simdjson::SUCCESS)
     {
         return std::nullopt;
     }
-    return value.as_object();
+    return object;
 }
 
 bool has_only_fields(const json_object& object, std::initializer_list<std::string_view> fields)
 {
-    for (const auto& [key, value] : object)
+    for (const auto field : object)
     {
-        if (std::find(fields.begin(), fields.end(), std::string_view{key}) == fields.end())
+        if (std::find(fields.begin(), fields.end(), field.key) == fields.end())
         {
             return false;
         }
@@ -41,42 +39,27 @@ bool has_only_fields(const json_object& object, std::initializer_list<std::strin
 
 std::optional<std::string> required_string(const json_object& object, std::string_view key)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr || !value->is_string() || value->as_string().empty())
+    std::string_view value;
+    if (object.at_key(key).get_string().get(value) != simdjson::SUCCESS || value.empty())
     {
         return std::nullopt;
     }
-    return std::string{value->as_string()};
+    return std::string{value};
 }
 
-std::optional<std::uint64_t> unsigned_value(const json_value& value, std::uint64_t maximum)
+std::optional<std::uint64_t> unsigned_value(simdjson::simdjson_result<simdjson::dom::element> value, std::uint64_t maximum)
 {
-    if (value.is_uint64())
+    std::uint64_t result = 0;
+    if (value.get_uint64().get(result) != simdjson::SUCCESS || result > maximum)
     {
-        const auto result = value.as_uint64();
-        return result <= maximum ? std::optional<std::uint64_t>{result} : std::nullopt;
+        return std::nullopt;
     }
-    if (value.is_int64())
-    {
-        const auto result = value.as_int64();
-        if (result < 0)
-        {
-            return std::nullopt;
-        }
-        const auto unsigned_result = static_cast<std::uint64_t>(result);
-        return unsigned_result <= maximum ? std::optional<std::uint64_t>{unsigned_result} : std::nullopt;
-    }
-    return std::nullopt;
+    return result;
 }
 
 std::optional<std::uint16_t> required_port(const json_object& object, std::string_view key)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr)
-    {
-        return std::nullopt;
-    }
-    const auto parsed = unsigned_value(*value, std::numeric_limits<std::uint16_t>::max());
+    const auto parsed = unsigned_value(object.at_key(key), std::numeric_limits<std::uint16_t>::max());
     if (!parsed || *parsed == 0)
     {
         return std::nullopt;
@@ -86,12 +69,12 @@ std::optional<std::uint16_t> required_port(const json_object& object, std::strin
 
 bool optional_port(const json_object& object, std::string_view key, std::optional<std::uint16_t>& result)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr)
+    const auto value = object.at_key(key);
+    if (value.error() == simdjson::NO_SUCH_FIELD)
     {
         return true;
     }
-    const auto parsed = unsigned_value(*value, std::numeric_limits<std::uint16_t>::max());
+    const auto parsed = unsigned_value(value, std::numeric_limits<std::uint16_t>::max());
     if (!parsed || *parsed == 0)
     {
         return false;
@@ -102,12 +85,7 @@ bool optional_port(const json_object& object, std::string_view key, std::optiona
 
 std::optional<std::uint8_t> required_payload_type(const json_object& object)
 {
-    const auto* value = object.if_contains("payload_type");
-    if (value == nullptr)
-    {
-        return std::nullopt;
-    }
-    const auto parsed = unsigned_value(*value, 127);
+    const auto parsed = unsigned_value(object.at_key("payload_type"), 127);
     if (!parsed)
     {
         return std::nullopt;
@@ -117,12 +95,7 @@ std::optional<std::uint8_t> required_payload_type(const json_object& object)
 
 std::optional<std::uint32_t> required_ssrc(const json_object& object)
 {
-    const auto* value = object.if_contains("ssrc");
-    if (value == nullptr)
-    {
-        return std::nullopt;
-    }
-    const auto parsed = unsigned_value(*value, std::numeric_limits<std::uint32_t>::max());
+    const auto parsed = unsigned_value(object.at_key("ssrc"), std::numeric_limits<std::uint32_t>::max());
     if (!parsed)
     {
         return std::nullopt;
@@ -132,12 +105,11 @@ std::optional<std::uint32_t> required_ssrc(const json_object& object)
 
 std::optional<gb28181_transport> required_transport(const json_object& object)
 {
-    const auto* value = object.if_contains("transport");
-    if (value == nullptr || !value->is_string())
+    std::string_view transport;
+    if (object.at_key("transport").get_string().get(transport) != simdjson::SUCCESS)
     {
         return std::nullopt;
     }
-    const auto transport = value->as_string();
     if (transport == "udp")
     {
         return gb28181_transport::udp;
@@ -155,13 +127,13 @@ std::optional<gb28181_transport> required_transport(const json_object& object)
 
 std::optional<boost::asio::ip::address> required_address(const json_object& object, std::string_view key)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr || !value->is_string() || value->as_string().empty())
+    std::string_view value;
+    if (object.at_key(key).get_string().get(value) != simdjson::SUCCESS || value.empty())
     {
         return std::nullopt;
     }
     boost::system::error_code error;
-    auto address = boost::asio::ip::make_address(value->as_string(), error);
+    auto address = boost::asio::ip::make_address(value, error);
     if (error || address.is_unspecified())
     {
         return std::nullopt;
@@ -173,7 +145,8 @@ std::optional<boost::asio::ip::address> required_address(const json_object& obje
 
 std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string_view body, gb28181_receiver_kind kind)
 {
-    const auto object = parse_object(body);
+    simdjson::dom::parser parser;
+    const auto object = parse_object(parser, body);
     if (!object)
     {
         return std::nullopt;
@@ -249,7 +222,8 @@ std::optional<gb28181_receiver_config> parse_gb28181_receiver_config(std::string
 
 std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_view body)
 {
-    const auto object = parse_object(body);
+    simdjson::dom::parser parser;
+    const auto object = parse_object(parser, body);
     if (!object)
     {
         return std::nullopt;
@@ -334,7 +308,8 @@ std::optional<gb28181_sender_config> parse_gb28181_sender_config(std::string_vie
 
 std::optional<std::pair<std::string, std::uint32_t>> parse_gb28181_receiver_update(std::string_view body)
 {
-    const auto object = parse_object(body);
+    simdjson::dom::parser parser;
+    const auto object = parse_object(parser, body);
     if (!object || !has_only_fields(*object, {"stream_id", "ssrc"}))
     {
         return std::nullopt;
@@ -350,7 +325,8 @@ std::optional<std::pair<std::string, std::uint32_t>> parse_gb28181_receiver_upda
 
 std::optional<gb28181_sender_identity> parse_gb28181_sender_delete(std::string_view body)
 {
-    const auto object = parse_object(body);
+    simdjson::dom::parser parser;
+    const auto object = parse_object(parser, body);
     if (!object || !has_only_fields(*object, {"stream_id", "sender_id"}))
     {
         return std::nullopt;

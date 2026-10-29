@@ -7,8 +7,8 @@
 #include <algorithm>
 
 #include <spdlog/spdlog.h>
-#include <boost/scope/scope_exit.hpp>
 
+#include "media/core/scope_exit.h"
 #include "media/codec/codec_utils.h"
 #include "media/codec/audio_transcoder.h"
 
@@ -507,7 +507,7 @@ int audio_transcoder::convert_samples(const std::uint8_t* const* input, int inpu
     {
         return AVERROR(ENOMEM);
     }
-    boost::scope::scope_exit cleanup([&]() { av_frame_free(&converted); });
+    scope_exit cleanup([&]() { av_frame_free(&converted); });
     converted->format = state_->encoder->sample_fmt;
     converted->sample_rate = state_->encoder->sample_rate;
     converted->nb_samples = output_capacity;

@@ -3,9 +3,9 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "config.h"
+#include "media/core/scope_exit.h"
 #include "media/rtmp/rtmp_session.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
@@ -87,7 +87,7 @@ void rtmp_session::run_read(rtmp_server_t* context, boost::asio::yield_context y
 {
     const auto transport = transport_;
     input_yield_ = &yield;
-    boost::scope::scope_exit clear_yield([this]() { input_yield_ = nullptr; });
+    scope_exit clear_yield([this]() { input_yield_ = nullptr; });
     std::vector<std::uint8_t> buffer(64 * 1024);
     for (;;)
     {

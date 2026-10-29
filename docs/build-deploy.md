@@ -2,7 +2,7 @@
 
 ## 媒体服务
 
-根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、Threads、OpenSSL、pkg-config、Boost ≥1.89（context/json/program_options）和 jemalloc（普通构建），FFmpeg 构建另需 make 与 nasm。其余依赖都在 `third/`：ada、libsrtp（使用 OpenSSL）、spdlog（仅头文件，使用自带 fmt）直接参与构建，ireader 源码在仓库内；FFmpeg、opus、fdk-aac 由 [`cmake/ffmpeg.cmake`](../cmake/ffmpeg.cmake) 以 ExternalProject 在构建目录内编译为静态库（安装到 `<构建目录>/third-install`），只启用服务端用到的组件。
+根 [`CMakeLists.txt`](../CMakeLists.txt) 要求 CMake ≥3.21、C11/C++23 编译器、Threads、OpenSSL、pkg-config、Boost ≥1.89（context/program_options 及 Asio/Beast 头文件）和 jemalloc（普通构建），FFmpeg 构建另需 make 与 nasm。其余依赖都在 `third/`：ada、libsrtp（使用 OpenSSL）、spdlog（仅头文件，使用自带 fmt）、simdjson（关闭异常接口）直接参与构建，ireader 源码在仓库内；FFmpeg、opus、fdk-aac 由 [`cmake/ffmpeg.cmake`](../cmake/ffmpeg.cmake) 以 ExternalProject 在构建目录内编译为静态库（安装到 `<构建目录>/third-install`），只启用服务端用到的组件。
 
 在新 checkout 中先按 `.gitmodules` 初始化依赖（FFmpeg 等使用浅克隆）；已有工作区保持第三方目录及其本地状态。Boost 安装在非标准前缀时给 CMake 指定 `Boost_DIR`。每个构建目录首次构建会先编译 FFmpeg 等依赖。
 

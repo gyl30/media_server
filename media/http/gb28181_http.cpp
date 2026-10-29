@@ -4,7 +4,7 @@
 #include <optional>
 #include <string_view>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 
 #include "media/http/gb28181_http.h"
 #include "media/http/gb28181_json.h"
@@ -25,7 +25,7 @@ namespace
 
 gb28181_http_response make_json_response(const gb28181_http_request& request,
                                          boost::beast::http::status status,
-                                         boost::json::object body,
+                                         std::string body,
                                          std::string_view allow = {})
 {
     gb28181_http_response response{status, request.version()};
@@ -36,7 +36,7 @@ gb28181_http_response make_json_response(const gb28181_http_request& request,
         response.set(boost::beast::http::field::allow, allow);
     }
     response.keep_alive(false);
-    response.body() = boost::json::serialize(body);
+    response.body() = std::move(body);
     response.prepare_payload();
     return response;
 }
@@ -46,9 +46,11 @@ gb28181_http_response make_error_response(const gb28181_http_request& request,
                                           std::string_view error,
                                           std::string_view allow = {})
 {
-    boost::json::object body;
-    body["error"] = error;
-    return make_json_response(request, status, std::move(body), allow);
+    simdjson::builder::string_builder body;
+    body.start_object();
+    body.append_key_value("error", error);
+    body.end_object();
+    return make_json_response(request, status, std::string{body.view().value_unsafe()}, allow);
 }
 
 gb28181_http_response make_empty_response(const gb28181_http_request& request, boost::beast::http::status status)
@@ -103,9 +105,11 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
             session->shutdown();
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
-        boost::json::object body;
-        body["rtp_port"] = *local_rtp_port;
-        return make_json_response(request, boost::beast::http::status::created, std::move(body));
+        simdjson::builder::string_builder body;
+        body.start_object();
+        body.append_key_value("rtp_port", *local_rtp_port);
+        body.end_object();
+        return make_json_response(request, boost::beast::http::status::created, std::string{body.view().value_unsafe()});
     }
 
     if (config.transport == gb28181_transport::udp)
@@ -123,9 +127,11 @@ gb28181_http_response handle_receiver_create(const gb28181_http_request& request
             return make_error_response(request, boost::beast::http::status::internal_server_error, "operation_failed");
         }
 
-        boost::json::object body;
-        body["rtp_port"] = *local_rtp_port;
-        return make_json_response(request, boost::beast::http::status::created, std::move(body));
+        simdjson::builder::string_builder body;
+        body.start_object();
+        body.append_key_value("rtp_port", *local_rtp_port);
+        body.end_object();
+        return make_json_response(request, boost::beast::http::status::created, std::string{body.view().value_unsafe()});
     }
 
     auto session = std::make_shared<gb28181_tcp_receiver_session>(worker, stream_id, config.payload_type, config.ssrc);

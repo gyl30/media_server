@@ -5,7 +5,7 @@
 #include <optional>
 #include <algorithm>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <spdlog/spdlog.h>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
@@ -132,7 +132,15 @@ bool verify_stream(const config& application_config,
                     request.set(boost::beast::http::field::authorization, "Bearer " + application_config.control_token);
                 }
                 request.keep_alive(false);
-                request.body() = boost::json::serialize(boost::json::object{{"token", token}, {"operation", operation}, {"stream_id", stream_id}});
+                simdjson::builder::string_builder body;
+                body.start_object();
+                body.append_key_value("token", token);
+                body.append_comma();
+                body.append_key_value("operation", operation);
+                body.append_comma();
+                body.append_key_value("stream_id", stream_id);
+                body.end_object();
+                request.body() = body.view().value_unsafe();
                 request.prepare_payload();
                 stage = "write";
                 boost::beast::http::async_write(connection, request, yield[error]);

@@ -5,10 +5,10 @@
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/post.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "config.h"
 #include "media/rtsp/rtsp_uri.h"
+#include "media/core/scope_exit.h"
 #include "media/net/worker_context.h"
 #include "media/core/stream_registry.h"
 #include "media/http/signaling_verify.h"
@@ -88,7 +88,7 @@ void rtsp_server_connection::run(boost::asio::yield_context yield)
         shutdown();
         return;
     }
-    boost::scope::scope_exit destroy_context([rtsp_context]() { rtsp_server_destroy(rtsp_context); });
+    scope_exit destroy_context([rtsp_context]() { rtsp_server_destroy(rtsp_context); });
     local_address_ = local.address();
     run_read(rtsp_context, yield);
 }
@@ -97,11 +97,11 @@ void rtsp_server_connection::run_read(rtsp_server_t* server, boost::asio::yield_
 {
     const auto transport = transport_;
     input_yield_ = &yield;
-    boost::scope::scope_exit clear_yield([this]() { input_yield_ = nullptr; });
+    scope_exit clear_yield([this]() { input_yield_ = nullptr; });
     rtp_over_rtsp_t interleaved{};
     interleaved.onrtp = &rtsp_server_connection::interleaved_callback;
     interleaved.param = this;
-    boost::scope::scope_exit destroy_interleaved(
+    scope_exit destroy_interleaved(
         [&interleaved]()
         {
             if (interleaved.data != nullptr)

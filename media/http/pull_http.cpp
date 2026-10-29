@@ -7,7 +7,7 @@
 #include <string_view>
 #include <initializer_list>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 
 #include "config.h"
 #include "media/http/pull_http.h"
@@ -24,7 +24,7 @@ namespace
 
 pull_http_response make_json_response(const pull_http_request& request,
                                       boost::beast::http::status status,
-                                      boost::json::object body,
+                                      std::string body,
                                       std::string_view allow = {})
 {
     pull_http_response response{status, request.version()};
@@ -35,7 +35,7 @@ pull_http_response make_json_response(const pull_http_request& request,
         response.set(boost::beast::http::field::allow, allow);
     }
     response.keep_alive(false);
-    response.body() = boost::json::serialize(body);
+    response.body() = std::move(body);
     response.prepare_payload();
     return response;
 }
@@ -45,9 +45,11 @@ pull_http_response make_error_response(const pull_http_request& request,
                                        std::string_view error,
                                        std::string_view allow = {})
 {
-    boost::json::object body;
-    body["error"] = error;
-    return make_json_response(request, status, std::move(body), allow);
+    simdjson::builder::string_builder body;
+    body.start_object();
+    body.append_key_value("error", error);
+    body.end_object();
+    return make_json_response(request, status, std::string{body.view().value_unsafe()}, allow);
 }
 
 pull_http_response make_empty_response(const pull_http_request& request, boost::beast::http::status status)
@@ -59,45 +61,46 @@ pull_http_response make_empty_response(const pull_http_request& request, boost::
     return response;
 }
 
-std::optional<boost::json::object> parse_object(std::string_view body)
+std::optional<simdjson::dom::object> parse_object(simdjson::dom::parser& parser, std::string_view body)
 {
-    boost::system::error_code error;
-    auto value = boost::json::parse(body, error);
-    if (error || !value.is_object())
+    simdjson::dom::object object;
+    if (parser.parse(body.data(), body.size()).get(object) != simdjson::SUCCESS)
     {
         return std::nullopt;
     }
-    return value.as_object();
+    return object;
 }
 
-bool has_only_fields(const boost::json::object& object, std::initializer_list<std::string_view> fields)
+bool has_only_fields(const simdjson::dom::object& object, std::initializer_list<std::string_view> fields)
 {
-    return std::ranges::all_of(
-        object, [fields](const auto& member) { return std::find(fields.begin(), fields.end(), std::string_view{member.key()}) != fields.end(); });
+    return std::ranges::all_of(object, [fields](const auto& member) { return std::find(fields.begin(), fields.end(), member.key) != fields.end(); });
 }
 
-std::optional<std::string> required_string(const boost::json::object& object, std::string_view key)
+bool has_field(const simdjson::dom::object& object, std::string_view key) { return object.at_key(key).error() != simdjson::NO_SUCH_FIELD; }
+
+std::optional<std::string> required_string(const simdjson::dom::object& object, std::string_view key)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr || !value->is_string() || value->as_string().empty())
+    std::string_view value;
+    if (object.at_key(key).get_string().get(value) != simdjson::SUCCESS || value.empty())
     {
         return std::nullopt;
     }
-    return std::string{value->as_string()};
+    return std::string{value};
 }
 
-bool optional_string(const boost::json::object& object, std::string_view key, std::string& result)
+bool optional_string(const simdjson::dom::object& object, std::string_view key, std::string& result)
 {
-    const auto* value = object.if_contains(key);
-    if (value == nullptr)
+    const auto value = object.at_key(key);
+    if (value.error() == simdjson::NO_SUCH_FIELD)
     {
         return true;
     }
-    if (!value->is_string())
+    std::string_view text;
+    if (value.get_string().get(text) != simdjson::SUCCESS)
     {
         return false;
     }
-    result = std::string{value->as_string()};
+    result = std::string{text};
     return true;
 }
 
@@ -181,7 +184,8 @@ pull_http_response start_session(const pull_http_request& request, const std::st
 pull_http_response handle_create(const pull_http_request& request, worker_context& worker, const config& application_config)
 {
     const auto invalid = [&request]() { return make_error_response(request, boost::beast::http::status::bad_request, "invalid_request"); };
-    const auto object = parse_object(request.body());
+    simdjson::dom::parser parser;
+    const auto object = parse_object(parser, request.body());
     if (!object || !has_only_fields(*object, {"stream_id", "url", "username", "password", "token"}))
     {
         return invalid();
@@ -203,13 +207,13 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
     }
 
     const auto protocol = url->get_protocol();
-    if (protocol != "http:" && object->if_contains("token") != nullptr)
+    if (protocol != "http:" && has_field(*object, "token"))
     {
         return invalid();
     }
     if (protocol == "rtsp:")
     {
-        if (object->if_contains("password") != nullptr && username.empty())
+        if (has_field(*object, "password") && username.empty())
         {
             return invalid();
         }
@@ -220,7 +224,7 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
         }
         return start_session(request, *stream_id, std::make_shared<rtsp_pull_session>(worker, std::move(*config)));
     }
-    if (protocol == "rtmp:" && object->if_contains("username") == nullptr && object->if_contains("password") == nullptr)
+    if (protocol == "rtmp:" && !has_field(*object, "username") && !has_field(*object, "password"))
     {
         auto config = parse_rtmp_config(*stream_id, *url);
         if (!config)
@@ -229,8 +233,7 @@ pull_http_response handle_create(const pull_http_request& request, worker_contex
         }
         return start_session(request, *stream_id, std::make_shared<rtmp_pull_session>(worker, std::move(*config)));
     }
-    if (protocol == "http:" && object->if_contains("username") == nullptr && object->if_contains("password") == nullptr &&
-        !url->get_hostname().empty())
+    if (protocol == "http:" && !has_field(*object, "username") && !has_field(*object, "password") && !url->get_hostname().empty())
     {
         std::string host;
         std::uint16_t port = 80;

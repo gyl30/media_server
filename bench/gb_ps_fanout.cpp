@@ -8,7 +8,7 @@
 #include <iostream>
 #include <algorithm>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <boost/asio/post.hpp>
 
 #include "media/core/media_stream.h"
@@ -197,23 +197,38 @@ int main(int argc, char** argv)
         audio_min = std::min(audio_min, count.audio);
     }
     std::ranges::sort(throughput);
-    boost::json::object result{
-        {"sessions", viewers},
-        {"seconds", elapsed},
-        {"frame_bytes", frame_bytes},
-        {"cpu_cores", cpu_seconds / elapsed},
-        {"gbps", static_cast<double>(bytes) * 8.0 / elapsed / 1e9},
-        {"pps", static_cast<double>(packets) / elapsed},
-        {"bytes_per_viewer_min", throughput.front()},
-        {"bytes_per_viewer_p10", throughput[throughput.size() / 10]},
-        {"bytes_per_viewer_p50", throughput[throughput.size() / 2]},
-        {"bytes_per_viewer_p90", throughput[throughput.size() * 9 / 10]},
-        {"bytes_per_viewer_max", throughput.back()},
-        {"video_packets_min", video_min},
-        {"audio_packets_min", audio_min},
-        {"sequence_errors", sequence_errors},
-        {"failures", failures.load()},
-    };
-    std::cout << result << '\n';
+    simdjson::builder::string_builder result;
+    result.start_object();
+    result.append_key_value("sessions", viewers);
+    result.append_comma();
+    result.append_key_value("seconds", elapsed);
+    result.append_comma();
+    result.append_key_value("frame_bytes", frame_bytes);
+    result.append_comma();
+    result.append_key_value("cpu_cores", cpu_seconds / elapsed);
+    result.append_comma();
+    result.append_key_value("gbps", static_cast<double>(bytes) * 8.0 / elapsed / 1e9);
+    result.append_comma();
+    result.append_key_value("pps", static_cast<double>(packets) / elapsed);
+    result.append_comma();
+    result.append_key_value("bytes_per_viewer_min", throughput.front());
+    result.append_comma();
+    result.append_key_value("bytes_per_viewer_p10", throughput[throughput.size() / 10]);
+    result.append_comma();
+    result.append_key_value("bytes_per_viewer_p50", throughput[throughput.size() / 2]);
+    result.append_comma();
+    result.append_key_value("bytes_per_viewer_p90", throughput[throughput.size() * 9 / 10]);
+    result.append_comma();
+    result.append_key_value("bytes_per_viewer_max", throughput.back());
+    result.append_comma();
+    result.append_key_value("video_packets_min", video_min);
+    result.append_comma();
+    result.append_key_value("audio_packets_min", audio_min);
+    result.append_comma();
+    result.append_key_value("sequence_errors", sequence_errors);
+    result.append_comma();
+    result.append_key_value("failures", failures.load());
+    result.end_object();
+    std::cout << result.view().value_unsafe() << '\n';
     return failures.load() == 0 && sequence_errors == 0 && audio_min > 0 && video_min > 0 ? 0 : 1;
 }

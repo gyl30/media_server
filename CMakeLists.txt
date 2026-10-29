@@ -23,6 +23,7 @@ include(CMakePushCheckState)
 include(cmake/boost.cmake)
 include(cmake/ffmpeg.cmake)
 include(cmake/spdlog.cmake)
+include(cmake/simdjson.cmake)
 include(cmake/ireader.cmake)
 include(cmake/srtp.cmake)
 
@@ -310,6 +311,7 @@ target_link_libraries(media_core PUBLIC
     FFmpeg::audio
     libSRTP::srtp2
     spdlog::spdlog_header_only
+    simdjson::simdjson
     ${MEDIA_SERVER_BOOST_LIBS}
 )
 

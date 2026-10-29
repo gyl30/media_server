@@ -20,3 +20,7 @@
 	path = third/spdlog
 	url = https://github.com/gabime/spdlog.git
 	shallow = true
+[submodule "third/simdjson"]
+	path = third/simdjson
+	url = https://github.com/simdjson/simdjson.git
+	shallow = true

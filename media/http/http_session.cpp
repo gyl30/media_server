@@ -1,7 +1,7 @@
 #include <chrono>
 #include <utility>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <openssl/crypto.h>
 #include <boost/asio/post.hpp>
 #include <boost/asio/detached.hpp>
@@ -32,17 +32,32 @@ namespace
 boost::beast::http::response<boost::beast::http::string_body> make_receiver_list_response(
     const boost::beast::http::request<boost::beast::http::string_body>& request)
 {
-    boost::json::array receivers;
+    simdjson::builder::string_builder body;
+    body.start_object();
+    body.escape_and_append_with_quotes("receivers");
+    body.append_colon();
+    body.start_array();
+    bool first = true;
     for (const auto& receiver : session_registry::instance().receivers())
     {
-        const bool ready = stream_registry::instance().find(receiver) != nullptr;
-        receivers.push_back(boost::json::object{{"stream_id", receiver}, {"ready", ready}});
+        if (!first)
+        {
+            body.append_comma();
+        }
+        first = false;
+        body.start_object();
+        body.append_key_value("stream_id", receiver);
+        body.append_comma();
+        body.append_key_value("ready", stream_registry::instance().find(receiver) != nullptr);
+        body.end_object();
     }
+    body.end_array();
+    body.end_object();
     boost::beast::http::response<boost::beast::http::string_body> response(boost::beast::http::status::ok, request.version());
     response.set(boost::beast::http::field::server, "media_server");
     response.set(boost::beast::http::field::content_type, "application/json");
     response.keep_alive(false);
-    response.body() = boost::json::serialize(boost::json::object{{"receivers", std::move(receivers)}});
+    response.body() = body.view().value_unsafe();
     response.prepare_payload();
     return response;
 }
@@ -200,16 +215,16 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
         }
         else
         {
-            boost::system::error_code error;
-            const auto value = boost::json::parse(request.body(), error);
-            const auto* stream_id = !error && value.is_object() ? value.as_object().if_contains("stream_id") : nullptr;
-            if (parsed->has_search() || stream_id == nullptr || value.as_object().size() != 1 || !stream_id->is_string() ||
-                stream_id->as_string().empty())
+            simdjson::dom::parser parser;
+            simdjson::dom::object object;
+            std::string_view stream_id;
+            if (parsed->has_search() || parser.parse(request.body().data(), request.body().size()).get(object) != simdjson::SUCCESS ||
+                object.size() != 1 || object.at_key("stream_id").get_string().get(stream_id) != simdjson::SUCCESS || stream_id.empty())
             {
                 status = boost::beast::http::status::bad_request;
                 failure = "invalid_request";
             }
-            else if (const auto session = session_registry::instance().take_receiver_session(std::string_view{stream_id->as_string()}))
+            else if (const auto session = session_registry::instance().take_receiver_session(stream_id))
             {
                 session->shutdown();
             }
@@ -224,7 +239,11 @@ void http_session::handle_request(boost::beast::http::request<boost::beast::http
         if (!failure.empty())
         {
             response.set(boost::beast::http::field::content_type, "application/json");
-            response.body() = boost::json::serialize(boost::json::object{{"error", failure}});
+            simdjson::builder::string_builder body;
+            body.start_object();
+            body.append_key_value("error", failure);
+            body.end_object();
+            response.body() = body.view().value_unsafe();
         }
         if (status == boost::beast::http::status::method_not_allowed)
         {

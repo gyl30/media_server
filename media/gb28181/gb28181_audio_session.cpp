@@ -5,9 +5,9 @@
 
 #include <openssl/crypto.h>
 #include <boost/asio/post.hpp>
-#include <boost/scope/scope_exit.hpp>
 #include <boost/asio/executor_work_guard.hpp>
 
+#include "media/core/scope_exit.h"
 #include "media/gb28181/gb28181_audio_session.h"
 
 namespace media_server
@@ -100,13 +100,13 @@ void gb28181_audio_session::attach(tcp::socket socket, http::request<http::strin
             {
                 return;
             }
-            boost::scope::scope_exit close_native([native]() { ::close(native); });
+            scope_exit close_native([native]() { ::close(native); });
             rebound.assign(endpoint.protocol(), native, error);
             if (error)
             {
                 return;
             }
-            close_native.set_active(false);
+            close_native.release();
             self->worker_.spawn([self, socket = std::move(rebound), request = std::move(request), token = std::move(token)](
                                     boost::asio::yield_context yield) mutable { self->run(std::move(socket), std::move(request), token, yield); });
         });

@@ -4,7 +4,7 @@
 #include <cstring>
 #include <utility>
 
-#include <boost/json.hpp>
+#include <simdjson.h>
 #include <boost/beast/http.hpp>
 #include <boost/asio/connect.hpp>
 #include <boost/asio/co_spawn.hpp>
@@ -180,7 +180,7 @@ std::uint32_t read_u32(const std::uint8_t* data)
            data[3];
 }
 
-boost::asio::awaitable<unsigned> control_request(std::string host, std::uint16_t port, std::string target, boost::json::object body)
+boost::asio::awaitable<unsigned> control_request(std::string host, std::uint16_t port, std::string target, std::string body)
 {
     namespace http = boost::beast::http;
     boost::system::error_code error;
@@ -204,7 +204,7 @@ boost::asio::awaitable<unsigned> control_request(std::string host, std::uint16_t
     request.set(http::field::authorization, "Bearer " + options().control_token);
     request.set(http::field::content_type, "application/json");
     request.keep_alive(false);
-    request.body() = boost::json::serialize(body);
+    request.body() = std::move(body);
     request.prepare_payload();
     co_await http::async_write(stream, request, boost::asio::redirect_error(boost::asio::use_awaitable, error));
     if (error)
@@ -245,9 +245,14 @@ const gb_peer_counters& gb_client::peer_counters() { return counters(); }
 
 boost::asio::awaitable<bool> gb_client::delete_sender(std::string host, std::uint16_t port, gb_sender_key key)
 {
-    boost::json::object body{{"stream_id", key.stream_id}, {"sender_id", key.sender_id}};
+    simdjson::builder::string_builder body;
+    body.start_object();
+    body.append_key_value("stream_id", key.stream_id);
+    body.append_comma();
+    body.append_key_value("sender_id", key.sender_id);
+    body.end_object();
     const auto started = std::chrono::steady_clock::now();
-    const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/delete", std::move(body));
+    const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/delete", std::string{body.view().value_unsafe()});
     delete_latencies().push_back(elapsed_milliseconds(started));
     co_return status == 204U || status == 404U;
 }
@@ -412,32 +417,43 @@ void gb_client::cancel() noexcept
 boost::asio::awaitable<boost::system::error_code> gb_client::create_sender(std::string host, std::uint16_t port, std::uint16_t media_port)
 {
     const auto& settings = options();
-    boost::json::object body{{"stream_id", key_.stream_id},
-                             {"sender_id", key_.sender_id},
-                             {"transport", transport_name(settings.transport)},
-                             {"payload_type", settings.payload_type},
-                             {"ssrc", ssrc_}};
+    simdjson::builder::string_builder body;
+    body.start_object();
+    body.append_key_value("stream_id", key_.stream_id);
+    body.append_comma();
+    body.append_key_value("sender_id", key_.sender_id);
+    body.append_comma();
+    body.append_key_value("transport", transport_name(settings.transport));
+    body.append_comma();
+    body.append_key_value("payload_type", settings.payload_type);
+    body.append_comma();
+    body.append_key_value("ssrc", ssrc_);
+    body.append_comma();
     if (settings.transport == gb_transport::udp)
     {
-        body["remote_address"] = settings.bind_address.to_string();
-        body["remote_rtp_port"] = media_port;
+        body.append_key_value("remote_address", settings.bind_address.to_string());
+        body.append_comma();
+        body.append_key_value("remote_rtp_port", media_port);
         if (settings.peer == gb_peer::rtcp || settings.peer == gb_peer::rtcp_rr)
         {
-            body["remote_rtcp_port"] = rtcp_socket_.local_endpoint().port();
+            body.append_comma();
+            body.append_key_value("remote_rtcp_port", rtcp_socket_.local_endpoint().port());
         }
     }
     else if (settings.transport == gb_transport::tcp_active)
     {
-        body["remote_address"] = settings.bind_address.to_string();
-        body["remote_port"] = media_port;
+        body.append_key_value("remote_address", settings.bind_address.to_string());
+        body.append_comma();
+        body.append_key_value("remote_port", media_port);
     }
     else
     {
-        body["listen_port"] = media_port;
+        body.append_key_value("listen_port", media_port);
     }
+    body.end_object();
     senders().push_back(key_);
     const auto started = std::chrono::steady_clock::now();
-    const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/create", std::move(body));
+    const auto status = co_await control_request(std::move(host), port, "/gb28181/sender/create", std::string{body.view().value_unsafe()});
     create_latencies().push_back(elapsed_milliseconds(started));
     if (status == 403U)
     {

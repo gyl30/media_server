@@ -16,9 +16,9 @@
 #include <boost/asio/detached.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/scope/scope_exit.hpp>
 
 #include "media/net/worker_pool.h"
+#include "media/core/scope_exit.h"
 #include "media/net/worker_context.h"
 #include "media/net/media_port_pool.h"
 #include "media/webrtc/stun_message.h"
@@ -92,7 +92,7 @@ std::optional<http_result> http_exchange(boost::asio::ip::tcp::resolver& resolve
                 stream.cancel();
             }
         });
-    boost::scope::scope_exit stop_deadline(
+    scope_exit stop_deadline(
         [&]()
         {
             *active = false;
