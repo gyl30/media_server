@@ -187,7 +187,7 @@ def parse_arguments():
     parser.add_argument("--stalled-viewers", type=int, default=0, metavar="COUNT",
                         help="per RTMP/RTSP/FLV output, start COUNT extra ffmpeg readers at the window start and SIGSTOP them after 5 s; report whether the server closed them")
     parser.add_argument("--av-probe", type=float, default=0, metavar="SECONDS",
-                        help="decode each RTMP/RTSP/FLV/HLS output with ffmpeg for SECONDS from the window start; report cadence, timestamp order, arrival lag and A/V marker offsets")
+                        help="decode each RTMP/RTSP/FLV/HLS output with ffmpeg for SECONDS from the window start, and replay the first WHEP viewer's RTP for SECONDS+5 after the window; report cadence, timestamp order, arrival lag and A/V marker offsets")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
@@ -380,8 +380,9 @@ def run(args):
         if protocol == "hls":
             return [sys.executable, script_dir / "hls_client.py", "--hls-urls-file", credentials,
                     "--persistent", "--progress-interval", 6, "--output", args.output / f"{group_name}.json", *common]
+        dump = ["--dump-file", args.output / "whep-0.dump"] if args.av_probe > 0 and group_name == "whep-0" else []
         return [args.client_dir / "whep_fanout", "--whep-urls-file", credentials,
-                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *common]
+                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *dump, *common]
 
     def receiver_list(base):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
@@ -906,6 +907,21 @@ def run(args):
                     probe = {"exit_code": process.returncode}
                 probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
                 result.setdefault("av_probe", {})[protocol] = probe
+            if (args.output / "whep-0.dump").exists():
+                process = launch("av-whep", [sys.executable, Path(__file__).with_name("whep_dump_av.py"), args.output / "whep-0.dump",
+                                             "--seconds", args.av_probe + 5, "--output", args.output / "whep-0.mkv", "--ffmpeg-bin", args.ffmpeg_bin],
+                                 args.client_cpus, "decode")
+                try:
+                    process.wait(timeout=args.av_probe + 120)
+                except subprocess.TimeoutExpired:
+                    stop_process(process)
+                lines = (args.output / "av-whep.log").read_text().splitlines()
+                try:
+                    probe = json.loads(lines[-1])
+                except (IndexError, ValueError):
+                    probe = {"exit_code": process.returncode}
+                probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
+                result.setdefault("av_probe", {})["whep"] = probe
             if source_churn_thread is not None:
                 source_churn_thread.join(timeout=args.source_churn + args.ready_timeout * 4)
                 result["source_churn"] = {"period_seconds": args.source_churn, "rounds": source_churn,

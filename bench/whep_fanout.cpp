@@ -53,6 +53,7 @@ struct configuration
     std::size_t io_threads{4};
     std::chrono::seconds warmup{5};
     std::chrono::seconds duration{15};
+    std::filesystem::path dump_file;
 };
 
 struct process_sample
@@ -153,6 +154,10 @@ configuration parse_arguments(int argc, char** argv)
         {
             config.warmup = std::chrono::seconds{std::stoll(argument_value(index, argc, argv, argument))};
         }
+        else if (argument == "--dump-file")
+        {
+            config.dump_file = argument_value(index, argc, argv, argument);
+        }
         else
         {
             throw std::runtime_error("unknown argument " + std::string(argument));
@@ -222,13 +227,15 @@ class play_session final : public std::enable_shared_from_this<play_session>
                  std::string resource_url,
                  std::size_t index,
                  bool expect_audio,
-                 clock_type::time_point started)
+                 clock_type::time_point started,
+                 std::shared_ptr<std::ofstream> dump)
         : results_(std::move(results)),
           peer_(std::move(peer)),
           resource_url_(std::move(resource_url)),
           index_(index),
           expect_audio_(expect_audio),
-          started_(started)
+          started_(started),
+          dump_(std::move(dump))
     {
     }
 
@@ -279,6 +286,17 @@ class play_session final : public std::enable_shared_from_this<play_session>
     {
         received_bytes_.fetch_add(packet.size(), std::memory_order_relaxed);
         received_packets_.fetch_add(1U, std::memory_order_relaxed);
+        if (dump_)
+        {
+            const auto nanoseconds =
+                static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(clock_type::now() - started_).count());
+            const auto kind = static_cast<std::uint8_t>(rtcp);
+            const auto size = static_cast<std::uint16_t>(packet.size());
+            dump_->write(reinterpret_cast<const char*>(&nanoseconds), sizeof(nanoseconds));
+            dump_->write(reinterpret_cast<const char*>(&kind), sizeof(kind));
+            dump_->write(reinterpret_cast<const char*>(&size), sizeof(size));
+            dump_->write(reinterpret_cast<const char*>(packet.data()), static_cast<std::streamsize>(packet.size()));
+        }
         if (rtcp || packet.size() < 12U)
         {
             return;
@@ -367,6 +385,7 @@ class play_session final : public std::enable_shared_from_this<play_session>
     std::size_t index_{};
     bool expect_audio_{};
     clock_type::time_point started_;
+    std::shared_ptr<std::ofstream> dump_;
     std::atomic_uint64_t video_packets_{};
     std::atomic_uint64_t audio_packets_{};
     std::atomic_uint64_t received_bytes_{};
@@ -464,7 +483,8 @@ int main(int argc, char** argv)
         std::cout << "--whep-urls-file FILE | --whep-url URL\n"
                      "--viewers N --sources N --bind-address ADDRESS --io-threads N\n"
                      "--ramp-per-second N --ready-timeout SECONDS --video-only\n"
-                     "--warmup SECONDS --duration SECONDS --progress-interval SECONDS --start-file FILE\n";
+                     "--warmup SECONDS --duration SECONDS --progress-interval SECONDS --start-file FILE\n"
+                     "--dump-file FILE (first viewer's decrypted RTP/RTCP: int64 ns, uint8 rtcp, uint16 size, bytes)\n";
         return 0;
     }
     try
@@ -529,7 +549,8 @@ int main(int argc, char** argv)
                     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(answered - started).count()));
                 establish_milliseconds.push_back(
                     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - answered).count()));
-                auto session = std::make_shared<play_session>(results, peer, response.location, index, !config.video_only, started);
+                auto dump = index == 0U && !config.dump_file.empty() ? std::make_shared<std::ofstream>(config.dump_file, std::ios::binary) : nullptr;
+                auto session = std::make_shared<play_session>(results, peer, response.location, index, !config.video_only, started, std::move(dump));
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });

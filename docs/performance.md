@@ -48,7 +48,7 @@ input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、G
 
 `--inputs rtmp:24,rtsp_udp:8,whip:4,whep_pull:4,...` 在一次运行中混合多种输入，替代 `--input`/`--sources`；拉流与 GB 源按 `--upstream-sources` 共享上游流，`source_inputs` 记录各源的输入类型。
 
-`--fixture` 可以是一路 H.264/H.265 视频加一路 AAC/Opus/G.711 音频；客户端与输出协议是否支持对应编码需另行确认。`--decode-probe` 在测量窗口内用 ffprobe 对 RTMP/RTSP/FLV/HLS 输出各解码 6 秒，结果写入 `decode_probe` 并参与判定。
+`--fixture` 可以是一路 H.264/H.265 视频加一路 AAC/Opus/G.711 音频；客户端与输出协议是否支持对应编码需另行确认。`--decode-probe` 在测量窗口内用 ffprobe 对 RTMP/RTSP/FLV/HLS 输出各解码 6 秒，结果写入 `decode_probe` 并参与判定。`--av-probe N` 同时让第一组 WHEP 的第一个观众用 `--dump-file` 记录解密后的 RTP/RTCP，窗口结束后由 [`whep_dump_av.py`](../bench/whep_dump_av.py) 按原节奏回放给 ffmpeg 录制，再用 av_probe 分析，结果写入 `av_probe.whep`。回放端按 RTCP SR 对齐两条轨，因此测到的是浏览器按 SR 做唇音同步时看到的偏差。
 
 自管模式启动自己的授权夹具和媒体进程。`--input existing` 必须提供 `--sources-file`、`--signaling-url`、`--server-pid`、`--control-token`，并使用匹配的 `--server-bin`；它只停止自己创建的客户端，不停止外部 DUT。sources.json 每项含 `stream_id` 和 `play_body`（其中指定 source_id、push_device_id 或 live_id）；声明 publisher PID 时还须提供 publisher_starttick。真实发布入口 `perf_publish.py --help` 给出生成这些数据的参数。
 
