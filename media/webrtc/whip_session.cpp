@@ -27,8 +27,9 @@ bool is_rtcp(std::span<const std::uint8_t> packet) { return packet.size() >= 2U 
 
 }    // namespace
 
-whip_session::whip_session(worker_context& worker, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
-    : worker_(worker),
+whip_session::whip_session(worker_lease lease, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config)
+    : lease_(std::move(lease)),
+      worker_(lease_.worker()),
       stream_id_(std::move(stream_id)),
       udp_transport_(std::move(transport)),
       dtls_timer_(worker_.io()),

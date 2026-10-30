@@ -1,11 +1,27 @@
 #include <thread>
+#include <utility>
+#include <algorithm>
 
 #include "media/net/worker_pool.h"
 
 namespace media_server
 {
 
-worker_pool::worker_pool(std::size_t size)
+worker_lease::worker_lease(worker_pool& pool, std::size_t index) noexcept : pool_(&pool), index_(index) {}
+
+worker_lease::worker_lease(worker_lease&& other) noexcept : pool_(std::exchange(other.pool_, nullptr)), index_(other.index_) {}
+
+worker_lease::~worker_lease()
+{
+    if (pool_ != nullptr)
+    {
+        pool_->release(index_);
+    }
+}
+
+worker_context& worker_lease::worker() const noexcept { return pool_->context(index_); }
+
+worker_pool::worker_pool(std::size_t size) : leases_(size)
 {
     contexts_.reserve(size);
     for (std::size_t index = 0; index < size; ++index)
@@ -22,6 +38,20 @@ worker_context& worker_pool::next() noexcept
 {
     const auto index = next_.fetch_add(1U, std::memory_order_relaxed) % contexts_.size();
     return *contexts_[index];
+}
+
+worker_lease worker_pool::lease()
+{
+    std::scoped_lock lock(lease_mutex_);
+    const auto index = static_cast<std::size_t>(std::ranges::min_element(leases_) - leases_.begin());
+    ++leases_[index];
+    return worker_lease(*this, index);
+}
+
+void worker_pool::release(std::size_t index)
+{
+    std::scoped_lock lock(lease_mutex_);
+    --leases_[index];
 }
 
 void worker_pool::request_stop()

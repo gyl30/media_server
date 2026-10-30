@@ -7,13 +7,12 @@
 #include <vector>
 
 #include "media/core/media_sink.h"
+#include "media/net/worker_pool.h"
 #include "media/core/media_stream.h"
 #include "media/codec/audio_transcoder.h"
 
 namespace media_server
 {
-class worker_pool;
-class worker_context;
 
 struct whep_audio_settings
 {
@@ -37,10 +36,11 @@ class whep_audio_egress final : public media_sink, public std::enable_shared_fro
                                                                         whep_audio_settings settings);
     friend void release_whep_audio_egress(std::shared_ptr<whep_audio_egress>& egress);
 
-    whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker);
+    whep_audio_egress(std::shared_ptr<media_stream> source, worker_lease lease);
     bool startup(whep_audio_settings settings);
     void finish();
 
+    worker_lease lease_;
     worker_context& worker_;
     std::shared_ptr<media_stream> source_;
     std::shared_ptr<media_stream> output_stream_;

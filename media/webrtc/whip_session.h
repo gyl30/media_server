@@ -12,6 +12,7 @@
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "media/net/worker_pool.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/udp_transport.h"
 #include "media/webrtc/dtls_transport.h"
@@ -27,7 +28,7 @@ class worker_context;
 class whip_session final : public session, public std::enable_shared_from_this<whip_session>
 {
    public:
-    whip_session(worker_context& worker, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
+    whip_session(worker_lease lease, std::string stream_id, std::shared_ptr<udp_transport> transport, webrtc_answer_config config);
 
    public:
     [[nodiscard]] bool startup(const webrtc_media_offer& transport_offer, const webrtc_answer& answer, const dtls_certificate& certificate);
@@ -54,6 +55,7 @@ class whip_session final : public session, public std::enable_shared_from_this<w
     void safe_shutdown();
 
    private:
+    worker_lease lease_;
     worker_context& worker_;
     std::string stream_id_;
     std::unique_ptr<dtls_transport> dtls_;

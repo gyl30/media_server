@@ -150,7 +150,6 @@ struct placement
 {
     std::mutex mutex;
     worker_pool* workers{};
-    std::vector<std::size_t> sessions;
 };
 
 placement& placements()
@@ -175,9 +174,9 @@ void delete_resource(worker_context& worker, std::string resource_url, std::stri
 
 }    // namespace
 
-whep_pull_session::whep_pull_session(std::size_t worker_index, worker_context& worker, whep_pull_config config)
-    : worker_index_(worker_index),
-      worker_(worker),
+whep_pull_session::whep_pull_session(worker_lease lease, whep_pull_config config)
+    : lease_(std::move(lease)),
+      worker_(lease_.worker()),
       config_(std::move(config)),
       resolver_(worker_.io()),
       check_timer_(worker_.io()),
@@ -185,13 +184,6 @@ whep_pull_session::whep_pull_session(std::size_t worker_index, worker_context& w
       establishment_timer_(worker_.io()),
       idle_timer_(worker_.io())
 {
-}
-
-whep_pull_session::~whep_pull_session()
-{
-    auto& current = placements();
-    std::scoped_lock lock(current.mutex);
-    --current.sessions[worker_index_];
 }
 
 void whep_pull_session::startup()
@@ -620,19 +612,17 @@ void startup(worker_pool& workers)
     auto& current = placements();
     std::scoped_lock lock(current.mutex);
     current.workers = &workers;
-    current.sessions.assign(workers.size(), 0);
 }
 
 std::shared_ptr<whep_pull_session> create(whep_pull_config config)
 {
     auto& current = placements();
-    std::size_t worker_index{};
+    worker_pool* workers{};
     {
         std::scoped_lock lock(current.mutex);
-        worker_index = static_cast<std::size_t>(std::ranges::min_element(current.sessions) - current.sessions.begin());
-        ++current.sessions[worker_index];
+        workers = current.workers;
     }
-    return std::make_shared<whep_pull_session>(worker_index, current.workers->context(worker_index), std::move(config));
+    return std::make_shared<whep_pull_session>(workers->lease(), std::move(config));
 }
 
 }    // namespace whep_pull

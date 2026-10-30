@@ -17,6 +17,7 @@
 #include <boost/asio/steady_timer.hpp>
 
 #include "media/net/idle_timer.h"
+#include "media/net/worker_pool.h"
 #include "media/webrtc/webrtc_sdp.h"
 #include "media/net/udp_transport.h"
 #include "media/webrtc/dtls_transport.h"
@@ -41,8 +42,7 @@ struct whep_pull_config
 class whep_pull_session final : public session, public std::enable_shared_from_this<whep_pull_session>
 {
    public:
-    whep_pull_session(std::size_t worker_index, worker_context& worker, whep_pull_config config);
-    ~whep_pull_session();
+    whep_pull_session(worker_lease lease, whep_pull_config config);
 
    public:
     void startup();
@@ -68,7 +68,7 @@ class whep_pull_session final : public session, public std::enable_shared_from_t
     void safe_shutdown();
 
    private:
-    std::size_t worker_index_;
+    worker_lease lease_;
     worker_context& worker_;
     whep_pull_config config_;
     boost::asio::ip::tcp::resolver resolver_;

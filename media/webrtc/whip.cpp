@@ -4,7 +4,6 @@
 #include <string>
 #include <vector>
 #include <utility>
-#include <algorithm>
 
 #include <openssl/rand.h>
 #include <spdlog/spdlog.h>
@@ -26,17 +25,11 @@ namespace media_server::whip
 namespace
 {
 
-struct session_entry
-{
-    std::weak_ptr<whip_session> session;
-    std::size_t worker_index{};
-};
-
 struct state
 {
     std::mutex mutex;
     worker_pool* workers{};
-    std::map<std::string, session_entry, std::less<>> sessions;
+    std::map<std::string, std::weak_ptr<whip_session>, std::less<>> sessions;
 };
 
 state& runtime()
@@ -47,17 +40,7 @@ state& runtime()
 
 void cleanup_expired(state& current)
 {
-    std::erase_if(current.sessions, [](const auto& entry) { return entry.second.session.expired(); });
-}
-
-std::size_t least_loaded_worker(state& current)
-{
-    std::vector<std::size_t> session_counts(current.workers->size());
-    for (const auto& [id, entry] : current.sessions)
-    {
-        ++session_counts[entry.worker_index];
-    }
-    return static_cast<std::size_t>(std::ranges::min_element(session_counts) - session_counts.begin());
+    std::erase_if(current.sessions, [](const auto& entry) { return entry.second.expired(); });
 }
 
 create_result failed(create_error error) { return {.error = error, .session_id = {}, .answer_sdp = {}}; }
@@ -131,14 +114,8 @@ create_result create(std::string_view stream_id,
         return failed(create_error::forbidden);
     }
 
-    std::size_t worker_index{};
-    {
-        auto& current = runtime();
-        std::scoped_lock lock(current.mutex);
-        cleanup_expired(current);
-        worker_index = least_loaded_worker(current);
-    }
-    auto& worker = runtime().workers->context(worker_index);
+    auto lease = runtime().workers->lease();
+    auto& worker = lease.worker();
 
     const auto port = media_port_pool::instance().acquire();
     if (!port)
@@ -179,7 +156,7 @@ create_result create(std::string_view stream_id,
     {
         return failed(create_error::invalid_offer);
     }
-    auto session = std::make_shared<whip_session>(worker, std::string(stream_id), std::move(transport), std::move(answer_config));
+    auto session = std::make_shared<whip_session>(std::move(lease), std::string(stream_id), std::move(transport), std::move(answer_config));
     release_port.release();
     if (!session->startup(*transport_media, *answer, *certificate))
     {
@@ -198,7 +175,7 @@ create_result create(std::string_view stream_id,
         auto& current = runtime();
         std::scoped_lock lock(current.mutex);
         cleanup_expired(current);
-        inserted = current.sessions.emplace(session_id, session_entry{.session = session, .worker_index = worker_index}).second;
+        inserted = current.sessions.emplace(session_id, session).second;
     }
     if (!inserted)
     {
@@ -224,7 +201,7 @@ bool remove(std::string_view session_id)
             spdlog::debug("whip session remove not found {}", session_id);
             return false;
         }
-        session = iterator->second.session.lock();
+        session = iterator->second.lock();
         current.sessions.erase(iterator);
     }
     if (!session)
@@ -242,7 +219,7 @@ void shutdown()
     std::scoped_lock lock(current.mutex);
     for (const auto& [id, entry] : current.sessions)
     {
-        if (const auto session = entry.session.lock())
+        if (const auto session = entry.lock())
         {
             session->shutdown();
         }

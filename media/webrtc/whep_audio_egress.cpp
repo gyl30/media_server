@@ -1,7 +1,6 @@
 #include <map>
 #include <mutex>
 #include <utility>
-#include <algorithm>
 
 #include <spdlog/spdlog.h>
 #include <boost/asio/dispatch.hpp>
@@ -26,29 +25,16 @@ struct egress_key
     auto operator<=>(const egress_key&) const = default;
 };
 
-struct egress_entry
-{
-    std::weak_ptr<whep_audio_egress> egress;
-    std::size_t worker_index{};
-};
-
 std::mutex egress_mutex;
-std::map<egress_key, egress_entry> egresses;
-
-std::size_t least_loaded_worker(std::size_t worker_count)
-{
-    std::vector<std::size_t> egress_counts(worker_count);
-    for (const auto& [key, entry] : egresses)
-    {
-        ++egress_counts[entry.worker_index];
-    }
-    return static_cast<std::size_t>(std::ranges::min_element(egress_counts) - egress_counts.begin());
-}
+std::map<egress_key, std::weak_ptr<whep_audio_egress>> egresses;
 
 }    // namespace
 
-whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_context& worker)
-    : worker_(worker), source_(std::move(source)), output_stream_(std::make_shared<media_stream>(source_->stream_id(), worker))
+whep_audio_egress::whep_audio_egress(std::shared_ptr<media_stream> source, worker_lease lease)
+    : lease_(std::move(lease)),
+      worker_(lease_.worker()),
+      source_(std::move(source)),
+      output_stream_(std::make_shared<media_stream>(source_->stream_id(), worker_))
 {
 }
 
@@ -171,25 +157,24 @@ std::shared_ptr<whep_audio_egress> acquire_whep_audio_egress(const std::shared_p
 {
     const egress_key key{source.get(), settings.channels, settings.bitrate, settings.max_playback_rate};
     std::scoped_lock lock(egress_mutex);
-    std::erase_if(egresses, [](const auto& entry) { return entry.second.egress.expired(); });
+    std::erase_if(egresses, [](const auto& entry) { return entry.second.expired(); });
     if (const auto it = egresses.find(key); it != egresses.end())
     {
-        if (auto existing = it->second.egress.lock(); existing && existing->viewers_ != 0 && !existing->finished_.load(std::memory_order_acquire))
+        if (auto existing = it->second.lock(); existing && existing->viewers_ != 0 && !existing->finished_.load(std::memory_order_acquire))
         {
             ++existing->viewers_;
             return existing;
         }
     }
 
-    const auto worker_index = least_loaded_worker(workers.size());
-    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, workers.context(worker_index)));
+    auto created = std::shared_ptr<whep_audio_egress>(new whep_audio_egress(source, workers.lease()));
     if (!created->startup(settings))
     {
         created->finish();
         return {};
     }
     created->viewers_ = 1;
-    egresses[key] = egress_entry{.egress = created, .worker_index = worker_index};
+    egresses[key] = created;
     return created;
 }
 
