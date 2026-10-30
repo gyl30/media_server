@@ -46,7 +46,7 @@ outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，�
 
 input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、GB UDP/TCP 和 existing。拉流与 GB 输入先在客户端核上启动一个上游实例，再通过 `POST /pull/create` 或 GB sender/receiver 接口接入被测服务。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
 
-`--inputs rtmp:24,rtsp_udp:8,whip:4,whep_pull:4,...` 在一次运行中混合多种输入，替代 `--input`/`--sources`；拉流与 GB 源按 `--upstream-sources` 共享上游流，`source_inputs` 记录各源的输入类型。
+`--inputs rtmp:24,rtsp_udp:8,whip:4,whep_pull:4,...` 在一次运行中混合多种输入，替代 `--input`/`--sources`；拉流与 GB 源按 `--upstream-sources` 共享上游流，`source_inputs` 记录各源的输入类型。上游实例与客户端共用地址时，其 WebRTC 媒体端口池（49152–65535）会与客户端占用的临时端口冲突，WHEP Pull 创建以 500 失败；混合负载应在测试命名空间内把 `net.ipv4.ip_local_port_range` 设为低于 49152 的范围。
 
 `--fixture` 可以是一路 H.264/H.265 视频加一路 AAC/Opus/G.711 音频；客户端与输出协议是否支持对应编码需另行确认。`--decode-probe` 在测量窗口内用 ffprobe 对 RTMP/RTSP/FLV/HLS 输出各解码 6 秒，结果写入 `decode_probe` 并参与判定。`--av-probe N` 同时让第一组 WHEP 的第一个观众用 `--dump-file` 记录解密后的 RTP/RTCP，窗口结束后由 [`whep_dump_av.py`](../bench/whep_dump_av.py) 按原节奏回放给 ffmpeg 录制，再用 av_probe 分析，结果写入 `av_probe.whep`。回放端按 RTCP SR 对齐两条轨，因此测到的是浏览器按 SR 做唇音同步时看到的偏差。
 

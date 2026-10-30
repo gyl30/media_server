@@ -19,6 +19,7 @@
 | [20261029-whep-pull-optimize](20261029-whep-pull-optimize/report.md) | `cb03380` 起 | 会话最少放置 `a636699`；FFmpeg pow43 补丁与 fdk 隔离实验 | `tools/ffmpeg/*.diff` 丢失；pow43 补丁等价内容可用 `git show 24c80ec^:deps/ffmpeg/patches/0001-aacenc-escape-pow43-table.patch` 取回；fdk 接入已进入主线 |
 | [20261029-aac-whep-capacity](20261029-aac-whep-capacity/report.md) | `415e8aa`→`24c80ec` | fdk AAC 与 afterburner=0，WHEP Pull 496 路（仅作参考） | 报告中的 `deps/ffmpeg/build.sh`、`~/ffmpeg-ms` SDK 已由 `46d31ca` 的子模块构建取代；主观试听证据见下文 |
 | [20261030-deps-regression](20261030-deps-regression/report.md) | `1d5cfc7` 起 | 依赖重组验收、全协议回归与性能哨兵；jemalloc 5.4.0 回归二分到 `a952a3b8`、`3c14707b`，固定 5.3.0 | 原始结果、二分用共享库只在测试机 |
+| [20261030-mixed-workload](20261030-mixed-workload/report.md) | `a087a42`→`3b6c0bd` | 三种混合负载的 8 核容量：WebRTC 为主 1.2×→1.6×（Opus 直通），全协议广播约 +5%，多源少观看不变；修复 WHEP SR 音画偏差；租约统一放置 | 原始结果与 profile 只在测试机；B 数据在测试 netns 缩小临时端口范围后测得 |
 
 ## 验证记录
 
