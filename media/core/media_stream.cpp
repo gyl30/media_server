@@ -38,6 +38,10 @@ bool media_stream::set_tracks(std::vector<media_track> tracks)
     return true;
 }
 
+void media_stream::set_opus_stream(std::shared_ptr<media_stream> stream) { opus_stream_ = std::move(stream); }
+
+const std::shared_ptr<media_stream>& media_stream::opus_stream() const noexcept { return opus_stream_; }
+
 void media_stream::add_sink(std::shared_ptr<media_sink> sink)
 {
     if (!sink)

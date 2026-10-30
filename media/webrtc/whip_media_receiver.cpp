@@ -61,6 +61,7 @@ bool whip_media_receiver::startup(whip_media_receiver_config config)
         return false;
     }
 
+    opus_stream_ = std::make_shared<media_stream>(media_stream_->stream_id(), media_stream_->worker());
     const auto bitrate = 64'000 * static_cast<int>(config.audio_channel_count);
     audio_transcoder_ = std::make_unique<audio_transcoder>();
     if (!audio_transcoder_->startup(audio_transcoder_config{
@@ -192,6 +193,10 @@ whip_media_receiver::~whip_media_receiver()
 {
     stream_registry::instance().remove(*media_stream_);
     media_stream_->end();
+    if (opus_stream_)
+    {
+        opus_stream_->end();
+    }
     rtsp_demuxer_destroy(video_demuxer_);
     rtsp_demuxer_destroy(audio_demuxer_);
     avpkt2bs_destroy(&bitstream_);
@@ -225,6 +230,20 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
                 fixed_tracks.push_back(std::move(*track));
                 if (audio_track_)
                 {
+                    auto opus_tracks = fixed_tracks;
+                    opus_tracks.push_back(media_track{
+                        .id = audio_track_id,
+                        .kind = media_kind::audio,
+                        .codec = codec_id::opus,
+                        .clock_rate = opus_sample_rate,
+                        .channel_count = audio_track_->channel_count,
+                        .codec_config = {},
+                    });
+                    if (!opus_stream_->set_tracks(std::move(opus_tracks)))
+                    {
+                        return -1;
+                    }
+                    media_stream_->set_opus_stream(opus_stream_);
                     fixed_tracks.push_back(std::move(*audio_track_));
                     audio_track_.reset();
                 }
@@ -255,6 +274,10 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
         .payload = payload,
     };
 
+    if (opus_stream_)
+    {
+        opus_stream_->publish(frame);
+    }
     if (video)
     {
         media_stream_->publish(frame);

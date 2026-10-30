@@ -39,7 +39,7 @@ media_server 由 C++ 媒体服务、Go 信令服务和可独立构建的 Qt 客�
 
 TCP/UDP transport 负责 socket、串行写入和在途 buffer，上层 session 决定错误后的关闭策略。HTTP-FLV 的 HTTP 输出队列、HLS 的片段保留分别具有协议职责。
 
-共享派生计算不共享连接身份：AAC→Opus 以源对象及音频参数为键；PS、FLV tag 输出由源对象持有弱引用并按需创建。FLV tag 携带当时的 sequence header，viewer 从起播点先补发它们。每个 viewer/sender 的 RTMP chunk、RTP sequence、SSRC、DTLS/SRTP、端点和网络状态独立。
+WHIP/WHEP 拉流源另保留一路只含视频和原始 Opus 的伴随流（`media_stream::opus_stream()`，不注册），WHEP 观众的 offer 能直接接收该 Opus 时挂到伴随流上，省去 Opus→AAC→Opus 的二次转码；不能直通时仍走 AAC 流和共享转码。共享派生计算不共享连接身份：AAC→Opus 以源对象及音频参数为键；PS、FLV tag 输出由源对象持有弱引用并按需创建。FLV tag 携带当时的 sequence header，viewer 从起播点先补发它们。每个 viewer/sender 的 RTMP chunk、RTP sequence、SSRC、DTLS/SRTP、端点和网络状态独立。
 
 ## 有限媒体与控制面
 

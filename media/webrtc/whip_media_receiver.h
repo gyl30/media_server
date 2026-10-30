@@ -51,6 +51,7 @@ class whip_media_receiver final
 
    private:
     std::shared_ptr<media_stream> media_stream_;
+    std::shared_ptr<media_stream> opus_stream_;
     int video_payload_type_{};
     int audio_payload_type_{-1};
     rtsp_demuxer_t* video_demuxer_{};

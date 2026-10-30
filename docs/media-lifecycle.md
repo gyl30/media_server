@@ -21,7 +21,7 @@ WHEP/WHIP 返回的 `Location`、HLS 的播放 secret、GB sender 的 `sender_id
 
 [`stream_registry.cpp`](../media/core/stream_registry.cpp) 只保存活跃注册项，不维护永久的“已用 ID”台账；全生命周期唯一由上层身份分配和一次性凭据契约保证。对象 identity 检查用于保护重复请求和迟到清理，不能理解为允许同名重启。
 
-AAC→Opus 派生流沿用源的 `stream_id` 作为内部关联，不另注册成新的外部源；它和上游是不同对象。共享键包含源对象身份及音频参数，不能只凭字符串跨生命周期共享。
+AAC→Opus 派生流和 WHIP/WHEP 拉流的 Opus 伴随流沿用源的 `stream_id` 作为内部关联，不另注册成新的外部源；它们和上游是不同对象。伴随流在源注册前由接收器创建并设好轨道，随源一起结束。共享键包含源对象身份及音频参数，不能只凭字符串跨生命周期共享。
 
 ## 分发与关闭
 

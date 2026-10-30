@@ -197,7 +197,16 @@ create_result create(std::shared_ptr<media_stream> stream,
     {
         return failed(create_error::invalid_offer);
     }
-    auto session = std::make_shared<whep_session>(worker, stream, std::move(transport), std::move(answer_config));
+    auto source = stream;
+    if (const auto& opus = stream->opus_stream(); opus && answer->audio_codec == codec_id::aac)
+    {
+        if (auto passthrough = make_webrtc_answer(*offer, opus->tracks(), answer_config); passthrough && passthrough->audio_payload_type)
+        {
+            answer = std::move(passthrough);
+            source = opus;
+        }
+    }
+    auto session = std::make_shared<whep_session>(worker, source, std::move(transport), std::move(answer_config));
     release_port.release();
     if (!session->startup(*transport_media, *answer, *certificate, workers))
     {
