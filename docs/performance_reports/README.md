@@ -20,6 +20,7 @@
 | [20261029-aac-whep-capacity](20261029-aac-whep-capacity/report.md) | `415e8aa`→`24c80ec` | fdk AAC 与 afterburner=0，WHEP Pull 496 路（仅作参考） | 报告中的 `deps/ffmpeg/build.sh`、`~/ffmpeg-ms` SDK 已由 `46d31ca` 的子模块构建取代；主观试听证据见下文 |
 | [20261030-deps-regression](20261030-deps-regression/report.md) | `1d5cfc7` 起 | 依赖重组验收、全协议回归与性能哨兵；jemalloc 5.4.0 回归二分到 `a952a3b8`、`3c14707b`，固定 5.3.0 | 原始结果、二分用共享库只在测试机 |
 | [20261030-mixed-workload](20261030-mixed-workload/report.md) | `a087a42`→`3b6c0bd` | 三种混合负载的 8 核容量：WebRTC 为主 1.2×→1.6×（Opus 直通），全协议广播约 +5%，多源少观看不变；修复 WHEP SR 音画偏差；租约统一放置 | 原始结果与 profile 只在测试机；B 数据在测试 netns 缩小临时端口范围后测得 |
+| [20261030-protocol-matrix-performance](20261030-protocol-matrix-performance/report.md) | `3b6c0bd` 二进制（`92850b4` 生产源码相同） | 全协议矩阵 31/31；WHIP→各输出容量（每源 2 观看者：TCP/GB 480 源、HLS 544、WHEP 直通 384、Chrome offer 256、全输出 352）；Opus 直通只对带 `stereo=1` 的 offer 生效，Chrome 默认 offer 走 egress；按需 Opus→AAC 与按实际声道登记列为决策项 | 原始结果、profile、bpftrace 与浏览器数据只在测试机；上一轮 B 的直通收益只对 Firefox 类 offer 成立 |
 
 ## 验证记录
 
