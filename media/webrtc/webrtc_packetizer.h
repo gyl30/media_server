@@ -4,6 +4,7 @@
 #include <map>
 #include <span>
 #include <memory>
+#include <optional>
 #include <string>
 #include <cstdint>
 #include <functional>
@@ -50,9 +51,14 @@ class webrtc_packetizer final
         int payload_index{-1};
         std::string mid;
         int mid_extension_id{};
+        std::uint32_t clock_rate{};
+        std::uint32_t last_rtp_timestamp{};
+        std::int64_t last_pts_ms{};
+        bool sent{};
     };
 
-    [[nodiscard]] bool emit_rtcp(int payload_index);
+    [[nodiscard]] bool emit_rtcp(const track_state& state);
+    void begin_frame(std::int64_t pts_ms);
     bool input_video(track_state& state, const media_frame& frame);
     bool input_audio(track_state& state, const media_frame& frame);
 
@@ -61,6 +67,8 @@ class webrtc_packetizer final
     packet_handler rtcp_handler_;
     rtsp_muxer_t* muxer_{};
     std::map<track_id, track_state> track_states_;
+    std::int64_t frame_pts_ms_{};
+    std::optional<std::int64_t> epoch_us_;
 };
 
 }    // namespace media_server

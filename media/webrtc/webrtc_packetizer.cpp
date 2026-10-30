@@ -1,4 +1,5 @@
 #include <array>
+#include <chrono>
 #include <utility>
 #include <algorithm>
 #include <string_view>
@@ -26,6 +27,10 @@ constexpr std::uint32_t opus_sample_rate = 48'000U;
 constexpr std::size_t rtcp_buffer_size = 4096;
 constexpr std::size_t max_mid_size = 16;
 constexpr std::string_view rtcp_name = "media_server";
+constexpr std::int64_t ntp_unix_offset_seconds = 2'208'988'800;
+constexpr std::size_t sender_report_ntp_offset = 8;
+constexpr std::size_t sender_report_rtp_offset = 16;
+constexpr std::uint8_t rtcp_sender_report = 200;
 bool rtcp_mux_payload_type_allowed(int payload_type) { return payload_type >= 0 && payload_type <= 127 && (payload_type < 64 || payload_type > 95); }
 
 }    // namespace
@@ -130,6 +135,7 @@ bool webrtc_packetizer::startup(std::span<const media_track> tracks, const webrt
                                   .payload_index = payload_index,
                                   .mid = mid,
                                   .mid_extension_id = extension_id,
+                                  .clock_rate = track.clock_rate,
                               });
         spdlog::debug("webrtc packetizer track ready id {} codec {} pt {}", track.id, to_string(track.codec), payload_type);
     }
@@ -173,6 +179,9 @@ int webrtc_packetizer::on_packet(void* param, int payload_index, const void* dat
     {
         return -1;
     }
+    state->second.last_rtp_timestamp = parsed.rtp.timestamp;
+    state->second.last_pts_ms = self->frame_pts_ms_;
+    state->second.sent = true;
 
     const auto& mid = state->second.mid;
     const auto extension_id = state->second.mid_extension_id;
@@ -221,8 +230,19 @@ int webrtc_packetizer::on_packet(void* param, int payload_index, const void* dat
     return self->rtp_handler_(packet);
 }
 
-bool webrtc_packetizer::emit_rtcp(int payload_index)
+void webrtc_packetizer::begin_frame(std::int64_t pts_ms)
 {
+    frame_pts_ms_ = pts_ms;
+    if (!epoch_us_)
+    {
+        const auto now_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        epoch_us_ = now_us - pts_ms * 1'000;
+    }
+}
+
+bool webrtc_packetizer::emit_rtcp(const track_state& state)
+{
+    const auto payload_index = state.payload_index;
     std::array<std::uint8_t, rtcp_buffer_size> buffer{};
     const auto bytes = rtsp_muxer_rtcp(muxer_, payload_index, buffer.data(), static_cast<int>(buffer.size()));
     if (bytes < 0)
@@ -240,6 +260,24 @@ bool webrtc_packetizer::emit_rtcp(int payload_index)
         return false;
     }
 
+    if (bytes >= static_cast<int>(sender_report_rtp_offset + 4U) && buffer[1] == rtcp_sender_report && state.sent && state.clock_rate != 0)
+    {
+        const auto rtp_timestamp = (static_cast<std::uint32_t>(buffer[sender_report_rtp_offset]) << 24U) |
+                                   (static_cast<std::uint32_t>(buffer[sender_report_rtp_offset + 1U]) << 16U) |
+                                   (static_cast<std::uint32_t>(buffer[sender_report_rtp_offset + 2U]) << 8U) |
+                                   static_cast<std::uint32_t>(buffer[sender_report_rtp_offset + 3U]);
+        const auto elapsed_ticks = static_cast<std::int64_t>(static_cast<std::int32_t>(rtp_timestamp - state.last_rtp_timestamp));
+        const auto media_us = *epoch_us_ + state.last_pts_ms * 1'000 + elapsed_ticks * 1'000'000 / state.clock_rate;
+        const auto seconds = static_cast<std::uint32_t>(media_us / 1'000'000 + ntp_unix_offset_seconds);
+        const auto fraction = static_cast<std::uint32_t>(((media_us % 1'000'000) << 32U) / 1'000'000);
+        for (std::size_t index = 0; index < 4U; ++index)
+        {
+            const auto shift = 24U - 8U * static_cast<unsigned>(index);
+            buffer[sender_report_ntp_offset + index] = static_cast<std::uint8_t>(seconds >> shift);
+            buffer[sender_report_ntp_offset + 4U + index] = static_cast<std::uint8_t>(fraction >> shift);
+        }
+    }
+
     spdlog::trace("webrtc rtcp report generated payload {} size {}", payload_index, bytes);
     return rtcp_handler_(std::span<const std::uint8_t>(buffer.data(), static_cast<std::size_t>(bytes))) == 0;
 }
@@ -247,6 +285,7 @@ bool webrtc_packetizer::emit_rtcp(int payload_index)
 bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame)
 {
     const auto payload = frame.length_prefixed ? frame.length_prefixed->get(*frame.payload) : std::span<const std::uint8_t>{*frame.payload};
+    begin_frame(ns_to_milliseconds(frame.pts_ns));
     const auto result = rtsp_muxer_input(muxer_,
                                          state.media_index,
                                          ns_to_milliseconds(frame.pts_ns),
@@ -259,7 +298,7 @@ bool webrtc_packetizer::input_video(track_state& state, const media_frame& frame
         spdlog::error("webrtc video rtp packetize failed codec {} result {}", to_string(state.codec), result);
         return false;
     }
-    return emit_rtcp(state.payload_index);
+    return emit_rtcp(state);
 }
 
 bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame)
@@ -282,6 +321,7 @@ bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         return false;
     }
 
+    begin_frame(ns_to_milliseconds(frame.pts_ns));
     const auto result = rtsp_muxer_input(muxer_,
                                          state.media_index,
                                          ns_to_milliseconds(frame.pts_ns),
@@ -294,7 +334,7 @@ bool webrtc_packetizer::input_audio(track_state& state, const media_frame& frame
         spdlog::error("webrtc audio rtp packetize failed codec {} result {}", to_string(state.codec), result);
         return false;
     }
-    return emit_rtcp(state.payload_index);
+    return emit_rtcp(state);
 }
 
 }    // namespace media_server
