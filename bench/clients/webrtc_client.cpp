@@ -312,7 +312,7 @@ webrtc_client_context::webrtc_client_context(std::unique_ptr<implementation> sta
 
 webrtc_client_context::~webrtc_client_context() = default;
 
-std::string webrtc_client_context::make_offer(webrtc_client_direction direction) const
+std::string webrtc_client_context::make_offer(webrtc_client_direction direction, std::string_view opus_format_parameters) const
 {
     const bool play = direction == webrtc_client_direction::play;
     const auto media_direction = play ? "recvonly" : "sendonly";
@@ -348,7 +348,7 @@ std::string webrtc_client_context::make_offer(webrtc_client_direction direction)
         << "a=" << media_direction << "\r\n"
         << "a=rtcp-mux\r\n"
         << "a=rtpmap:111 opus/48000/2\r\n"
-        << "a=fmtp:111 minptime=10;useinbandfec=1;stereo=1\r\n"
+        << "a=fmtp:111 " << opus_format_parameters << "\r\n"
         << (play ? "a=rtpmap:8 PCMA/8000\r\na=rtpmap:0 PCMU/8000\r\n" : "");
     return sdp.str();
 }

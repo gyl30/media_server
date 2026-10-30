@@ -204,12 +204,18 @@ def parse_arguments():
                         help="GB UDP viewer peer behaviour: remote RTCP port, RTCP RR or junk datagrams back to the sender")
     parser.add_argument("--source-churn", type=int, default=0, metavar="SECONDS",
                         help="every SECONDS during the window publish a new RTMP source and pull a new RTSP source from the upstream, time readiness, then kill the publisher and delete the pull")
+    parser.add_argument("--whep-opus-fmtp", default="", help="Opus fmtp offered by WHEP viewers instead of whep_fanout's default, e.g. a browser's")
+    parser.add_argument("--source-churn-input", choices=("rtmp", "whip"), default="rtmp",
+                        help="publisher of each source churn round; WHIP publishers alternate SIGTERM (WHIP DELETE) and SIGKILL (ICE activity timeout)")
+    parser.add_argument("--source-churn-viewers", default="",
+                        help="PROTOCOL:COUNT,... viewers of each source churn publish; the first half of the groups leaves before the publisher stops, the rest must end with the source")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
     args = parser.parse_args()
     try:
         args.counts = workload_counts(args.outputs)
+        args.source_churn_viewer_counts = workload_counts(args.source_churn_viewers) if args.source_churn_viewers else {}
         args.input_counts = workload_counts(args.inputs, INPUTS[:-1]) if args.inputs else {args.input: args.sources}
     except ValueError as error:
         parser.error(str(error))
@@ -245,8 +251,10 @@ def parse_arguments():
         parser.error("self-managed fixtures and externally owned sources must be separate")
     if args.gb_port_base + sum(args.counts.values()) + args.sources >= 65536:
         parser.error("GB passive port range exceeds 65535")
-    gb_tcp = [protocol for protocol in (*args.input_counts, *args.counts, args.churn[0] if args.churn else "") if protocol.startswith("gb_tcp")]
-    gb_port_end = args.gb_port_base + args.sources + sum(args.counts.values()) + (args.churn[1] if args.churn else 0)
+    gb_tcp = [protocol for protocol in (*args.input_counts, *args.counts, *args.source_churn_viewer_counts, args.churn[0] if args.churn else "")
+              if protocol.startswith("gb_tcp")]
+    gb_port_end = (args.gb_port_base + args.sources + sum(args.counts.values()) + (args.churn[1] if args.churn else 0) +
+                   sum(args.source_churn_viewer_counts.values()) * (args.duration // args.source_churn if args.source_churn else 0))
     ephemeral_low, ephemeral_high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     if gb_tcp and args.gb_port_base <= ephemeral_high and gb_port_end > ephemeral_low:
         parser.error(f"GB TCP listen ports {args.gb_port_base}-{gb_port_end - 1} overlap ephemeral ports {ephemeral_low}-{ephemeral_high}; lower --gb-port-base")
@@ -271,6 +279,7 @@ def run(args):
     upstream_pairs = []
     gb_senders = []
     churn_sources = []
+    churn_viewers = []
     logs = []
     server = upstream = None
     process_startticks = {}
@@ -381,8 +390,9 @@ def run(args):
             return [sys.executable, script_dir / "hls_client.py", "--hls-urls-file", credentials,
                     "--persistent", "--progress-interval", 6, "--output", args.output / f"{group_name}.json", *common]
         dump = ["--dump-file", args.output / "whep-0.dump"] if args.av_probe > 0 and group_name == "whep-0" else []
+        fmtp = ["--opus-fmtp", args.whep_opus_fmtp] if args.whep_opus_fmtp else []
         return [args.client_dir / "whep_fanout", "--whep-urls-file", credentials,
-                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *dump, *common]
+                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *dump, *fmtp, *common]
 
     def receiver_list(base):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
@@ -727,6 +737,7 @@ def run(args):
                 control_probe.start()
             source_churn = []
             source_churn_thread = None
+            gb_churn_port = [args.gb_port_base + args.sources + sum(counts.values()) + (args.churn[1] if args.churn else 0)]
             if args.source_churn:
                 def wait_receiver(stream, present):
                     started = time.monotonic_ns()
@@ -746,11 +757,39 @@ def run(args):
                             stream = stub.issue("publish", ttl=60)
                             log = (args.output / f"source-churn-{round_index}.log").open("w")
                             logs.append(log)
-                            publisher = subprocess.Popen(["taskset", "-c", args.client_cpus, str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error",
-                                                          "-threads", "1", "-re", "-stream_loop", "-1", "-i", str(args.fixture), "-c", "copy", "-f", "flv",
-                                                          f"rtmp://{args.host}:{args.rtmp_port}/live/{stream}"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+                            if args.source_churn_input == "whip":
+                                urls = args.output / f"source-churn-{round_index}.urls"
+                                urls.write_text(f"http://{args.host}:{args.http_port}/publish/whip/{stream}\n")
+                                command = [args.client_dir / "whip_publisher", "--whip-urls-file", urls, "--fixture", args.whip_fixture, "--sources", 1,
+                                           "--bind-address", args.client_address, "--io-threads", 1, "--ramp-per-second", 1, "--duration", 86400]
+                            else:
+                                command = [args.ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-re", "-stream_loop", "-1",
+                                           "-i", args.fixture, "-c", "copy", "-f", "flv", f"rtmp://{args.host}:{args.rtmp_port}/live/{stream}"]
+                            publisher = subprocess.Popen(["taskset", "-c", args.client_cpus, *map(str, command)], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
                             churn_sources.append(("publish", stream, publisher))
                             item["publish_ready_ms"] = wait_receiver(stream, True)
+                            viewers = []
+                            if args.source_churn_viewer_counts and item["publish_ready_ms"] is not None:
+                                item["server_fd_before_viewers"] = proc_snapshot(server.pid, sockets=False)["fd"]
+                                launched = time.monotonic_ns()
+                                for protocol, count in args.source_churn_viewer_counts.items():
+                                    name = f"source-churn-{round_index}-{protocol}"
+                                    start_file = args.output / f"{name}.start"
+                                    command = client_command(protocol, name, [{"stream_id": stream}] * count, gb_churn_port[0], 0, args.source_churn,
+                                                             args.ready_timeout, start_file)
+                                    gb_churn_port[0] += count
+                                    log = (args.output / f"{name}.log").open("w")
+                                    logs.append(log)
+                                    viewers.append((name, start_file, subprocess.Popen(["taskset", "-c", args.client_cpus, *map(str, command)],
+                                                                                       stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)))
+                                churn_viewers.extend(process for _, _, process in viewers)
+                                while (time.monotonic_ns() - launched < args.ready_timeout * 1000000000 and all(process.poll() is None for _, _, process in viewers) and
+                                       not all("phase=media_ready " in (args.output / f"{name}.log").read_text() for name, _, _ in viewers)):
+                                    time.sleep(0.1)
+                                ready = all("phase=media_ready " in (args.output / f"{name}.log").read_text() for name, _, _ in viewers)
+                                item["viewers_ready_ms"] = (time.monotonic_ns() - launched) / 1e6 if ready else None
+                                for _, start_file, _ in viewers:
+                                    start_file.write_text(str(time.monotonic_ns()) + "\n")
                             pull = None
                             if upstream is not None:
                                 pull = str(uuid.uuid4())
@@ -762,9 +801,31 @@ def run(args):
                                 ready = wait_receiver(pull, True)
                                 item["pull_ready_ms"] = ready + item["pull_create_ms"] if ready is not None else None
                             time.sleep(max(0, (round_started + args.source_churn * 500000000 - time.monotonic_ns()) / 1e9))
-                            publisher.kill()
-                            publisher.wait(timeout=5)
+                            leaving, staying = viewers[:len(viewers) // 2], viewers[len(viewers) // 2:]
+                            for _, _, process in leaving:
+                                process.terminate()
+                            for _, _, process in leaving:
+                                process.wait(timeout=10)
+                            item["viewers_left"] = [name for name, _, _ in leaving]
+                            graceful = args.source_churn_input == "whip" and round_index % 2 == 0
+                            item["publisher_stop"] = "sigterm" if graceful else "sigkill"
+                            publisher.terminate() if graceful else publisher.kill()
+                            publisher.wait(timeout=10)
                             item["publish_gone_ms"] = wait_receiver(stream, False)
+                            if staying:
+                                stopped = time.monotonic_ns()
+                                while time.monotonic_ns() - stopped < 15000000000 and any(process.poll() is None for _, _, process in staying):
+                                    time.sleep(0.05)
+                                lingering = [name for name, _, process in staying if process.poll() is None]
+                                item["viewers_ended"] = {name: process.returncode for name, _, process in staying if process.poll() is not None}
+                                item["viewers_lingering"] = lingering
+                                item["viewers_gone_ms"] = None if lingering else (time.monotonic_ns() - stopped) / 1e6
+                                for _, _, process in staying:
+                                    if process.poll() is None:
+                                        process.kill()
+                                        process.wait(timeout=5)
+                                time.sleep(2)
+                                item["server_fd_after_viewers"] = proc_snapshot(server.pid, sockets=False)["fd"]
                             if pull is not None:
                                 deleted = time.monotonic_ns()
                                 request(control, "/receivers/delete", {"stream_id": pull}, control_token)
@@ -1091,6 +1152,8 @@ def run(args):
         for _, _, process in churn_sources:
             if process is not None:
                 stop_process(process)
+        for process in churn_viewers:
+            stop_process(process)
         if owned and server is not None and server.poll() is None:
             deletions = ([(control, "/receivers/delete", {"stream_id": stream}) for stream in source_ids + [stream for kind, stream, _ in churn_sources if kind == "pull"]] +
                          [(control, "/gb28181/sender/delete", sender) for sender in gb_senders] +

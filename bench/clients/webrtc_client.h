@@ -43,7 +43,8 @@ class webrtc_client_context final
 
     ~webrtc_client_context();
 
-    [[nodiscard]] std::string make_offer(webrtc_client_direction direction = webrtc_client_direction::play) const;
+    [[nodiscard]] std::string make_offer(webrtc_client_direction direction = webrtc_client_direction::play,
+                                         std::string_view opus_format_parameters = "minptime=10;useinbandfec=1;stereo=1") const;
 
    private:
     struct implementation;

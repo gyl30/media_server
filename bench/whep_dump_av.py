@@ -2,7 +2,9 @@
 """Replay a whep_fanout --dump-file to ffmpeg over loopback RTP at the original pace, record it and report av_probe metrics.
 
 The output timeline is judged from the RTP timestamps in the dump; the recording's own timestamp order is kept as recorded_video_pts_backward,
-because ffmpeg clamps a first frame that maps before the other stream's start."""
+because ffmpeg clamps a first frame that maps before the other stream's start. B-frames arrive in decode order, so a video timestamp only counts as
+backward when it falls more than MAX_REORDER_TICKS below the latest one, and the recorder re-encodes such video because RTP carries no DTS.
+G.711 audio is recorded as PCM because Matroska has no copy mapping for it."""
 
 import argparse
 import json
@@ -15,7 +17,8 @@ import time
 from pathlib import Path
 
 VIDEO_PAYLOAD_TYPES = (102, 104, 106, 108)
-OPUS_PAYLOAD_TYPE = 111
+AUDIO_RTPMAPS = {111: "opus/48000/2", 8: "PCMA/8000", 0: "PCMU/8000"}
+MAX_REORDER_TICKS = 45000
 
 
 def read_dump(path):
@@ -59,15 +62,16 @@ def main():
     if args.seconds > 0 and records:
         records = [record for record in records if record[0] - records[0][0] <= args.seconds * 1e9]
     ssrc_kind = {}
-    video_payload_type = None
+    video_payload_type = audio_payload_type = None
     for _, rtcp, packet in records:
         if rtcp or len(packet) < 12:
             continue
         payload_type = packet[1] & 0x7F
-        kind = "video" if payload_type in VIDEO_PAYLOAD_TYPES else "audio" if payload_type == OPUS_PAYLOAD_TYPE else None
+        kind = "video" if payload_type in VIDEO_PAYLOAD_TYPES else "audio" if payload_type in AUDIO_RTPMAPS else None
         if kind:
             ssrc_kind.setdefault(struct.unpack_from("!I", packet, 8)[0], kind)
             video_payload_type = payload_type if kind == "video" else video_payload_type
+            audio_payload_type = payload_type if kind == "audio" else audio_payload_type
     if video_payload_type is None:
         sys.exit("dump has no video RTP")
     base_port = args.base_port or free_port_block()
@@ -78,12 +82,28 @@ def main():
              f"{'H265' if video_payload_type == 104 else 'H264'}/90000"]
     if video_payload_type != 104:
         lines.append(f"a=fmtp:{video_payload_type} packetization-mode=1")
-    if "audio" in ssrc_kind.values():
-        lines += [f"m=audio {ports['audio']} RTP/AVP {OPUS_PAYLOAD_TYPE}", f"a=rtpmap:{OPUS_PAYLOAD_TYPE} opus/48000/2"]
+    if audio_payload_type is not None:
+        lines += [f"m=audio {ports['audio']} RTP/AVP {audio_payload_type}", f"a=rtpmap:{audio_payload_type} {AUDIO_RTPMAPS[audio_payload_type]}"]
     sdp.write_text("\r\n".join(lines) + "\r\n")
 
+    previous = {}
+    rtp_backward = rtp_reordered = 0
+    for _, rtcp, packet in records:
+        if rtcp or len(packet) < 12 or ssrc_kind.get(struct.unpack_from("!I", packet, 8)[0]) != "video":
+            continue
+        timestamp = struct.unpack_from("!I", packet, 4)[0]
+        if "video" in previous:
+            rtp_reordered += (timestamp - previous["video"]) & 0xFFFFFFFF >= 0x80000000
+            rtp_backward += (timestamp - previous["latest"]) & 0xFFFFFFFF >= 0x80000000 and (previous["latest"] - timestamp) & 0xFFFFFFFF > MAX_REORDER_TICKS
+            if (timestamp - previous["latest"]) & 0xFFFFFFFF < 0x80000000:
+                previous["latest"] = timestamp
+        else:
+            previous["latest"] = timestamp
+        previous["video"] = timestamp
+    video_codec = ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "18"] if rtp_reordered else ["-c:v", "copy"]
+    audio_codec = ["-c:a", "copy"] if audio_payload_type == 111 else ["-c:a", "pcm_s16le"]
     recorder = subprocess.Popen([args.ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y", "-protocol_whitelist", "file,udp,rtp",
-                                 "-i", str(sdp), "-map", "0", "-c", "copy", str(args.output)], stdin=subprocess.DEVNULL)
+                                 "-i", str(sdp), "-map", "0", *video_codec, *audio_codec, str(args.output)], stdin=subprocess.DEVNULL)
     time.sleep(1.5)
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     started = time.monotonic_ns() - records[0][0]
@@ -106,15 +126,7 @@ def main():
     probe = subprocess.run([sys.executable, str(Path(__file__).with_name("av_probe.py")), str(args.output), "--seconds", "3600",
                             "--ffmpeg-bin", args.ffmpeg_bin], capture_output=True, text=True)
     result = json.loads(probe.stdout) if probe.returncode == 0 and probe.stdout.strip() else {"error": probe.stderr[-500:]}
-    previous = {}
-    rtp_backward = 0
-    for _, rtcp, packet in records:
-        if rtcp or len(packet) < 12 or ssrc_kind.get(struct.unpack_from("!I", packet, 8)[0]) != "video":
-            continue
-        timestamp = struct.unpack_from("!I", packet, 4)[0]
-        if "video" in previous and (timestamp - previous["video"]) & 0xFFFFFFFF >= 0x80000000:
-            rtp_backward += 1
-        previous["video"] = timestamp
+    result["video_rtp_reordered"] = rtp_reordered
     result["recorded_video_pts_backward"] = result.get("video_pts_backward")
     result["video_pts_backward"] = rtp_backward
     result["replayed_packets"] = sent
