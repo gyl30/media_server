@@ -30,12 +30,28 @@ def read_dump(path):
     return records
 
 
+def free_port_block():
+    for base in range(20000, 32768, 4):
+        sockets = []
+        try:
+            for port in range(base, base + 4):
+                sockets.append(socket.socket(socket.AF_INET, socket.SOCK_DGRAM))
+                sockets[-1].bind(("127.0.0.1", port))
+            return base
+        except OSError:
+            continue
+        finally:
+            for item in sockets:
+                item.close()
+    sys.exit("no free loopback port block")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dump")
     parser.add_argument("--output", type=Path, required=True, help="recorded .mkv")
     parser.add_argument("--ffmpeg-bin", default="ffmpeg")
-    parser.add_argument("--base-port", type=int, default=46000)
+    parser.add_argument("--base-port", type=int, default=0, help="first of four loopback ports; 0 picks a free block below the ephemeral range")
     parser.add_argument("--seconds", type=float, default=0, help="replay only the first SECONDS of the dump; 0 replays all")
     args = parser.parse_args()
 
@@ -54,7 +70,8 @@ def main():
             video_payload_type = payload_type if kind == "video" else video_payload_type
     if video_payload_type is None:
         sys.exit("dump has no video RTP")
-    ports = {"video": args.base_port, "audio": args.base_port + 2}
+    base_port = args.base_port or free_port_block()
+    ports = {"video": base_port, "audio": base_port + 2}
     sdp = args.output.with_suffix(".sdp")
     lines = ["v=0", "o=- 0 0 IN IP4 127.0.0.1", "s=whep", "c=IN IP4 127.0.0.1", "t=0 0",
              f"m=video {ports['video']} RTP/AVP {video_payload_type}", f"a=rtpmap:{video_payload_type} "
