@@ -135,14 +135,14 @@ def cpu_usage(before, after, cpus):
     return usage
 
 
-def workload_counts(text):
+def workload_counts(text, names=OUTPUTS):
     counts = {}
     if text == "none":
         return counts
     for entry in text.split(","):
         protocol, count = entry.split(":")
-        if protocol not in OUTPUTS or int(count) <= 0 or protocol in counts:
-            raise ValueError("outputs must be distinct protocol:positive_count entries")
+        if protocol not in names or int(count) <= 0 or protocol in counts:
+            raise ValueError("entries must be distinct protocol:positive_count")
         counts[protocol] = int(count)
     return counts
 
@@ -153,6 +153,7 @@ def parse_arguments():
     parser.add_argument("--input", choices=INPUTS, default="rtmp")
     parser.add_argument("--outputs", default="rtmp:1", help="rtmp:10,rtsp:10,flv:10,hls:10,whep:10,gb_udp:10 or none (PARTIAL publish-only: continuous FLV viewer per source)")
     parser.add_argument("--sources", type=int, default=1)
+    parser.add_argument("--inputs", help="mixed inputs rtmp:8,rtsp_udp:4,whip:4,whep_pull:4,gb_udp:4,...; replaces --input/--sources")
     parser.add_argument("--sources-file", type=Path, help="existing sources JSON: [{stream_id, play_body:{push_device_id|source_id|live_id:...}}]")
     parser.add_argument("--signaling-url", help="real signaling /api/play issuer; required for existing input")
     parser.add_argument("--server-log", type=Path, help="existing DUT log, read only for queue-full evidence")
@@ -201,14 +202,22 @@ def parse_arguments():
                         help="while viewers connect, send 0-7 other control requests (seeded) per ramp slot so viewer connections land on workers like mixed production traffic; 0 disables")
     parser.add_argument("--gb-peer", choices=("quiet", "rtcp", "rtcp_rr", "rr", "rtp_noise"), default="quiet",
                         help="GB UDP viewer peer behaviour: remote RTCP port, RTCP RR or junk datagrams back to the sender")
+    parser.add_argument("--source-churn", type=int, default=0, metavar="SECONDS",
+                        help="every SECONDS during the window publish a new RTMP source and pull a new RTSP source from the upstream, time readiness, then kill the publisher and delete the pull")
     parser.add_argument("--churn-period", type=int, default=20, help="seconds per churn round; viewers stay for period minus 8 seconds")
     parser.add_argument("--min-realtime-ratio", type=float, default=0.98, help="per-viewer video media time advanced over the measurement window divided by wall time")
     parser.add_argument("--fault", choices=("none", "invalid_token", "expired_token", "replayed_token", "source_stop"), default="none", help="bounded negative validation, not a capacity boundary")
     args = parser.parse_args()
     try:
         args.counts = workload_counts(args.outputs)
+        args.input_counts = workload_counts(args.inputs, INPUTS[:-1]) if args.inputs else {args.input: args.sources}
     except ValueError as error:
         parser.error(str(error))
+    if args.inputs:
+        if args.input != "rtmp" or args.sources != 1 or not args.input_counts:
+            parser.error("--inputs replaces --input and --sources")
+        args.input = "mixed"
+        args.sources = sum(args.input_counts.values())
     if min(args.sources, args.duration, args.workers, args.ready_timeout, args.progress_interval, args.ramp_per_second, args.group_size) <= 0 or args.warmup < 0:
         parser.error("counts, duration, timeouts and rate must be positive; warmup nonnegative")
     if not 0 < args.min_realtime_ratio <= 1:
@@ -226,13 +235,17 @@ def parse_arguments():
         parser.error("duration must cover a progress interval")
     if args.input == "existing" and not (args.sources_file and args.signaling_url and args.server_pid and args.control_token):
         parser.error("existing input requires sources-file, signaling-url, server-pid and control-token")
+    if args.input == "existing" and args.source_churn:
+        parser.error("source churn publishes fixture sources; existing mode never alters external resources")
+    if args.source_churn and args.source_churn < 10:
+        parser.error("source churn period must be at least 10 seconds")
     if args.input == "existing" and args.fault != "none":
         parser.error("fault injection owns fixture sources/tokens; existing mode never alters external resources")
     if args.input != "existing" and (args.server_pid or args.signaling_url or args.sources_file):
         parser.error("self-managed fixtures and externally owned sources must be separate")
     if args.gb_port_base + sum(args.counts.values()) + args.sources >= 65536:
         parser.error("GB passive port range exceeds 65535")
-    gb_tcp = [protocol for protocol in (args.input, *args.counts, args.churn[0] if args.churn else "") if protocol.startswith("gb_tcp")]
+    gb_tcp = [protocol for protocol in (*args.input_counts, *args.counts, args.churn[0] if args.churn else "") if protocol.startswith("gb_tcp")]
     gb_port_end = args.gb_port_base + args.sources + sum(args.counts.values()) + (args.churn[1] if args.churn else 0)
     ephemeral_low, ephemeral_high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
     if gb_tcp and args.gb_port_base <= ephemeral_high and gb_port_end > ephemeral_low:
@@ -257,6 +270,7 @@ def run(args):
     source_ids = []
     upstream_pairs = []
     gb_senders = []
+    churn_sources = []
     logs = []
     server = upstream = None
     process_startticks = {}
@@ -477,7 +491,9 @@ def run(args):
                     raise ValueError("fixture must contain one H.264/H.265 video track and one AAC/Opus/G.711 audio track")
                 server = media_server("server", args.host, (args.rtmp_port, args.rtsp_port, args.http_port), stub.url)
                 server_pid = server.pid
-                if args.input in ("rtsp_pull", "rtmp_pull", "whep_pull", "gb_udp", "gb_tcp_active", "gb_tcp_passive"):
+                kinds = [kind for kind, count in args.input_counts.items() for _ in range(count)]
+                result["source_inputs"] = kinds
+                if any(kind not in ("rtmp", "rtsp_tcp", "rtsp_udp", "whip") for kind in kinds):
                     upstream_ports = (args.rtmp_port + 100, args.rtsp_port + 100, args.http_port + 100)
                     upstream_control = f"http://{args.client_address}:{upstream_ports[2]}"
                     upstream = media_server("upstream", args.client_address, upstream_ports, stub.url)
@@ -485,10 +501,11 @@ def run(args):
                 whip_ids = []
                 upstream_streams = []
                 interleave = random.Random(args.pull_interleave_seed)
-                if args.input == "whip":
+                whip_count = args.input_counts.get("whip", 0)
+                if whip_count:
                     result["whip_fixture_sha256"] = sha256(args.whip_fixture)
-                    for offset in range(0, args.sources, args.group_size):
-                        ids = [stub.issue("publish", ttl=60) for _ in range(min(args.group_size, args.sources - offset))]
+                    for offset in range(0, whip_count, args.group_size):
+                        ids = [stub.issue("publish", ttl=60) for _ in range(min(args.group_size, whip_count - offset))]
                         whip_ids.extend(ids)
                         urls = args.output / f"publish-{offset}.urls"
                         urls.write_text("\n".join(f"http://{args.host}:{args.http_port}/publish/whip/{stream}" for stream in ids) + "\n")
@@ -496,15 +513,17 @@ def run(args):
                             "--fixture", args.whip_fixture, "--sources", len(ids), "--bind-address", args.client_address,
                             "--io-threads", min(4, len(ids)), "--ramp-per-second", args.ramp_per_second, "--duration", 86400], args.client_cpus, "publisher")
                         publishers.append(publisher)
-                for index in range(args.sources):
-                    if args.input in ("rtmp", "rtsp_tcp", "rtsp_udp", "whip"):
-                        stream = whip_ids[index] if args.input == "whip" else stub.issue("publish", ttl=60)
+                upstream_index = 0
+                for index, kind in enumerate(kinds):
+                    if kind in ("rtmp", "rtsp_tcp", "rtsp_udp", "whip"):
+                        stream = whip_ids.pop(0) if kind == "whip" else stub.issue("publish", ttl=60)
                         source = {"stream_id": stream}
-                        if args.input != "whip":
-                            ffmpeg_source(f"publisher-{index}", stream, args.input, args.host, (args.rtmp_port, args.rtsp_port, args.http_port))
+                        if kind != "whip":
+                            ffmpeg_source(f"publisher-{index}", stream, kind, args.host, (args.rtmp_port, args.rtsp_port, args.http_port))
                     else:
-                        if args.upstream_sources and index >= args.upstream_sources:
-                            upstream_stream = upstream_streams[index % args.upstream_sources]
+                        upstream_index += 1
+                        if args.upstream_sources and upstream_index > args.upstream_sources:
+                            upstream_stream = upstream_streams[(upstream_index - 1) % args.upstream_sources]
                         else:
                             upstream_stream = stub.issue("publish", ttl=60)
                             ffmpeg_source(f"publisher-{index}", upstream_stream, "rtmp", args.client_address, upstream_ports)
@@ -512,8 +531,8 @@ def run(args):
                             upstream_streams.append(upstream_stream)
                         stream = str(uuid.uuid4())
                         source = {"stream_id": stream}
-                        if args.input.endswith("_pull"):
-                            url = play_value({"stream_id": upstream_stream}, args.input[:-5], stub, args.client_address, upstream_ports)
+                        if kind.endswith("_pull"):
+                            url = play_value({"stream_id": upstream_stream}, kind[:-5], stub, args.client_address, upstream_ports)
                             if args.pull_interleave_seed:
                                 for _ in range(interleave.randint(0, 7)):
                                     request(control, "/receivers", token=control_token)
@@ -523,12 +542,12 @@ def run(args):
                             sender = {"stream_id": upstream_stream, "sender_id": str(uuid.uuid4()), "payload_type": 96, "ssrc": ssrc}
                             receiver = {"stream_id": stream, "payload_type": 96, "ssrc": ssrc}
                             port = args.gb_port_base + index
-                            if args.input == "gb_udp":
+                            if kind == "gb_udp":
                                 receiver["transport"] = "udp"
                                 ports = request(control, "/gb28181/receiver/create", receiver, control_token)
                                 sender.update(transport="udp", remote_address=args.host, remote_rtp_port=ports["rtp_port"])
                                 request(upstream_control, "/gb28181/sender/create", sender, control_token)
-                            elif args.input == "gb_tcp_passive":
+                            elif kind == "gb_tcp_passive":
                                 receiver.update(transport="tcp_passive", listen_port=port)
                                 sender.update(transport="tcp_active", remote_address=args.host, remote_port=port)
                                 request(control, "/gb28181/receiver/create", receiver, control_token)
@@ -705,6 +724,60 @@ def run(args):
 
                 control_probe = threading.Thread(target=probe_control, daemon=True)
                 control_probe.start()
+            source_churn = []
+            source_churn_thread = None
+            if args.source_churn:
+                def wait_receiver(stream, present):
+                    started = time.monotonic_ns()
+                    while time.monotonic_ns() - started < args.ready_timeout * 1000000000:
+                        receivers = {entry["stream_id"]: entry["ready"] for entry in request(control, "/receivers", token=control_token)["receivers"]}
+                        if (receivers.get(stream) is True) if present else stream not in receivers:
+                            return (time.monotonic_ns() - started) / 1e6
+                        time.sleep(0.05)
+                    return None
+
+                def churn_sources_loop():
+                    round_index = 0
+                    while time.monotonic_ns() + args.source_churn * 1000000000 <= deadline_ns:
+                        round_started = time.monotonic_ns()
+                        item = {"round": round_index, "offset_ms": (round_started - start_ns) / 1e6}
+                        try:
+                            stream = stub.issue("publish", ttl=60)
+                            log = (args.output / f"source-churn-{round_index}.log").open("w")
+                            logs.append(log)
+                            publisher = subprocess.Popen(["taskset", "-c", args.client_cpus, str(args.ffmpeg_bin), "-nostdin", "-hide_banner", "-loglevel", "error",
+                                                          "-threads", "1", "-re", "-stream_loop", "-1", "-i", str(args.fixture), "-c", "copy", "-f", "flv",
+                                                          f"rtmp://{args.host}:{args.rtmp_port}/live/{stream}"], stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)
+                            churn_sources.append(("publish", stream, publisher))
+                            item["publish_ready_ms"] = wait_receiver(stream, True)
+                            pull = None
+                            if upstream is not None:
+                                pull = str(uuid.uuid4())
+                                url = play_value({"stream_id": upstream_streams[round_index % len(upstream_streams)]}, "rtsp", stub, args.client_address, upstream_ports)
+                                created = time.monotonic_ns()
+                                request(control, "/pull/create", {"stream_id": pull, "url": url}, control_token)
+                                item["pull_create_ms"] = (time.monotonic_ns() - created) / 1e6
+                                churn_sources.append(("pull", pull, None))
+                                ready = wait_receiver(pull, True)
+                                item["pull_ready_ms"] = ready + item["pull_create_ms"] if ready is not None else None
+                            time.sleep(max(0, (round_started + args.source_churn * 500000000 - time.monotonic_ns()) / 1e9))
+                            publisher.kill()
+                            publisher.wait(timeout=5)
+                            item["publish_gone_ms"] = wait_receiver(stream, False)
+                            if pull is not None:
+                                deleted = time.monotonic_ns()
+                                request(control, "/receivers/delete", {"stream_id": pull}, control_token)
+                                gone = wait_receiver(pull, False)
+                                item["pull_gone_ms"] = (time.monotonic_ns() - deleted) / 1e6 if gone is not None else None
+                        except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                            item["error"] = str(error)[:200]
+                        item["ok"] = "error" not in item and all(item.get(key) is not None for key in item if key.endswith("_ms"))
+                        source_churn.append(item)
+                        round_index += 1
+                        time.sleep(max(0, (round_started + args.source_churn * 1000000000 - time.monotonic_ns()) / 1e9))
+
+                source_churn_thread = threading.Thread(target=churn_sources_loop, daemon=True)
+                source_churn_thread.start()
             perf_stat = None
             if args.perf_stat:
                 perf_stat = subprocess.Popen(["perf", "stat", "-a", "-C", ",".join(map(str, sorted(server_cpus))), "-x", "\t", "-e",
@@ -767,6 +840,8 @@ def run(args):
                     stopped_source = True
                 next_sample += 1000000000
                 time.sleep(max(0, (min(next_sample, deadline_ns) - time.monotonic_ns()) / 1e9))
+            cpu_end = cpu_times()
+            counters_end = {"server": cpu_counters(server_cpus), "client": cpu_counters(client_cpus)}
             if churn_process is not None:
                 try:
                     churn_process.wait(timeout=args.churn_period)
@@ -831,6 +906,10 @@ def run(args):
                     probe = {"exit_code": process.returncode}
                 probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
                 result.setdefault("av_probe", {})[protocol] = probe
+            if source_churn_thread is not None:
+                source_churn_thread.join(timeout=args.source_churn + args.ready_timeout * 4)
+                result["source_churn"] = {"period_seconds": args.source_churn, "rounds": source_churn,
+                                          "failed_rounds": sum(not item["ok"] for item in source_churn)}
             if control_probe is not None:
                 control_probe.join(timeout=30)
                 latencies = sorted(sample["ms"] for sample in control_samples)
@@ -848,8 +927,7 @@ def run(args):
                         perf_counts[fields[2]] = int(float(fields[0]))
                 result["perf_stat"] = {**perf_counts, "seconds": args.duration,
                                        "ipc": perf_counts["instructions"] / perf_counts["cycles"] if perf_counts.get("cycles") else None}
-            cpu_end = cpu_times()
-            frequency = {prefix: cpu_frequency(counters_start[prefix], cpu_counters(cpus)) or {} for prefix, cpus in (("server", server_cpus), ("client", client_cpus))}
+            frequency = {prefix: cpu_frequency(counters_start[prefix], counters_end[prefix]) or {} for prefix in ("server", "client")}
             result["cpu_busy"] = {
                 "server_cpus": sorted(server_cpus), "server_sibling_cpus": sorted(sibling_cpus), "client_cpus": sorted(client_cpus),
                 **{f"server_{key}": value for key, value in cpu_usage(cpu_start, cpu_end, server_cpus).items()},
@@ -890,6 +968,7 @@ def run(args):
             success = success and all(probe["ok"] for probe in result.get("decode_probe", {}).values())
             success = success and all(probe["ok"] for probe in result.get("av_probe", {}).values())
             success = success and not result.get("churn", {}).get("failed_rounds")
+            success = success and not result.get("source_churn", {}).get("failed_rounds")
             result["status"] = "PASS" if success else "FAIL"
             result["capacity_boundary"] = "HEALTHY" if success else "UNCONFIRMED"
             if server is not None and server.poll() is not None:
@@ -993,8 +1072,11 @@ def run(args):
             result["verification"] = stub.summary()
         for _, process, _ in clients:
             stop_process(process)
+        for _, _, process in churn_sources:
+            if process is not None:
+                stop_process(process)
         if owned and server is not None and server.poll() is None:
-            deletions = ([(control, "/receivers/delete", {"stream_id": stream}) for stream in source_ids] +
+            deletions = ([(control, "/receivers/delete", {"stream_id": stream}) for stream in source_ids + [stream for kind, stream, _ in churn_sources if kind == "pull"]] +
                          [(control, "/gb28181/sender/delete", sender) for sender in gb_senders] +
                          [(base, "/gb28181/sender/delete", {"stream_id": sender["stream_id"], "sender_id": sender["sender_id"]})
                           for base, sender in upstream_pairs])
@@ -1019,7 +1101,7 @@ def run(args):
                     process.wait()
             time.sleep(0.5)
             try:
-                result["cleanup"]["remaining_owned_receivers"] = sorted(receiver_list(control) & set(source_ids))
+                result["cleanup"]["remaining_owned_receivers"] = sorted(receiver_list(control) & (set(source_ids) | {stream for _, stream, _ in churn_sources}))
                 result["cleanup"]["server_after"] = proc_snapshot(server.pid)
                 if args.cleanup_settle:
                     time.sleep(args.cleanup_settle)

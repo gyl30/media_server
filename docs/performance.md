@@ -46,6 +46,8 @@ outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，�
 
 input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、GB UDP/TCP 和 existing。拉流与 GB 输入先在客户端核上启动一个上游实例，再通过 `POST /pull/create` 或 GB sender/receiver 接口接入被测服务。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
 
+`--inputs rtmp:24,rtsp_udp:8,whip:4,whep_pull:4,...` 在一次运行中混合多种输入，替代 `--input`/`--sources`；拉流与 GB 源按 `--upstream-sources` 共享上游流，`source_inputs` 记录各源的输入类型。
+
 `--fixture` 可以是一路 H.264/H.265 视频加一路 AAC/Opus/G.711 音频；客户端与输出协议是否支持对应编码需另行确认。`--decode-probe` 在测量窗口内用 ffprobe 对 RTMP/RTSP/FLV/HLS 输出各解码 6 秒，结果写入 `decode_probe` 并参与判定。
 
 自管模式启动自己的授权夹具和媒体进程。`--input existing` 必须提供 `--sources-file`、`--signaling-url`、`--server-pid`、`--control-token`，并使用匹配的 `--server-bin`；它只停止自己创建的客户端，不停止外部 DUT。sources.json 每项含 `stream_id` 和 `play_body`（其中指定 source_id、push_device_id 或 live_id）；声明 publisher PID 时还须提供 publisher_starttick。真实发布入口 `perf_publish.py --help` 给出生成这些数据的参数。
@@ -62,7 +64,7 @@ progressing 只表示每个进度间隔内收到过音视频。服务端 CPU 饱
 
 进程 CPU、PSS 和 FD 每秒采样，套接字队列每 5 次采样读取一次，避免 runner 在上万连接时自身成为瓶颈；runner 的有效采样少于窗口秒数的 80% 时结果为 INCONCLUSIVE/`RUNNER_RESOURCE`。`namespace_tcp_delta` 是窗口前后 namespace 内 TCP/UDP 重传、错误和 listen 溢出计数的差值；`verification` 记录签名桩的调用数、拒绝数和处理耗时 p99/最大值。
 
-`--churn PROTOCOL:COUNT` 在窗口内每 `--churn-period` 秒（不少于 12，默认 20）启动一组额外 viewer，停留周期减 8 秒后退出，用于观察会话反复建立和回收；任一轮失败则整次失败，HLS 不支持。`--cleanup-settle N` 在清理完成后等待 N 秒再取一次服务端快照（`cleanup.server_settled`），用于核对会话、FD 和内存是否回收。
+`--churn PROTOCOL:COUNT` 在窗口内每 `--churn-period` 秒（不少于 12，默认 20）启动一组额外 viewer，停留周期减 8 秒后退出，用于观察会话反复建立和回收；任一轮失败则整次失败，HLS 不支持。`--source-churn N`（不少于 10 秒）在窗口内每 N 秒新建一路 RTMP 发布，存在上游实例时再新建一路 RTSP 拉流，记录就绪耗时，半个周期后杀掉发布者并删除拉流，记录源消失耗时；任一轮失败则整次失败。`--cleanup-settle N` 在清理完成后等待 N 秒再取一次服务端快照（`cleanup.server_settled`），用于核对会话、FD 和内存是否回收。
 
 容量入口示例：
 
