@@ -220,6 +220,17 @@ int on_packet(void* param, int stream, int codecid, int flags, std::int64_t pts,
 
 std::uint16_t read_u16(const std::uint8_t* data) { return static_cast<std::uint16_t>((data[0] << 8U) | data[1]); }
 
+bool pack_start(const std::uint8_t* data, std::size_t bytes) { return bytes >= 4 && data[0] == 0 && data[1] == 0 && data[2] == 1 && data[3] == 0xBA; }
+
+void feed_pack(demux_state& state, ps_demuxer_t* demuxer, const std::vector<std::uint8_t>& pack, std::uint64_t packet)
+{
+    const auto consumed = ps_demuxer_input(demuxer, pack.data(), pack.size());
+    if (consumed != static_cast<int>(pack.size()))
+    {
+        state.fail("PS demuxer error " + std::to_string(consumed) + " in the pack ending before RTP packet " + std::to_string(packet));
+    }
+}
+
 }    // namespace
 
 int main(int argc, char** argv)
@@ -247,7 +258,10 @@ int main(int argc, char** argv)
     {
         std::cerr
             << "usage: gb_ps_demux --input DUMP --output-prefix PREFIX [--payload-type 96]\n"
-               "DUMP holds RTP packets each preceded by a 16-bit big-endian length (RFC 4571 framing). Writes PREFIX.<codec> elementary "
+               "DUMP holds RTP packets each preceded by a 16-bit big-endian length (RFC 4571 framing). Each PS pack (one frame) starts an RTP "
+               "payload; packs are demuxed whole and the last pack, possibly cut by the end of the capture, is only counted as trailing data. "
+               "Every whole pack must yield one frame, apart from the one video access unit the demuxer holds until the next. Writes PREFIX.<codec> "
+               "elementary "
                "streams and PREFIX.csv (kind,pts,dts,key,offset,bytes,units; 90 kHz timestamps unwrapped past 33 bits; units are ADTS frames or "
                "G.711 samples) and prints a JSON summary. Codecs come only from the PS stream map.\n";
         return 2;
@@ -269,6 +283,8 @@ int main(int argc, char** argv)
 
     std::vector<std::uint8_t> pending;
     std::uint64_t packets{};
+    std::uint64_t packs{};
+    std::uint64_t pending_packets{};
     std::uint64_t sequence_gaps{};
     std::optional<std::uint16_t> sequence;
     std::optional<std::uint32_t> ssrc;
@@ -301,17 +317,30 @@ int main(int argc, char** argv)
         }
         sequence = static_cast<std::uint16_t>(packet.rtp.seq);
         ssrc = packet.rtp.ssrc;
-        ++packets;
         const auto* payload = static_cast<const std::uint8_t*>(packet.payload);
-        pending.insert(pending.end(), payload, payload + packet.payloadlen);
-        const auto consumed = ps_demuxer_input(demuxer, pending.data(), pending.size());
-        if (consumed < 0)
+        if (pack_start(payload, static_cast<std::size_t>(packet.payloadlen)))
         {
-            state.fail("PS demuxer error " + std::to_string(consumed) + " at RTP packet " + std::to_string(packets - 1));
+            if (packs > 0)
+            {
+                feed_pack(state, demuxer, pending, packets);
+            }
+            ++packs;
             pending.clear();
-            continue;
+            pending_packets = 0;
         }
-        pending.erase(pending.begin(), pending.begin() + consumed);
+        else if (packs == 0)
+        {
+            state.fail("RTP packet " + std::to_string(packets) + " precedes the first PS pack header");
+        }
+        ++packets;
+        ++pending_packets;
+        pending.insert(pending.end(), payload, payload + packet.payloadlen);
+    }
+    const auto fed_packs = packs > 0 ? packs - 1 : 0;
+    if (fed_packs > 0 && fed_packs != state.video.frames + state.audio.frames + 1)
+    {
+        state.fail(std::to_string(fed_packs) + " whole PS packs produced " + std::to_string(state.video.frames + state.audio.frames) +
+                   " frames; one pack per frame and one video access unit held by the demuxer are expected");
     }
     ps_demuxer_destroy(demuxer);
     for (auto* output : {&state.video.es, &state.audio.es, &state.index})
@@ -329,8 +358,9 @@ int main(int argc, char** argv)
     std::cout << "{\"rtp_packets\": " << packets << ", \"rtp_sequence_gaps\": " << sequence_gaps << ", \"stream_map_entries\": " << state.stream_maps
               << ", \"video_codec\": \"" << state.video.codec << "\", \"audio_codec\": \"" << state.audio.codec
               << "\", \"video_frames\": " << state.video.frames << ", \"key_frames\": " << state.key_frames
-              << ", \"audio_frames\": " << state.audio.frames << ", \"audio_bytes\": " << state.audio.bytes
-              << ", \"trailing_bytes\": " << pending.size() << ", \"error_count\": " << state.error_count << ", \"errors\": [";
+              << ", \"audio_frames\": " << state.audio.frames << ", \"audio_bytes\": " << state.audio.bytes << ", \"ps_packs\": " << fed_packs
+              << ", \"trailing_rtp_packets\": " << pending_packets << ", \"trailing_bytes\": " << pending.size()
+              << ", \"error_count\": " << state.error_count << ", \"errors\": [";
     for (std::size_t index = 0; index < state.errors.size(); ++index)
     {
         std::cout << (index == 0 ? "\"" : ", \"") << state.errors[index] << '"';

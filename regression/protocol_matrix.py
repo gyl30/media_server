@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Run bench/perf_run.py over the supported input/codec/output combinations on loopback and summarize the results."""
+"""Run bench/perf_run.py over the supported input/codec/output combinations on loopback and summarize the results.
+
+RTSP AAC inputs carry a known GB output timestamp sawtooth: FFmpeg sends 33 AAC frames per RTP packet, the server's RTSP depacketizer
+(third-party librtp/avpbs) steps the frames inside a packet by a whole 21 ms instead of 1024/48 ms and re-anchors on the next packet's RTP
+timestamp, so every 33rd frame the GB audio timeline jumps by 32 x 1/3 ms with no lost samples. Those scenarios are XFAIL only when that
+exact pattern is the sole failure; any other failure stays FAIL, and a clean run is reported as XPASS and also fails, so the exception
+gets reviewed and removed."""
 
 import argparse
 import json
@@ -11,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ALL_OUTPUTS = "rtmp:2,rtsp:2,flv:2,hls:1,whep:2,gb_udp:1,gb_tcp_active:1,gb_tcp_passive:1"
 NO_GB_OUTPUTS = "rtmp:2,rtsp:2,flv:2,hls:1,whep:2"
+CHROME_OPUS_FMTP = "minptime=10;useinbandfec=1"
 
 DERIVED = {
     "h265_aac.flv": ["-i", "avsync_720p30.flv", "-c:v", "libx265", "-preset", "fast", "-x265-params", "keyint=60:min-keyint=60:log-level=error",
@@ -37,6 +44,8 @@ SCENARIOS = [
     ("rtmp-pull", "rtmp_pull", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("rtsp-pull", "rtsp_pull", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("whep-pull", "whep_pull", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
+    ("whip-chrome-offer", "whip", "avsync_720p30.flv", "whep:2,flv:1", ["--whep-opus-fmtp", CHROME_OPUS_FMTP], False, None),
+    ("whep-pull-chrome-offer", "whep_pull", "avsync_720p30.flv", "whep:2,flv:1", ["--whep-opus-fmtp", CHROME_OPUS_FMTP], False, None),
     ("gb-udp", "gb_udp", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("gb-tcp-active", "gb_tcp_active", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("gb-tcp-passive", "gb_tcp_passive", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
@@ -47,6 +56,33 @@ SCENARIOS = [
     *[(f"fault-{fault.replace('_', '-')}-{output}", "rtmp", "avsync_720p30.flv", f"{output}:1", ["--fault", fault], False, "AUTHORIZATION")
       for fault in ("invalid_token", "replayed_token") for output in ("rtmp", "rtsp", "flv", "hls", "whep")],
 ]
+
+RTSP_AAC_FRAMES_PER_PACKET = 33
+RTSP_AAC_STEP_ERROR_MS = 1024 * 1000 / 48000 - 21
+RTSP_AAC_SLIP_MS = (RTSP_AAC_FRAMES_PER_PACKET - 1) * RTSP_AAC_STEP_ERROR_MS
+RTSP_AAC_TIMESTAMP_JUMPS = {"rtsp-tcp-h264-aac", "rtsp-udp-h264-aac", "rtsp-tcp-h265-aac"}
+
+
+def rtsp_aac_sawtooth(probe):
+    slips = probe.get("audio_pts_slips") or []
+    frames = [slip["frame"] for slip in slips]
+    return ([key for key, value in probe.get("checks", {}).items() if not value] == ["audio_timeline"] and probe.get("audio_codec") == "aac" and
+            probe.get("audio_pts_overlaps") == 0 and bool(frames) and
+            abs(probe.get("audio_pts_gaps", 0) - probe.get("audio_frames", 0) / RTSP_AAC_FRAMES_PER_PACKET) <= 1.5 and
+            probe.get("audio_pts_slip_ms_min", -1) >= -RTSP_AAC_STEP_ERROR_MS - 0.01 and probe.get("audio_pts_slip_ms_max", 99) <= RTSP_AAC_SLIP_MS + 0.01 and
+            all(abs(slip["ms"] - RTSP_AAC_SLIP_MS) <= 0.01 for slip in slips) and
+            all(later - earlier == RTSP_AAC_FRAMES_PER_PACKET for earlier, later in zip(frames, frames[1:])))
+
+
+def only_rtsp_aac_sawtooth(result):
+    groups = result.get("groups", [])
+    failing = {protocol: probe for protocol, probe in result.get("av_probe", {}).items() if not probe.get("ok")}
+    return (result.get("status") == "FAIL" and result.get("capacity_boundary") == "UNCONFIRMED" and not result.get("errors") and bool(groups) and
+            all(group["exit_code"] == 0 and group["measurement"].get("ready") == group["requested"] and
+                group["measurement"].get("progressing") == group["requested"] and group["window"]["coverage"] >= 0.99 for group in groups) and
+            not result.get("realtime_lagging_groups") and all(probe.get("ok") for probe in result.get("decode_probe", {}).values()) and
+            not result.get("churn", {}).get("failed_rounds") and not result.get("source_churn", {}).get("failed_rounds") and bool(failing) and
+            all(protocol.startswith("gb_") and rtsp_aac_sawtooth(probe) for protocol, probe in failing.items()))
 
 
 def summarize(result):
@@ -60,7 +96,7 @@ def summarize(result):
     for protocol, probe in (result.get("av_probe") or {}).items():
         summary["av_probe"][protocol] = {key: probe.get(key) for key in
                                          ("ok", "decode_warnings", "video_frames", "audio_frames", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
-                                          "audio_pts_overlaps", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_codec", "audio_samples",
+                                          "audio_pts_overlaps", "audio_pts_slip_ms_min", "audio_pts_slip_ms_max", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_codec", "audio_samples",
                                           "checks", "reference")}
     for protocol, probe in (result.get("decode_probe") or {}).items():
         summary["decode_probe"][protocol] = {"ok": probe.get("ok"),
@@ -135,13 +171,20 @@ def main():
         completed = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=os.environ)
         (args.output / f"{name}.stdout").write_text(completed.stdout)
         result_path = run / "result.json"
-        summary = summarize(json.loads(result_path.read_text())) if result_path.is_file() else {"status": "NO_RESULT"}
+        result = json.loads(result_path.read_text()) if result_path.is_file() else None
+        summary = summarize(result) if result else {"status": "NO_RESULT"}
         summary["exit_code"] = completed.returncode
+        if name in RTSP_AAC_TIMESTAMP_JUMPS and summary["status"] == "PASS":
+            summary["status"] = "XPASS"
+            summary["known_issue"] = "RTSP AAC GB timestamp sawtooth no longer observed; review and remove the exception"
+        elif name in RTSP_AAC_TIMESTAMP_JUMPS and only_rtsp_aac_sawtooth(result):
+            summary["status"] = "XFAIL"
+            summary["known_issue"] = "RTSP AAC GB timestamp sawtooth: 21 ms steps inside 33-frame RTP packets, re-anchored each packet"
         if expected_failure:
             summary["expected_failure"] = expected_failure
             summary["status"] = "PASS" if expected_failure_observed(summary, expected_failure) else "FAIL"
         summaries[name] = summary
-        failures += summary.get("status") != "PASS"
+        failures += summary.get("status") not in ("PASS", "XFAIL")
         print(f"{name}: {summary.get('status')} {summary.get('boundary')} exit={completed.returncode}", flush=True)
     (args.output / "summary.json").write_text(json.dumps(summaries, indent=2))
     return 1 if failures else 0

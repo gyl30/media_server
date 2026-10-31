@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Mutate a good GB28181 RTP/PS dump (gb_fanout --dump-file) and require bench/gb_av_probe.py to reject every mutation while still
 accepting the unmodified dump. Mutations: audio packs removed, the audio stream type in the PSM replaced, an audio PES truncated,
-an invalid RTP version, a missing RTP packet and corrupted audio samples."""
+an invalid RTP version, a missing RTP packet, corrupted audio samples, the tail of a video pack removed with RTP sequence numbers kept
+continuous, and a dump cut inside its last RTP record. A capture that ends inside its last PS pack is a normal capture end and must still
+be accepted."""
 
 import argparse
 import json
@@ -21,8 +23,8 @@ def read_records(data):
     return records
 
 
-def write_records(records, path):
-    path.write_bytes(b"".join(struct.pack("!H", len(record)) + bytes(record) for record in records))
+def encode_records(records):
+    return b"".join(struct.pack("!H", len(record)) + bytes(record) for record in records)
 
 
 def payload_offset(record):
@@ -42,6 +44,11 @@ def pack_elements(record):
         length = struct.unpack_from("!H", data, offset + 4)[0]
         yield offset, data[offset + 3], length
         offset += 6 + length
+
+
+def packs(records):
+    starts = [index for index, record in enumerate(records) if record[payload_offset(record):payload_offset(record) + 4] == b"\x00\x00\x01\xba"]
+    return [range(start, end) for start, end in zip(starts, starts[1:] + [len(records)])]
 
 
 def audio_packets(records):
@@ -106,6 +113,18 @@ def mutations(records):
             corrupted[index][position] ^= 0x5A
     yield "audio_samples_corrupted", corrupted
 
+    groups = packs(records)
+    video = [group for group in groups[len(groups) // 2:-1] if len(group) >= 3 and any(0xE0 <= stream_id <= 0xEF for _, stream_id, _ in
+                                                                                        pack_elements(records[group[0]]))]
+    removed = [bytearray(record) for index, record in enumerate(records) if index != video[0][-1]]
+    renumber(removed)
+    yield "video_pack_tail_removed", removed
+
+    last = next(group for group in reversed(groups) if len(group) >= 2)
+    yield "capture_ends_mid_pack", [bytearray(record) for record in records[:last[0] + 1]]
+
+    yield "capture_ends_mid_record", encode_records(records)[:-5]
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -120,7 +139,7 @@ def main():
     failures = []
     for name, mutated in mutations(records):
         path = args.output / f"{name}.rtp"
-        write_records(mutated, path)
+        path.write_bytes(mutated if isinstance(mutated, bytes) else encode_records(mutated))
         process = subprocess.run([sys.executable, str(Path(__file__).resolve().parent.parent / "bench/gb_av_probe.py"), str(path), "--demux-bin",
                                   str(args.demux_bin), "--ffmpeg-bin", args.ffmpeg_bin, "--expect-audio", "--reference", str(args.reference)],
                                  capture_output=True, text=True)
@@ -130,7 +149,7 @@ def main():
         except ValueError:
             result = {"ok": False, "checks": {"probe_output": False}}
         accepted = result.get("ok") is True
-        expected = name == "unmodified"
+        expected = name in ("unmodified", "capture_ends_mid_pack")
         failed_checks = sorted(key for key, value in (result.get("checks") or {}).items() if not value)
         print(json.dumps({"mutation": name, "accepted": accepted, "expected_accept": expected, "failed_checks": failed_checks,
                           "demux_errors": (result.get("demux") or {}).get("errors", [])[:2]}))
