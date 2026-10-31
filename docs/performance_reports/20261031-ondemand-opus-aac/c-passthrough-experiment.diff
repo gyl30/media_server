@@ -1,0 +1,15 @@
+--- media/webrtc/webrtc_sdp.cpp	2026-10-23 09:50:34.439950130 +0800
++++ media/webrtc/webrtc_sdp.cpp	2026-10-31 08:21:08.014003950 +0800
+@@ -441,11 +441,7 @@
+ 
+ bool opus_passthrough_compatible(const webrtc_codec_offer& codec, const media_track& track)
+ {
+-    if (track.channel_count == 2 && !has_parameter(codec.format_parameters, "stereo", "1"))
+-    {
+-        return false;
+-    }
+-
++    static_cast<void>(track);
+     if (parameter_value(codec.format_parameters, "maxplaybackrate"))
+     {
+         const auto rate = decimal_parameter(codec.format_parameters, "maxplaybackrate", 48'000, 48'000);
