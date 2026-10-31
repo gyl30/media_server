@@ -70,6 +70,8 @@ void media_stream::remove_sink(media_sink* sink)
     boost::asio::dispatch(worker_.io(), [self = shared_from_this(), sink]() { self->dispatcher_.remove(sink); });
 }
 
+bool media_stream::has_sinks() const { return dispatcher_.has_live_sinks(); }
+
 void media_stream::publish(media_frame frame)
 {
     if (ended_ || !frame.payload || frame.payload->empty())

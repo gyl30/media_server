@@ -36,6 +36,20 @@ class worker_sink_dispatcher final
         group->sinks.emplace_back(std::move(sink));
     }
 
+    [[nodiscard]] bool has_live_sinks() const
+    {
+        for (const auto& [worker, group] : sink_groups_)
+        {
+            static_cast<void>(worker);
+            std::scoped_lock lock(group->mutex);
+            if (std::any_of(group->sinks.begin(), group->sinks.end(), [](const auto& sink) { return !sink.expired(); }))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void remove(Sink* sink)
     {
         for (auto iterator = sink_groups_.begin(); iterator != sink_groups_.end();)

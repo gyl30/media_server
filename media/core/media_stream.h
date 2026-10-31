@@ -29,6 +29,7 @@ class media_stream final : public std::enable_shared_from_this<media_stream>
     [[nodiscard]] const std::shared_ptr<media_stream>& opus_stream() const noexcept;
     void add_sink(std::shared_ptr<media_sink> sink);
     void remove_sink(media_sink* sink);
+    [[nodiscard]] bool has_sinks() const;
     void publish(media_frame frame);
     void end();
 

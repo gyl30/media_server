@@ -63,27 +63,29 @@ bool whip_media_receiver::startup(whip_media_receiver_config config)
 
     opus_stream_ = std::make_shared<media_stream>(media_stream_->stream_id(), media_stream_->worker());
     const auto bitrate = 64'000 * static_cast<int>(config.audio_channel_count);
+    audio_transcoder_config_ = audio_transcoder_config{
+        .input =
+            audio_transcoder_format{
+                .codec = codec_id::opus,
+                .sample_rate = opus_sample_rate,
+                .channel_count = config.audio_channel_count,
+            },
+        .output =
+            audio_transcoder_format{
+                .codec = codec_id::aac,
+                .sample_rate = opus_sample_rate,
+                .channel_count = config.audio_channel_count,
+            },
+        .input_codec_config = {},
+        .output_bit_rate = bitrate,
+        .output_cutoff = audio_cutoff,
+    };
     audio_transcoder_ = std::make_unique<audio_transcoder>();
-    if (!audio_transcoder_->startup(audio_transcoder_config{
-            .input =
-                audio_transcoder_format{
-                    .codec = codec_id::opus,
-                    .sample_rate = opus_sample_rate,
-                    .channel_count = config.audio_channel_count,
-                },
-            .output =
-                audio_transcoder_format{
-                    .codec = codec_id::aac,
-                    .sample_rate = opus_sample_rate,
-                    .channel_count = config.audio_channel_count,
-                },
-            .input_codec_config = {},
-            .output_bit_rate = bitrate,
-            .output_cutoff = audio_cutoff,
-        }))
+    if (!audio_transcoder_->startup(audio_transcoder_config_))
     {
         return false;
     }
+    audio_transcoder_active_ = true;
     const auto codec_config = audio_transcoder_->output_codec_config();
     if (codec_config.empty())
     {
@@ -283,6 +285,17 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
         media_stream_->publish(frame);
         return 0;
     }
+
+    if (!media_stream_->has_sinks())
+    {
+        audio_transcoder_active_ = false;
+        return 0;
+    }
+    if (!audio_transcoder_active_ && !audio_transcoder_->startup(audio_transcoder_config_))
+    {
+        return -1;
+    }
+    audio_transcoder_active_ = true;
 
     std::vector<media_frame> output;
     if (!audio_transcoder_->transcode(frame, output))
