@@ -54,6 +54,7 @@ __pycache__/
 !/docs/performance_reports/**/*.cpp
 !/docs/performance_reports/**/*.h
 !/docs/performance_reports/**/*.c
+!/docs/performance_reports/20261030-protocol-matrix-performance/transcoders.bt
 /docs/verification_results/**
 !/docs/verification_results/**/
 !/docs/verification_results/**/*.md

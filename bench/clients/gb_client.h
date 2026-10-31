@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstddef>
 #include <cstdint>
+#include <fstream>
 #include <optional>
 
 #include <boost/asio/ip/tcp.hpp>
@@ -51,6 +52,7 @@ struct gb_client_options
     std::uint16_t listen_port{};
     std::uint8_t payload_type{96};
     gb_peer peer{gb_peer::quiet};
+    std::string dump_file;
 };
 
 struct gb_sender_key

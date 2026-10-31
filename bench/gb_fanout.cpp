@@ -89,7 +89,8 @@ int main(int argc, char** argv)
                      "--bind-address ADDRESS --listen-port PORT (TCP sessions use consecutive ports)\n"
                      "--peer quiet|rtcp|rtcp_rr|rr|rtp_noise (UDP: configure remote RTCP, send RR to RTP source port + 1 or junk to the RTP "
                      "source port each second)\n"
-                     "--play-paths-file FILE (one stream_id/sender_id per viewer)\n";
+                     "--play-paths-file FILE (one stream_id/sender_id per viewer)\n"
+                     "--dump-file FILE (first receiving viewer's sequence-checked PS payload, playable as an MPEG-PS file)\n";
         return media_server::bench::media_fanout<media_server::bench::gb_client>::run(argc, argv, default_control_port);
     }
     std::vector<char*> forwarded{argv[0]};
@@ -117,6 +118,10 @@ int main(int argc, char** argv)
             else if (argument == "--peer")
             {
                 options.peer = parse_peer(option_value(index, argc, argv));
+            }
+            else if (argument == "--dump-file")
+            {
+                options.dump_file = option_value(index, argc, argv);
             }
             else if (argument == "--listen-port")
             {

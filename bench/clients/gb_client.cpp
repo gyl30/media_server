@@ -57,6 +57,18 @@ std::vector<std::uint64_t>& delete_latencies()
     return value;
 }
 
+std::ofstream& dump_stream()
+{
+    static std::ofstream value;
+    return value;
+}
+
+const void*& dump_owner()
+{
+    static const void* value{};
+    return value;
+}
+
 gb_peer_counters& counters()
 {
     static gb_peer_counters value;
@@ -233,7 +245,14 @@ gb_client::gb_client(boost::asio::io_context& io, const std::string& path)
     buffer_.resize(receive_buffer_bytes);
 }
 
-void gb_client::configure(gb_client_options value) { options() = std::move(value); }
+void gb_client::configure(gb_client_options value)
+{
+    options() = std::move(value);
+    if (!options().dump_file.empty())
+    {
+        dump_stream().open(options().dump_file, std::ios::binary);
+    }
+}
 
 const std::vector<gb_sender_key>& gb_client::created_senders() { return senders(); }
 
@@ -549,6 +568,11 @@ bool gb_client::on_packet(std::span<const std::uint8_t> packet)
         return false;
     }
     (video_frame_ ? video_bytes_ : audio_bytes_) += payload.size();
+    if (dump_stream().is_open() && (dump_owner() == nullptr || dump_owner() == this))
+    {
+        dump_owner() = this;
+        dump_stream().write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+    }
     return true;
 }
 

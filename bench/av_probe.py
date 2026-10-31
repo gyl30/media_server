@@ -29,9 +29,11 @@ def rising_edges(samples, threshold):
     return edges
 
 
-def summarize(video, audio_frames, audio_levels, audio_rate, first_video_s, decode_warnings, exit_code, seconds):
-    result = {"exit_code": exit_code, "seconds": seconds, "first_video_s": first_video_s, "decode_warnings": decode_warnings,
-              "video_frames": len(video), "audio_frames": len(audio_frames)}
+def summarize(video, audio_frames, audio_levels, audio_rate, first_video_s, first_audio_s, decode_warnings, exit_code, seconds):
+    result = {"exit_code": exit_code, "seconds": seconds, "first_video_s": first_video_s, "first_audio_s": first_audio_s,
+              "decode_warnings": decode_warnings, "video_frames": len(video), "audio_frames": len(audio_frames)}
+    if video and audio_frames:
+        result["audio_start_after_video_ms"] = (audio_frames[0][0] - video[0][0]) * 1000
     if len(video) >= 2:
         pts = [frame[0] for frame in video]
         intervals = [later - earlier for earlier, later in zip(pts, pts[1:])]
@@ -74,6 +76,7 @@ def main():
     parser.add_argument("url")
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--ffmpeg-bin", default="ffmpeg")
+    parser.add_argument("--video-only", action="store_true", help="decode only the video stream")
     args = parser.parse_args()
 
     audio_chain = ("astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=Number_of_samples,"
@@ -82,9 +85,9 @@ def main():
                    "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level")
     command = [args.ffmpeg_bin, "-hide_banner", "-nostats", "-loglevel", "info"]
     command += ["-rtsp_transport", "tcp"] if args.url.startswith("rtsp://") else []
-    command += ["-i", args.url, "-t", str(args.seconds), "-map", "0:v:0", "-map", "0:a:0?",
-                "-filter:v", "scale=64:36,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-filter:a", audio_chain,
-                "-fps_mode", "passthrough", "-f", "null", "-"]
+    command += ["-i", args.url, "-t", str(args.seconds), "-map", "0:v:0", "-filter:v", "scale=64:36,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG"]
+    command += [] if args.video_only else ["-map", "0:a:0?", "-filter:a", audio_chain]
+    command += ["-fps_mode", "passthrough", "-f", "null", "-"]
     started = time.monotonic()
     video = []
     audio_frames = []
@@ -92,6 +95,7 @@ def main():
     audio_rate = None
     pending = {}
     first_video_s = None
+    first_audio_s = None
     decode_warnings = 0
     process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
     for line in process.stderr or []:
@@ -117,11 +121,13 @@ def main():
                 first_video_s = now
             video.append((pts, float(value), now - first_video_s))
         elif key == "astats.Overall.Number_of_samples":
+            if first_audio_s is None:
+                first_audio_s = now
             audio_frames.append((pts, float(value)))
         else:
             audio_levels.append((pts, float(value) if value not in ("-inf", "inf", "nan") else -200.0))
     process.wait()
-    print(json.dumps(summarize(video, audio_frames, audio_levels, audio_rate, first_video_s, decode_warnings, process.returncode, args.seconds)))
+    print(json.dumps(summarize(video, audio_frames, audio_levels, audio_rate, first_video_s, first_audio_s, decode_warnings, process.returncode, args.seconds)))
 
 
 if __name__ == "__main__":

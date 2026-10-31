@@ -187,7 +187,7 @@ def parse_arguments():
     parser.add_argument("--stalled-viewers", type=int, default=0, metavar="COUNT",
                         help="per RTMP/RTSP/FLV output, start COUNT extra ffmpeg readers at the window start and SIGSTOP them after 5 s; report whether the server closed them")
     parser.add_argument("--av-probe", type=float, default=0, metavar="SECONDS",
-                        help="decode each RTMP/RTSP/FLV/HLS output with ffmpeg for SECONDS from the window start, and replay the first WHEP viewer's RTP for SECONDS+5 after the window; report cadence, timestamp order, arrival lag and A/V marker offsets")
+                        help="decode each RTMP/RTSP/FLV/HLS output with ffmpeg for SECONDS from the window start, replay the first WHEP viewer's RTP for SECONDS+5 after the window and decode the PS payload recorded by the first viewer of each GB transport; report cadence, timestamp order, arrival lag and A/V marker offsets")
     parser.add_argument("--churn", help="PROTOCOL:COUNT extra viewers that repeatedly join and leave during the window")
     parser.add_argument("--perf-stat", action="store_true", help="count server CPU cycles, instructions, page faults and context switches with perf stat during the window")
     parser.add_argument("--cleanup-settle", type=int, default=0, help="seconds to wait after cleanup before a second server snapshot")
@@ -374,10 +374,11 @@ def run(args):
             senders = [{"stream_id": item["stream_id"], "sender_id": str(uuid.uuid4())} for item in selected]
             gb_senders.extend(senders)
             credentials.write_text("\n".join(f"{item['stream_id']}/{item['sender_id']}" for item in senders) + "\n")
+            dump = ["--dump-file", args.output / f"{group_name}.ps"] if args.av_probe > 0 and group_name == f"{protocol}-0" else []
             return [args.client_dir / "gb_fanout", "--play-paths-file", credentials, "--media-host", args.host,
                     "--media-port", args.http_port, "--control-token-file", token_file, "--transport", protocol[3:],
                     "--bind-address", args.client_address, "--listen-port", gb_listen_port, "--peer", args.gb_peer,
-                    "--progress-interval", args.progress_interval, *common]
+                    "--progress-interval", args.progress_interval, *dump, *common]
         urls = [play_value(source, protocol, stub) for source in selected]
         if protocol in ("rtmp", "rtsp", "flv"):
             credentials.write_text("\n".join(urlsplit(url).path.lstrip("/") for url in urls) + "\n")
@@ -967,6 +968,26 @@ def run(args):
                 except (IndexError, ValueError):
                     probe = {"exit_code": process.returncode}
                 probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
+                result.setdefault("av_probe", {})[protocol] = probe
+            mulaw = any(stream.get("codec_name") == "pcm_mulaw" for stream in (result.get("fixture_metadata") or {}).get("streams", []))
+            for protocol in ("gb_udp", "gb_tcp_active", "gb_tcp_passive"):
+                dump = args.output / f"{protocol}-0.ps"
+                if not dump.exists():
+                    continue
+                process = launch(f"av-{protocol}", [sys.executable, Path(__file__).with_name("av_probe.py"), dump, "--seconds", 3600,
+                                                    "--ffmpeg-bin", args.ffmpeg_bin, *(["--video-only"] if mulaw else [])], args.client_cpus, "decode")
+                try:
+                    process.wait(timeout=120)
+                except subprocess.TimeoutExpired:
+                    stop_process(process)
+                lines = (args.output / f"av-{protocol}.log").read_text().splitlines()
+                try:
+                    probe = json.loads(lines[-1])
+                except (IndexError, ValueError):
+                    probe = {"exit_code": process.returncode}
+                probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
+                if mulaw:
+                    probe["audio_unverified"] = "FFmpeg's MPEG-PS demuxer maps stream type 0x91 (G.711 mu-law) only in IMKH files"
                 result.setdefault("av_probe", {})[protocol] = probe
             if (args.output / "whep-0.dump").exists():
                 process = launch("av-whep", [sys.executable, Path(__file__).with_name("whep_dump_av.py"), args.output / "whep-0.dump",

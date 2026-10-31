@@ -1,0 +1,26 @@
+// usage: bpftrace transcoders.bt <media_server path>; keys are (tid, input codec, output codec, output channels), codec 2 aac 3 opus
+uprobe:$1:_ZN12media_server16audio_transcoder7startupERKNS_23audio_transcoder_configE
+{
+  @transcoder_start[tid, *(int32 *)arg1, *(int32 *)(arg1 + 12), *(uint16 *)(arg1 + 20)] = count();
+}
+uprobe:$1:_ZN12media_server16audio_transcoderD1Ev
+{
+  @transcoder_destroy[tid] = count();
+}
+uprobe:$1:_ZN12media_server17whep_audio_egressC1ESt10shared_ptrINS_12media_streamEENS_12worker_leaseE
+{
+  @egress_create[tid] = count();
+}
+uprobe:$1:_ZN12media_server17whep_audio_egressD1Ev,
+uprobe:$1:_ZN12media_server17whep_audio_egressD0Ev
+{
+  @egress_destroy[tid] = count();
+}
+interval:s:10
+{
+  time("== %H:%M:%S\n");
+  print(@transcoder_start);
+  print(@transcoder_destroy);
+  print(@egress_create);
+  print(@egress_destroy);
+}

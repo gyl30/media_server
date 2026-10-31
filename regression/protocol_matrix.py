@@ -10,7 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ALL_OUTPUTS = "rtmp:2,rtsp:2,flv:2,hls:1,whep:2,gb_udp:1,gb_tcp_active:1,gb_tcp_passive:1"
-NO_WHEP_OUTPUTS = "rtmp:2,rtsp:2,flv:2,hls:1,gb_udp:1,gb_tcp_active:1,gb_tcp_passive:1"
 NO_GB_OUTPUTS = "rtmp:2,rtsp:2,flv:2,hls:1,whep:2"
 
 DERIVED = {
@@ -25,13 +24,13 @@ DERIVED = {
 SCENARIOS = [
     ("rtmp-h264-aac", "rtmp", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("rtmp-h264-bframes-aac", "rtmp", "avsync_bframes.flv", ALL_OUTPUTS, [], False, None),
-    ("rtmp-h265-aac", "rtmp", "h265_aac.flv", NO_WHEP_OUTPUTS, [], False, None),
+    ("rtmp-h265-aac", "rtmp", "h265_aac.flv", ALL_OUTPUTS, [], False, None),
     ("rtmp-h264-pcma", "rtmp", "h264_pcma.flv", ALL_OUTPUTS, [], False, None),
     ("rtmp-h264-pcmu", "rtmp", "h264_pcmu.flv", ALL_OUTPUTS, [], False, None),
     ("rtmp-h264-opus", "rtmp", "h264_opus.flv", NO_GB_OUTPUTS, [], True, None),
     ("rtsp-tcp-h264-aac", "rtsp_tcp", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("rtsp-udp-h264-aac", "rtsp_udp", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
-    ("rtsp-tcp-h265-aac", "rtsp_tcp", "h265_aac.flv", NO_WHEP_OUTPUTS, [], False, None),
+    ("rtsp-tcp-h265-aac", "rtsp_tcp", "h265_aac.flv", ALL_OUTPUTS, [], False, None),
     ("rtsp-tcp-h264-opus", "rtsp_tcp", "avsync_whip.mkv", NO_GB_OUTPUTS, [], True, None),
     ("rtsp-tcp-h264-pcma", "rtsp_tcp", "h264_pcma.flv", ALL_OUTPUTS, [], False, None),
     ("whip-h264-opus", "whip", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
@@ -44,7 +43,7 @@ SCENARIOS = [
     ("multi-source-cross-worker", "rtmp", "avsync_720p30.flv", "rtmp:20,rtsp:20,flv:20,hls:4,whep:12,gb_udp:8,gb_tcp_active:4,gb_tcp_passive:4",
      ["--sources", "4", "--churn", "rtmp:6"], False, None),
     ("slow-readers", "rtmp", "avsync_720p30.flv", "rtmp:2,rtsp:2,flv:2", ["--stalled-viewers", "2"], False, None),
-    ("fault-source-stop", "rtmp", "avsync_720p30.flv", "rtmp:2,rtsp:2,flv:2,whep:2,gb_udp:1", ["--fault", "source_stop"], False, "SOURCE_ENDED"),
+    ("fault-source-stop", "rtmp", "avsync_720p30.flv", "rtmp:2,rtsp:2,flv:2,whep:2,gb_udp:1,gb_tcp_active:1,gb_tcp_passive:1", ["--fault", "source_stop"], False, "SOURCE_ENDED"),
     *[(f"fault-{fault.replace('_', '-')}-{output}", "rtmp", "avsync_720p30.flv", f"{output}:1", ["--fault", fault], False, "AUTHORIZATION")
       for fault in ("invalid_token", "replayed_token") for output in ("rtmp", "rtsp", "flv", "hls", "whep")],
 ]
@@ -60,8 +59,8 @@ def summarize(result):
         summary["groups"][group["name"]]["failure_category"] = group.get("failure_category")
     for protocol, probe in (result.get("av_probe") or {}).items():
         summary["av_probe"][protocol] = {key: probe.get(key) for key in
-                                         ("ok", "decode_warnings", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
-                                          "audio_pts_overlaps", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max")}
+                                         ("ok", "decode_warnings", "video_frames", "audio_frames", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
+                                          "audio_pts_overlaps", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_unverified")}
     for protocol, probe in (result.get("decode_probe") or {}).items():
         summary["decode_probe"][protocol] = {"ok": probe.get("ok"),
                                              "streams": [f"{stream.get('codec_name')}:{stream.get('nb_read_frames')}" for stream in probe.get("streams", [])]}
