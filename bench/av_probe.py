@@ -76,7 +76,6 @@ def main():
     parser.add_argument("url")
     parser.add_argument("--seconds", type=float, default=20)
     parser.add_argument("--ffmpeg-bin", default="ffmpeg")
-    parser.add_argument("--video-only", action="store_true", help="decode only the video stream")
     args = parser.parse_args()
 
     audio_chain = ("astats=metadata=1:reset=1:measure_perchannel=none:measure_overall=Number_of_samples,"
@@ -85,9 +84,9 @@ def main():
                    "ametadata=mode=print:key=lavfi.astats.Overall.RMS_level")
     command = [args.ffmpeg_bin, "-hide_banner", "-nostats", "-loglevel", "info"]
     command += ["-rtsp_transport", "tcp"] if args.url.startswith("rtsp://") else []
-    command += ["-i", args.url, "-t", str(args.seconds), "-map", "0:v:0", "-filter:v", "scale=64:36,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG"]
-    command += [] if args.video_only else ["-map", "0:a:0?", "-filter:a", audio_chain]
-    command += ["-fps_mode", "passthrough", "-f", "null", "-"]
+    command += ["-i", args.url, "-t", str(args.seconds), "-map", "0:v:0", "-map", "0:a:0?",
+                "-filter:v", "scale=64:36,signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG", "-filter:a", audio_chain,
+                "-fps_mode", "passthrough", "-f", "null", "-"]
     started = time.monotonic()
     video = []
     audio_frames = []

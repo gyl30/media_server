@@ -245,13 +245,25 @@ gb_client::gb_client(boost::asio::io_context& io, const std::string& path)
     buffer_.resize(receive_buffer_bytes);
 }
 
-void gb_client::configure(gb_client_options value)
+bool gb_client::configure(gb_client_options value)
 {
     options() = std::move(value);
     if (!options().dump_file.empty())
     {
         dump_stream().open(options().dump_file, std::ios::binary);
+        return dump_stream().is_open();
     }
+    return true;
+}
+
+bool gb_client::close_dump()
+{
+    if (!dump_stream().is_open())
+    {
+        return true;
+    }
+    dump_stream().close();
+    return !dump_stream().fail();
 }
 
 const std::vector<gb_sender_key>& gb_client::created_senders() { return senders(); }
@@ -571,7 +583,10 @@ bool gb_client::on_packet(std::span<const std::uint8_t> packet)
     if (dump_stream().is_open() && (dump_owner() == nullptr || dump_owner() == this))
     {
         dump_owner() = this;
-        dump_stream().write(reinterpret_cast<const char*>(payload.data()), static_cast<std::streamsize>(payload.size()));
+        const std::array<char, 2> length{static_cast<char>(packet.size() >> 8U), static_cast<char>(packet.size())};
+        dump_stream().write(length.data(), length.size());
+        dump_stream().write(reinterpret_cast<const char*>(packet.data()), static_cast<std::streamsize>(packet.size()));
+        return !dump_stream().fail();
     }
     return true;
 }

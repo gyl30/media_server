@@ -60,7 +60,8 @@ def summarize(result):
     for protocol, probe in (result.get("av_probe") or {}).items():
         summary["av_probe"][protocol] = {key: probe.get(key) for key in
                                          ("ok", "decode_warnings", "video_frames", "audio_frames", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
-                                          "audio_pts_overlaps", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_unverified")}
+                                          "audio_pts_overlaps", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_codec", "audio_samples",
+                                          "checks", "reference")}
     for protocol, probe in (result.get("decode_probe") or {}).items():
         summary["decode_probe"][protocol] = {"ok": probe.get("ok"),
                                              "streams": [f"{stream.get('codec_name')}:{stream.get('nb_read_frames')}" for stream in probe.get("streams", [])]}

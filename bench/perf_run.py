@@ -374,7 +374,7 @@ def run(args):
             senders = [{"stream_id": item["stream_id"], "sender_id": str(uuid.uuid4())} for item in selected]
             gb_senders.extend(senders)
             credentials.write_text("\n".join(f"{item['stream_id']}/{item['sender_id']}" for item in senders) + "\n")
-            dump = ["--dump-file", args.output / f"{group_name}.ps"] if args.av_probe > 0 and group_name == f"{protocol}-0" else []
+            dump = ["--dump-file", args.output / f"{group_name}.rtp"] if args.av_probe > 0 and group_name == f"{protocol}-0" else []
             return [args.client_dir / "gb_fanout", "--play-paths-file", credentials, "--media-host", args.host,
                     "--media-port", args.http_port, "--control-token-file", token_file, "--transport", protocol[3:],
                     "--bind-address", args.client_address, "--listen-port", gb_listen_port, "--peer", args.gb_peer,
@@ -969,13 +969,16 @@ def run(args):
                     probe = {"exit_code": process.returncode}
                 probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
                 result.setdefault("av_probe", {})[protocol] = probe
-            mulaw = any(stream.get("codec_name") == "pcm_mulaw" for stream in (result.get("fixture_metadata") or {}).get("streams", []))
+            codecs = {stream.get("codec_type"): stream.get("codec_name") for stream in (result.get("fixture_metadata") or {}).get("streams", [])}
+            reference = ["--reference", args.fixture] if codecs.get("audio") in ("aac", "pcm_alaw", "pcm_mulaw") and \
+                not {"whip", "whep_pull"} & set(args.input_counts) else []
             for protocol in ("gb_udp", "gb_tcp_active", "gb_tcp_passive"):
-                dump = args.output / f"{protocol}-0.ps"
+                dump = args.output / f"{protocol}-0.rtp"
                 if not dump.exists():
                     continue
-                process = launch(f"av-{protocol}", [sys.executable, Path(__file__).with_name("av_probe.py"), dump, "--seconds", 3600,
-                                                    "--ffmpeg-bin", args.ffmpeg_bin, *(["--video-only"] if mulaw else [])], args.client_cpus, "decode")
+                process = launch(f"av-{protocol}", [sys.executable, Path(__file__).with_name("gb_av_probe.py"), dump, "--demux-bin",
+                                                    args.client_dir / "gb_ps_demux", "--ffmpeg-bin", args.ffmpeg_bin, "--expect-audio", *reference],
+                                 args.client_cpus, "decode")
                 try:
                     process.wait(timeout=120)
                 except subprocess.TimeoutExpired:
@@ -984,10 +987,8 @@ def run(args):
                 try:
                     probe = json.loads(lines[-1])
                 except (IndexError, ValueError):
-                    probe = {"exit_code": process.returncode}
-                probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
-                if mulaw:
-                    probe["audio_unverified"] = "FFmpeg's MPEG-PS demuxer maps stream type 0x91 (G.711 mu-law) only in IMKH files"
+                    probe = {"ok": False, "exit_code": process.returncode}
+                probe["ok"] = process.returncode == 0 and probe.get("ok") is True
                 result.setdefault("av_probe", {})[protocol] = probe
             if (args.output / "whep-0.dump").exists():
                 process = launch("av-whep", [sys.executable, Path(__file__).with_name("whep_dump_av.py"), args.output / "whep-0.dump",

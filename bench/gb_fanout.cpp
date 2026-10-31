@@ -90,7 +90,8 @@ int main(int argc, char** argv)
                      "--peer quiet|rtcp|rtcp_rr|rr|rtp_noise (UDP: configure remote RTCP, send RR to RTP source port + 1 or junk to the RTP "
                      "source port each second)\n"
                      "--play-paths-file FILE (one stream_id/sender_id per viewer)\n"
-                     "--dump-file FILE (first receiving viewer's sequence-checked PS payload, playable as an MPEG-PS file)\n";
+                     "--dump-file FILE (first receiving viewer's sequence-checked RTP packets, each preceded by a 16-bit big-endian length; read it "
+                     "with gb_ps_demux)\n";
         return media_server::bench::media_fanout<media_server::bench::gb_client>::run(argc, argv, default_control_port);
     }
     std::vector<char*> forwarded{argv[0]};
@@ -146,7 +147,11 @@ int main(int argc, char** argv)
         {
             throw std::runtime_error("control-token-file, bind-address, media-host and a TCP listen-port are required");
         }
-        media_server::bench::gb_client::configure(std::move(options));
+        if (!media_server::bench::gb_client::configure(std::move(options)))
+        {
+            std::cerr << "GB fanout configuration failed: cannot open dump-file\n";
+            return 2;
+        }
     }
     catch (const std::exception& error)
     {
@@ -185,5 +190,7 @@ int main(int argc, char** argv)
               << " create_ms_max=" << percentile(creates, 100) << " delete_requests=" << deletes.size()
               << " delete_ms_p50=" << percentile(deletes, 50) << " delete_ms_p90=" << percentile(deletes, 90)
               << " delete_ms_p99=" << percentile(deletes, 99) << " delete_ms_max=" << percentile(deletes, 100) << std::endl;
-    return code == 0 && deleted == senders.size() ? 0 : 1;
+    const bool dumped = media_server::bench::gb_client::close_dump();
+    std::cout << "phase=dump closed=" << (dumped ? 1 : 0) << std::endl;
+    return code == 0 && deleted == senders.size() && dumped ? 0 : 1;
 }

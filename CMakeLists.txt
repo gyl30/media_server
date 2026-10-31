@@ -349,6 +349,9 @@ if(MEDIA_SERVER_BUILD_BENCHMARKS)
     add_executable(gb_fanout bench/gb_fanout.cpp bench/clients/gb_client.cpp)
     target_link_libraries(gb_fanout PRIVATE media_core media_server_link_options)
 
+    add_executable(gb_ps_demux bench/gb_ps_demux.cpp)
+    target_link_libraries(gb_ps_demux PRIVATE media_core media_server_link_options)
+
     add_executable(rtsp_publisher bench/rtsp_publisher.cpp)
     target_link_libraries(rtsp_publisher PRIVATE media_core media_server_link_options)
 

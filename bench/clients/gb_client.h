@@ -66,7 +66,8 @@ class gb_client final
    public:
     gb_client(boost::asio::io_context& io, const std::string& path);
 
-    static void configure(gb_client_options value);
+    static bool configure(gb_client_options value);
+    static bool close_dump();
     static const std::vector<gb_sender_key>& created_senders();
     static const std::vector<std::uint64_t>& create_milliseconds();
     static const std::vector<std::uint64_t>& delete_milliseconds();
