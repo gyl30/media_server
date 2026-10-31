@@ -1,0 +1,38 @@
+diff --git a/media/webrtc/webrtc_sdp.cpp b/media/webrtc/webrtc_sdp.cpp
+index 0444744..b088541 100644
+--- a/media/webrtc/webrtc_sdp.cpp
++++ b/media/webrtc/webrtc_sdp.cpp
+@@ -439,13 +439,8 @@ int opus_output_channel_count(const webrtc_codec_offer& codec, const media_track
+     return 1;
+ }
+ 
+-bool opus_passthrough_compatible(const webrtc_codec_offer& codec, const media_track& track)
++bool opus_passthrough_compatible(const webrtc_codec_offer& codec)
+ {
+-    if (track.channel_count == 2 && !has_parameter(codec.format_parameters, "stereo", "1"))
+-    {
+-        return false;
+-    }
+-
+     if (parameter_value(codec.format_parameters, "maxplaybackrate"))
+     {
+         const auto rate = decimal_parameter(codec.format_parameters, "maxplaybackrate", 48'000, 48'000);
+@@ -885,7 +880,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
+             codec = audio_track->codec == codec_id::g711a || audio_track->codec == codec_id::g711u ? find_g711(media, audio_track->codec)
+                                                                                                    : find_opus(media);
+             if (codec != nullptr && audio_track->codec == codec_id::opus &&
+-                (!opus_passthrough_compatible(*codec, *audio_track) || (media.max_packet_time_ms && *media.max_packet_time_ms != 120)))
++                (!opus_passthrough_compatible(*codec) || (media.max_packet_time_ms && *media.max_packet_time_ms != 120)))
+             {
+                 codec = nullptr;
+             }
+@@ -933,8 +928,7 @@ std::optional<webrtc_answer> make_webrtc_answer(const webrtc_offer& offer, const
+             audio_mid = media.mid;
+             audio_mid_extension_id = media.mid_extension_id;
+             bundle_mid_extension_id = media.mid_extension_id;
+-            audio_channel_count =
+-                audio_track->codec == codec_id::g711a || audio_track->codec == codec_id::g711u ? 1 : opus_output_channel_count(*codec, *audio_track);
++            audio_channel_count = audio_track->codec == codec_id::aac ? opus_output_channel_count(*codec, *audio_track) : audio_track->channel_count;
+             if (audio_track->codec == codec_id::aac || audio_track->codec == codec_id::opus)
+             {
+                 audio_bitrate = 64'000 * *audio_channel_count;

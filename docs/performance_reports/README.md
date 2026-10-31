@@ -22,6 +22,7 @@
 | [20261030-mixed-workload](20261030-mixed-workload/report.md) | `a087a42`→`3b6c0bd` | 三种混合负载的 8 核容量：WebRTC 为主 1.2×→1.6×（Opus 直通），全协议广播约 +5%，多源少观看不变；修复 WHEP SR 音画偏差；租约统一放置 | 原始结果与 profile 只在测试机；B 数据在测试 netns 缩小临时端口范围后测得 |
 | [20261030-protocol-matrix-performance](20261030-protocol-matrix-performance/report.md) | `3b6c0bd` 二进制（`92850b4` 生产源码相同） | 全协议矩阵 31/31；WHIP→各输出容量（每源 2 观看者：TCP/GB 480 源、HLS 544、WHEP 直通 384、Chrome offer 256、全输出 352）；Opus 直通只对带 `stereo=1` 的 offer 生效，Chrome 默认 offer 走 egress；按需 Opus→AAC 与按实际声道登记列为决策项 | 原始结果、profile、bpftrace 与浏览器数据只在测试机；上一轮 B 的直通收益只对 Firefox 类 offer 成立 |
 | [20261031-ondemand-opus-aac](20261031-ondemand-opus-aac/report.md) | `8ce9f5c` 基线与实验构建 | 矩阵补 H.265→WHEP 与 GB 端到端解码（`4b09c66`）；按需 Opus→AAC：纯直通 WHEP 384→1056 源、无观看者 CPU −79%；Chrome 默认 offer 直通可行（停在评审） | 原始结果、bpftrace、浏览器数据与实验二进制只在测试机 |
+| [20261031-gb-ps-rtsp-aac-chrome-opus](20261031-gb-ps-rtsp-aac-chrome-opus/report.md) | `b72e703` 基线与实验构建 | GB PS 自有解复用与完整音画验证（AAC/G.711A/G.711μ × 三种传输）、GB 测试客户端 ASan/TSan 无报告；RTSP AAC 约 10 ms 跳变定位到接收解包的整数毫秒递增；Chrome 默认 offer 直通为多目的地网关的 SHOULD NOT 偏离，cycles −67%、容量 256→1056 源（实验，未合入） | 原始结果、bpftrace、浏览器数据与实验二进制只在测试机 |
 
 ## 验证记录
 
