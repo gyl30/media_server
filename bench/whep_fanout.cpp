@@ -487,7 +487,7 @@ int main(int argc, char** argv)
     {
         std::cout << "--whep-urls-file FILE | --whep-url URL\n"
                      "--viewers N --sources N --bind-address ADDRESS --io-threads N\n"
-                     "--ramp-per-second N --ready-timeout SECONDS --video-only\n"
+                     "--ramp-per-second N --ready-timeout SECONDS --video-only (offer video only)\n"
                      "--warmup SECONDS --duration SECONDS --progress-interval SECONDS --start-file FILE\n"
                      "--dump-file FILE (first viewer's decrypted RTP/RTCP: int64 ns, uint8 rtcp, uint16 size, bytes)\n"
                      "--opus-fmtp PARAMETERS (offered Opus fmtp, default minptime=10;useinbandfec=1;stereo=1)\n";
@@ -519,7 +519,12 @@ int main(int argc, char** argv)
         sessions.reserve(config.viewers);
         std::vector<std::uint64_t> post_milliseconds;
         std::vector<std::uint64_t> establish_milliseconds;
-        const auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play, config.opus_format_parameters);
+        auto offer = context->make_offer(media_server::bench::webrtc_client_direction::play, config.opus_format_parameters);
+        if (config.video_only)
+        {
+            offer.erase(offer.find("m=audio"));
+            offer.replace(offer.find("a=group:BUNDLE 0 1"), 18, "a=group:BUNDLE 0");
+        }
         const auto ramp_started = clock_type::now();
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.viewers; ++index)
