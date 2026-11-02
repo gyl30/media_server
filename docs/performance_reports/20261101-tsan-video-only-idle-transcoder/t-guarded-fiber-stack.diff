@@ -1,0 +1,19 @@
+--- a/media/net/worker_context.h
++++ b/media/net/worker_context.h
+@@ -7,6 +7,7 @@
+ #include <exception>
+ #include <functional>
+ 
++#include <boost/context/protected_fixedsize_stack.hpp>
+ #include <boost/asio/post.hpp>
+ #include <boost/asio/spawn.hpp>
+ #include <boost/asio/dispatch.hpp>
+@@ -98,6 +99,8 @@
+         const auto task_iterator = tasks_.emplace(tasks_.end());
+         boost::asio::spawn(
+             io_,
++            std::allocator_arg,
++            boost::context::protected_fixedsize_stack(128 * 1024),
+             std::move(function),
+             boost::asio::bind_cancellation_slot(
+                 task_iterator->cancellation.slot(),

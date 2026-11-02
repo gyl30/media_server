@@ -1,0 +1,46 @@
+diff --git a/media/webrtc/whip_media_receiver.cpp b/media/webrtc/whip_media_receiver.cpp
+index aeb9b57..73bd850 100644
+--- a/media/webrtc/whip_media_receiver.cpp
++++ b/media/webrtc/whip_media_receiver.cpp
+@@ -85,7 +85,6 @@ bool whip_media_receiver::startup(whip_media_receiver_config config)
+     {
+         return false;
+     }
+-    audio_transcoder_active_ = true;
+     const auto codec_config = audio_transcoder_->output_codec_config();
+     if (codec_config.empty())
+     {
+@@ -288,14 +287,17 @@ int whip_media_receiver::on_demuxed_packet(avpacket_t* packet)
+ 
+     if (!media_stream_->has_sinks())
+     {
+-        audio_transcoder_active_ = false;
++        audio_transcoder_.reset();
+         return 0;
+     }
+-    if (!audio_transcoder_active_ && !audio_transcoder_->startup(audio_transcoder_config_))
++    if (!audio_transcoder_)
+     {
+-        return -1;
++        audio_transcoder_ = std::make_unique<audio_transcoder>();
++        if (!audio_transcoder_->startup(audio_transcoder_config_))
++        {
++            return -1;
++        }
+     }
+-    audio_transcoder_active_ = true;
+ 
+     std::vector<media_frame> output;
+     if (!audio_transcoder_->transcode(frame, output))
+diff --git a/media/webrtc/whip_media_receiver.h b/media/webrtc/whip_media_receiver.h
+index b53b3c3..6cd7ae3 100644
+--- a/media/webrtc/whip_media_receiver.h
++++ b/media/webrtc/whip_media_receiver.h
+@@ -58,7 +58,6 @@ class whip_media_receiver final
+     rtsp_demuxer_t* audio_demuxer_{};
+     std::unique_ptr<audio_transcoder> audio_transcoder_;
+     audio_transcoder_config audio_transcoder_config_;
+-    bool audio_transcoder_active_{};
+     avpkt2bs_t bitstream_{};
+     std::optional<media_track> audio_track_;
+     std::optional<std::uint32_t> video_ssrc_;

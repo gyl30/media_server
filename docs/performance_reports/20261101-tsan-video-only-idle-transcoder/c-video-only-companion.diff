@@ -1,0 +1,17 @@
+diff --git a/media/webrtc/whep.cpp b/media/webrtc/whep.cpp
+index 15f6633..2154808 100644
+--- a/media/webrtc/whep.cpp
++++ b/media/webrtc/whep.cpp
+@@ -198,7 +198,11 @@ create_result create(std::shared_ptr<media_stream> stream,
+         return failed(create_error::invalid_offer);
+     }
+     auto source = stream;
+-    if (const auto& opus = stream->opus_stream(); opus && answer->audio_codec == codec_id::aac)
++    if (const auto& opus = stream->opus_stream(); opus && !answer->audio_payload_type)
++    {
++        source = opus;
++    }
++    else if (opus && answer->audio_codec == codec_id::aac)
+     {
+         if (auto passthrough = make_webrtc_answer(*offer, opus->tracks(), answer_config); passthrough && passthrough->audio_payload_type)
+         {

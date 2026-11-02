@@ -1,0 +1,14 @@
+// usage: bpftrace opus_aac.bt <media_server path>; prints CLOCK_MONOTONIC ns, Opus->AAC startups, audio_transcoder destructions
+uprobe:$1:_ZN12media_server16audio_transcoder7startupERKNS_23audio_transcoder_configE
+/ (*(int32 *)arg1) == 3 /
+{
+  @starts++;
+}
+uprobe:$1:_ZN12media_server16audio_transcoderD1Ev
+{
+  @destroys++;
+}
+interval:ms:500
+{
+  printf("%llu %d %d\n", nsecs, @starts, @destroys);
+}

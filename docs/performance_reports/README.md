@@ -24,6 +24,7 @@
 | [20261031-ondemand-opus-aac](20261031-ondemand-opus-aac/report.md) | `8ce9f5c` 基线与实验构建 | 矩阵补 H.265→WHEP 与 GB 端到端解码（`4b09c66`）；按需 Opus→AAC：纯直通 WHEP 384→1056 源、无观看者 CPU −79%；Chrome 默认 offer 直通可行（停在评审） | 原始结果、bpftrace、浏览器数据与实验二进制只在测试机 |
 | [20261031-gb-ps-rtsp-aac-chrome-opus](20261031-gb-ps-rtsp-aac-chrome-opus/report.md) | `b72e703` 基线与实验构建 | GB PS 自有解复用与完整音画验证（AAC/G.711A/G.711μ × 三种传输）、GB 测试客户端 ASan/TSan 无报告；RTSP AAC 约 10 ms 跳变定位到接收解包的整数毫秒递增；Chrome 默认 offer 直通为多目的地网关的 SHOULD NOT 偏离，cycles −67%、容量 256→1056 源（实验，未合入） | 原始结果、bpftrace、浏览器数据与实验二进制只在测试机 |
 | [20261031-chrome-opus-passthrough](20261031-chrome-opus-passthrough/report.md) | `aa083a5` 加工作区改动 | GB PS 按完整 pack 核对尾部完整性与截断负向测试；矩阵对 RTSP AAC 锯齿严格 XFAIL/XPASS，30 PASS + 3 XFAIL；Chrome 默认 offer 直通转为生产改动，浏览器、ASan、8 核 1056 源回归通过；TSan 浏览器失败在 HEAD 同样复现 | 原始结果与 sanitizer 日志只在测试机 |
+| [20261101-tsan-video-only-idle-transcoder](20261101-tsan-video-only-idle-transcoder/report.md) | `fc1bcc1` 与实验构建 | TSan 并发证书竞争与 SEGV 均为工具问题（OpenSSL 未插桩、协程栈上符号化溢出）；纯视频 WHEP 触发无人消费的 Opus→AAC，改挂伴随流使其 CPU −66–73%（候选，未合入）；空闲转码器每源约 0.37 MiB，不影响容量，不实施 | 原始结果只在测试机 |
 
 ## 验证记录
 
