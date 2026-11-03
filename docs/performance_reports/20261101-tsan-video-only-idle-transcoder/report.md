@@ -1,6 +1,6 @@
 # TSan 并发证书、纯视频 WHEP 与空闲转码器内存（2026-11-01）
 
-基线 `main@fc1bcc1`。本轮只做定向实验，没有合入生产改动。
+基线 `main@fc1bcc1`。第 1–3 节是定向实验；纯视频 WHEP 改动随后在 `main@79f9b23` 上实施，合入验证见[第 4 节](#4-合入验证2026-11-02)。
 
 | 构建 | 内容 | Release `media_server` sha256 前缀 |
 | --- | --- | --- |
@@ -21,7 +21,7 @@
 | 纯视频 WHEP 触发 Opus→AAC | CONFIRMED | 纯视频 offer 的会话挂在主流上，使接收端一直执行无人消费的 Opus→AAC：64 源时服务端 CPU 是直通观众的 2.7 倍。改挂 Opus 伴随流的改动（+5/−1 行）使纯视频观众 CPU 下降 66–73%，视频输出、AAC 观众按需转码、源停止清理与 sanitizer 均无变化 |
 | 空闲转码器内存 | 仅有潜在价值 | 每个空闲转码器在服务端约占 0.37 MiB PSS，1056 源时约 390 MiB（−33%）；释放后加入成本不变，因为现有实现每次加入本来就会重新初始化。内存不是 8 核容量的瓶颈，本轮不实施 |
 
-值得实施的最小生产改动只有一项：[`c-video-only-companion.diff`](c-video-only-companion.diff)，纯视频 WHEP 改挂 Opus 伴随流。本轮没有合入，待授权。
+值得实施的最小生产改动只有一项：[`c-video-only-companion.diff`](c-video-only-companion.diff)，纯视频 WHEP 改挂 Opus 伴随流。已在 `main@79f9b23` 上实施并验证（第 4 节）。
 
 除此之外，没有找到有证据支持的媒体核心改动，媒体核心精简专项到此结束。
 
@@ -235,3 +235,68 @@ B = HEAD 加 [`e-free-idle-transcoder.diff`](e-free-idle-transcoder.diff)：没�
 - 但它不改变容量：8 核上限由 CPU 决定（上一份报告中 1056 源时最忙核 0.92），1056 源时 PSS 只有约 1.2 GiB。有观众时的 CPU 和加入成本也不变。
 - 1056 源空闲时 CPU 有 2–4% 的上升，原因没有定位。
 - 结论：本轮不实施。只有在内存成为部署瓶颈时才值得重新考虑，届时直接使用 `e-free-idle-transcoder.diff`，无需再研究。
+
+## 4. 合入验证（2026-11-02）
+
+基线 `main@79f9b23`，生产代码只改 `media/webrtc/whep.cpp`，内容与 [`c-video-only-companion.diff`](c-video-only-companion.diff) 相同（+5/−1）：应答没有音频 payload type 且源有 Opus 伴随流时，会话订阅伴随流；SDP 应答不变，原有 Opus 直通判断保留在 `else if` 分支。
+
+| 构建 | Release `media_server` sha256 前缀 |
+| --- | --- |
+| A（`79f9b23`，生产代码与 `fc1bcc1` 相同） | `f24e6ca2bf0a4fd9` |
+| C'（`79f9b23` + 改动） | `f611c6016e4af331` |
+
+Release、ASan+UBSan+LSan、TSan 三个构建均成功，Release 无警告。当前 CTest 注册数为 0，没有可执行的单元测试。
+
+作业脚本为 [`jobs/v01`–`v05`](jobs/)，每个作业开始前用 [`jobs/cleanup.sh`](jobs/cleanup.sh) 删除历史运行中可重新生成的媒体文件；原始结果只在测试机的 `runs6/`。
+
+### 4.1 A/B（8 核，每源 1 个观众，30 s 窗口，各 2 轮）
+
+每轮步骤：无观众、纯视频 WHEP、直通 WHEP、纯视频 WHEP + 每源 1 个 HTTP-FLV、纯视频 WHEP 两次、纯视频 WHEP 在线时停止推流。每步观众主动 DELETE 后退出，下一步重新创建。
+
+| 步骤 | 64 源 A | 64 源 C' | 256 源 A | 256 源 C' |
+| --- | --- | --- | --- | --- |
+| 无观众 Gcycles/s | 0.44、0.43 | 0.44、0.45 | 1.39、1.39 | 1.36、1.40 |
+| 纯视频 Gcycles/s | 2.42、2.37 | 0.79、0.80 | 9.45、9.50 | 2.59、2.62 |
+| 纯视频重复 4 次 Gcycles/s | 2.38–2.44 | 0.79–0.82 | 9.50–9.64 | 2.61–2.68 |
+| 直通 Gcycles/s | 0.88、0.86 | 0.89、0.91 | 2.89、2.86 | 2.83、2.84 |
+| 纯视频 + FLV Gcycles/s | 2.72（第 1 轮无效，见下） | 2.74、2.77 | 11.06、10.98 | 11.02、10.91 |
+| 纯视频步骤 Opus→AAC 启动 | 64 | 0 | 256 | 0 |
+| 纯视频 + FLV 步骤 Opus→AAC 启动 | 64 | 64 | 256 | 256 |
+| 首个纯视频步骤 PSS MiB | 111.5、111.4 | 100.3、98.5 | 408.3、408.8 | 361.6、360.8 |
+
+- 纯视频观众：CPU 下降 67%（64 源）和 72–73%（256 源），与上一轮 C 的 66–73% 一致，已低于直通观众。
+- 音频 RTP：A 和 C' 下纯视频观众收到的音频包都是 0。C' 每步视频包数与 A 的差在 0.01% 以内（例如 256 源 3518669 对 3518810），非视频包只剩视频 RTCP。
+- 直通观众：A 和 C' 的音视频包数相同（256 源音频 448049 对 448034），CPU 在测量误差内。
+- FLV 加入：C' 照常为每源启动一次 Opus→AAC，CPU 与 A 相同；FLV 离开后的纯视频步骤又回到 0 次启动。
+- PSS：只在首次有 AAC 观众之前有差别（256 源约 −47 MiB，是活跃转码的工作内存）；FLV 加入过以后两者相同，空闲转码器本身仍然保留，符合本轮不实施空闲释放的范围。
+- 64 源 A 第 1 轮的 FLV 客户端读到了尚未写完的测量起点文件（`start-file requires positive CLOCK_MONOTONIC nanoseconds`），64 个 FLV 观众全部中止，该步数值无效；同一步的纯视频观众正常。这是 `viewer_cost.py` 非原子写入起点文件的工具问题，已改为写临时文件后重命名；其他 15 个 FLV 步骤正常。
+
+### 4.2 生命周期与资源回收
+
+每一步都核对服务端日志的 WHEP 会话 started/shutdown 数、客户端 DELETE 成功数以及步骤结束 2 s 后服务端 fd 数：
+
+- 主动 DELETE、重复创建/关闭：所有轮次每步 started = shutdown = DELETE 成功数 = 观众数；有源无观众时 fd 64 源恒为 96、256 源恒为 288，6 次重复创建后没有增长。
+- 源停止：纯视频观众在线时停止推流，C' 与 A 一样每个会话随源结束（`whep_shutdown` 与 `source_ended` 都等于源数），receivers 清零，fd 回到 32，服务端退出码 0。客户端退出码 1 是预期的“源停止后无媒体”。
+
+### 4.3 sanitizer
+
+8 源，步骤：纯视频、直通、纯视频 + FLV、前 4 源 FLV、纯视频两次、纯视频在线时停止推流。
+
+| 构建 | 报告 | 退出码 | 会话 | 停止后 fd |
+| --- | --- | --- | --- | --- |
+| ASan+UBSan+LSan | 0 | 0 | 每步 8/8 创建、关闭、DELETE | 32 |
+| TSan | 0 | 0 | 同上 | 32 |
+
+### 4.4 协议矩阵子集（Release C'）
+
+| 场景 | 结果 |
+| --- | --- |
+| rtmp-h264-aac、whip-h264-opus、whep-pull、whip-chrome-offer、whep-pull-chrome-offer、multi-source-cross-worker | PASS HEALTHY |
+| fault-source-stop、fault-invalid-token-whep | PASS（预期失败观测） |
+| rtsp-tcp-h264-opus、rtmp-h264-opus（v05，补传 Opus-in-FLV FFmpeg 后重跑） | PASS HEALTHY |
+
+### 4.5 证据范围
+
+- 实测：本节所有数据，二进制为 A 与 C'。
+- 历史证据：第 2 节中上一轮 C 的同条件数据，结论一致。
+- 未覆盖：浏览器真实纯视频 offer（Chrome `recvonly` 只带视频）；只拒绝音频编码（offer 有音频 m-line 但没有可协商编码）的情况走同一分支，没有单独测；WHEP 拉流源（伴随流同样存在）没有单独做纯视频 A/B；全协议矩阵和容量矩阵未重跑。

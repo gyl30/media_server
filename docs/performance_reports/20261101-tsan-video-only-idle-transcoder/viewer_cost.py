@@ -101,10 +101,12 @@ def main():
             groups = {"idle": [], "video": ["video"], "passthrough": ["passthrough"], "video_flv": ["video", "flv"], "flv": ["flv"],
                       "video_stop": ["video_stop"]}[kind]
             started = time.monotonic()
+            log_before = (args.output / "server.log").read_text(errors="replace")
             launched = [viewers(group, selected, index, args.window + (120 if kind == "video_stop" else 5)) for group in groups]
             time.sleep(len(selected) / 200 + 10 if launched else 0)
             start_ns = time.monotonic_ns() + args.settle * 1_000_000_000
-            (args.output / f"{index}.start").write_text(f"{start_ns}\n")
+            (args.output / f"{index}.start.tmp").write_text(f"{start_ns}\n")
+            (args.output / f"{index}.start.tmp").rename(args.output / f"{index}.start")
             time.sleep(max(0, (start_ns - time.monotonic_ns()) / 1e9))
             window_started = time.monotonic()
             stat = subprocess.run(["perf", "stat", "-x,", "-e", "cycles,instructions", "-p", str(server.pid), "--", "sleep", str(args.window)],
@@ -126,12 +128,19 @@ def main():
             for log, process in launched:
                 process.wait(timeout=180)
                 text = log.read_text()
+                disconnect = [line for line in text.splitlines() if line.startswith("phase=disconnect ")]
                 measurement = [line for line in text.splitlines() if line.startswith("phase=measurement ")]
                 fields = dict(re.findall(r"(\w+)=(\S+)", measurement[-1])) if measurement else {}
                 entry[log.stem.split("-", 1)[1]] = {"exit": process.returncode, **{key: fields[key] for key in
-                    ("ready", "progressing", "failed", "runtime_failures", "audio_packets", "video_packets", "steady_audio_messages",
-                     "steady_video_messages", "viewer_audio_packets_min", "viewer_video_packets_min") if key in fields}}
+                    ("ready", "progressing", "failed", "runtime_failures", "audio_packets", "video_packets", "received_packets", "unprotect_failures", "steady_audio_messages",
+                     "steady_video_messages", "viewer_audio_packets_min", "viewer_video_packets_min") if key in fields},
+                    **({"deleted": dict(re.findall(r"(\w+)=(\S+)", disconnect[-1])).get("removed")} if disconnect else {})}
             ended = time.monotonic()
+            time.sleep(2)
+            log_after = (args.output / "server.log").read_text(errors="replace")
+            entry["whep_sessions"] = {key: log_after.count(text) - log_before.count(text) for key, text in
+                                      (("started", "webrtc whep session started"), ("shutdown", "webrtc whep session shutdown"))}
+            entry["fd"] = len(list(Path(f"/proc/{server.pid}/fd").iterdir()))
             if args.trace:
                 time.sleep(1)
                 before, during_start, after = trace_counts(trace_log, started), trace_counts(trace_log, window_started), trace_counts(trace_log, ended)
