@@ -29,7 +29,7 @@ from fanout_support import benchmark_head, parse_phase, proc_identity, proc_snap
 MSR_MPERF = 0xE7
 MSR_APERF = 0xE8
 MSR_TSC = 0x10
-OUTPUTS = ("rtmp", "rtsp", "flv", "hls", "whep", "gb_udp", "gb_tcp_active", "gb_tcp_passive")
+OUTPUTS = ("rtmp", "rtsp", "flv", "hls", "whep", "whep_video", "gb_udp", "gb_tcp_active", "gb_tcp_passive")
 INPUTS = ("rtmp", "rtsp_tcp", "rtsp_udp", "rtsp_pull", "rtmp_pull", "whep_pull", "whip", "gb_udp", "gb_tcp_active", "gb_tcp_passive", "existing")
 
 
@@ -151,7 +151,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new run directory, never overwritten")
     parser.add_argument("--input", choices=INPUTS, default="rtmp")
-    parser.add_argument("--outputs", default="rtmp:1", help="rtmp:10,rtsp:10,flv:10,hls:10,whep:10,gb_udp:10 or none (PARTIAL publish-only: continuous FLV viewer per source)")
+    parser.add_argument("--outputs", default="rtmp:1", help="rtmp:10,rtsp:10,flv:10,hls:10,whep:10,whep_video:10 (video-only offer),gb_udp:10 or none (PARTIAL publish-only: continuous FLV viewer per source)")
     parser.add_argument("--sources", type=int, default=1)
     parser.add_argument("--inputs", help="mixed inputs rtmp:8,rtsp_udp:4,whip:4,whep_pull:4,gb_udp:4,...; replaces --input/--sources")
     parser.add_argument("--sources-file", type=Path, help="existing sources JSON: [{stream_id, play_body:{push_device_id|source_id|live_id:...}}]")
@@ -393,7 +393,8 @@ def run(args):
         dump = ["--dump-file", args.output / "whep-0.dump"] if args.av_probe > 0 and group_name == "whep-0" else []
         fmtp = ["--opus-fmtp", args.whep_opus_fmtp] if args.whep_opus_fmtp else []
         return [args.client_dir / "whep_fanout", "--whep-urls-file", credentials,
-                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *dump, *fmtp, *common]
+                "--bind-address", args.client_address, "--io-threads", 1, "--progress-interval", args.progress_interval, *dump, *fmtp,
+                *(["--video-only"] if protocol == "whep_video" else []), *common]
 
     def receiver_list(base):
         return {entry["stream_id"] for entry in request(base, "/receivers", token=control_token)["receivers"]}
@@ -423,7 +424,7 @@ def run(args):
             answer = request(args.signaling_url, "/api/play", {"source": source["play_body"]})
             if answer["stream_id"] != source["stream_id"]:
                 raise RuntimeError("source generation changed; obtain a new sources-file before measuring")
-            return answer[{"rtmp": "rtmp_url", "rtsp": "rtsp_url", "flv": "flv_url", "hls": "hls_url", "whep": "whep_url"}[protocol]]
+            return answer[{"rtmp": "rtmp_url", "rtsp": "rtsp_url", "flv": "flv_url", "hls": "hls_url", "whep": "whep_url", "whep_video": "whep_url"}[protocol]]
         token = stub.issue("play", source["stream_id"], ttl=args.ready_timeout + 60)
         if args.fault == "invalid_token":
             token = secrets.token_hex(32)
@@ -438,7 +439,7 @@ def run(args):
             return f"rtsp://{host}:{ports[1]}/{path}"
         if protocol == "flv":
             return f"http://{host}:{ports[2]}/{path}.flv"
-        return f"http://{host}:{ports[2]}/play/{protocol}/{path}" + ("/index.m3u8" if protocol == "hls" else "")
+        return f"http://{host}:{ports[2]}/play/{protocol.removesuffix('_video')}/{path}" + ("/index.m3u8" if protocol == "hls" else "")
 
     def probe(source, name, stub, host=None, ports=None):
         source_group = source if isinstance(source, list) else [source]

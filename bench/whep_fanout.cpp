@@ -44,6 +44,7 @@ struct configuration
     std::vector<std::string> whep_urls;
     std::string start_file;
     bool video_only{};
+    bool unsupported_audio{};
     std::chrono::seconds ready_timeout{60};
     std::chrono::seconds progress_interval{5};
     boost::asio::ip::address bind_address{boost::asio::ip::address_v4::any()};
@@ -56,6 +57,8 @@ struct configuration
     std::filesystem::path dump_file;
     std::string opus_format_parameters{"minptime=10;useinbandfec=1;stereo=1"};
 };
+
+bool expects_audio(const configuration& config) { return !config.video_only && !config.unsupported_audio; }
 
 struct process_sample
 {
@@ -118,6 +121,10 @@ configuration parse_arguments(int argc, char** argv)
         else if (argument == "--video-only")
         {
             config.video_only = true;
+        }
+        else if (argument == "--unsupported-audio")
+        {
+            config.unsupported_audio = true;
         }
         else if (argument == "--ready-timeout")
         {
@@ -488,6 +495,7 @@ int main(int argc, char** argv)
         std::cout << "--whep-urls-file FILE | --whep-url URL\n"
                      "--viewers N --sources N --bind-address ADDRESS --io-threads N\n"
                      "--ramp-per-second N --ready-timeout SECONDS --video-only (offer video only)\n"
+                     "--unsupported-audio (offer audio with G.722 only, which the server rejects)\n"
                      "--warmup SECONDS --duration SECONDS --progress-interval SECONDS --start-file FILE\n"
                      "--dump-file FILE (first viewer's decrypted RTP/RTCP: int64 ns, uint8 rtcp, uint16 size, bytes)\n"
                      "--opus-fmtp PARAMETERS (offered Opus fmtp, default minptime=10;useinbandfec=1;stereo=1)\n";
@@ -525,6 +533,13 @@ int main(int argc, char** argv)
             offer.erase(offer.find("m=audio"));
             offer.replace(offer.find("a=group:BUNDLE 0 1"), 18, "a=group:BUNDLE 0");
         }
+        if (config.unsupported_audio)
+        {
+            const auto audio = offer.find("m=audio");
+            offer.replace(offer.find("a=rtpmap:111", audio), std::string::npos, "a=rtpmap:9 G722/8000\r\n");
+            const auto payloads = offer.find(" 111", audio);
+            offer.replace(payloads, offer.find("\r\n", payloads) - payloads, " 9");
+        }
         const auto ramp_started = clock_type::now();
         const auto ramp_interval = std::chrono::nanoseconds{1'000'000'000LL / static_cast<std::int64_t>(config.ramp_per_second)};
         for (std::size_t index = 0; index < config.viewers; ++index)
@@ -561,7 +576,8 @@ int main(int argc, char** argv)
                 establish_milliseconds.push_back(
                     static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(clock_type::now() - answered).count()));
                 auto dump = index == 0U && !config.dump_file.empty() ? std::make_shared<std::ofstream>(config.dump_file, std::ios::binary) : nullptr;
-                auto session = std::make_shared<play_session>(results, peer, response.location, index, !config.video_only, started, std::move(dump));
+                auto session =
+                    std::make_shared<play_session>(results, peer, response.location, index, expects_audio(config), started, std::move(dump));
                 sessions.push_back(session);
                 ++results->ready;
                 boost::asio::post(shard.io, [session]() { session->start(); });
@@ -613,7 +629,7 @@ int main(int argc, char** argv)
             std::size_t missing_reported{};
             for (const auto& session : sessions)
             {
-                if ((session->video_packets() == 0U || (!config.video_only && session->audio_packets() == 0U)) && missing_reported++ < 20U)
+                if ((session->video_packets() == 0U || (expects_audio(config) && session->audio_packets() == 0U)) && missing_reported++ < 20U)
                 {
                     std::cerr << "viewer=" << session->index() << " media_not_ready video_packets=" << session->video_packets()
                               << " audio_packets=" << session->audio_packets() << " received_packets=" << session->received_packets()
@@ -699,7 +715,7 @@ int main(int argc, char** argv)
                                              sessions[index]->video_media_ms()};
                 const auto video = current.video - progress_before[index].video;
                 const auto audio = current.audio - progress_before[index].audio;
-                progress_count += video > 0 && (config.video_only || audio > 0) ? 1U : 0U;
+                progress_count += video > 0 && (!expects_audio(config) || audio > 0) ? 1U : 0U;
                 progress_video_min = std::min(progress_video_min, video);
                 progress_audio_min = std::min(progress_audio_min, audio);
                 progress_bytes_min = std::min(progress_bytes_min, current.bytes - progress_before[index].bytes);
@@ -740,7 +756,7 @@ int main(int argc, char** argv)
             }
             min_video_packets = std::min(min_video_packets, video);
             min_audio_packets = std::min(min_audio_packets, audio);
-            progressing += video > 0 && (config.video_only || audio > 0) ? 1U : 0U;
+            progressing += video > 0 && (!expects_audio(config) || audio > 0) ? 1U : 0U;
         }
         std::ranges::sort(viewer_bytes);
         std::ranges::sort(viewer_realtime);

@@ -46,6 +46,8 @@ SCENARIOS = [
     ("whep-pull", "whep_pull", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("whip-chrome-offer", "whip", "avsync_720p30.flv", "whep:2,flv:1", ["--whep-opus-fmtp", CHROME_OPUS_FMTP], False, None),
     ("whep-pull-chrome-offer", "whep_pull", "avsync_720p30.flv", "whep:2,flv:1", ["--whep-opus-fmtp", CHROME_OPUS_FMTP], False, None),
+    ("whip-video-only-whep", "whip", "avsync_720p30.flv", "whep_video:2,whep:1,flv:1", [], False, None),
+    ("whep-pull-video-only-whep", "whep_pull", "avsync_720p30.flv", "whep_video:2,whep:1,flv:1", [], False, None),
     ("gb-udp", "gb_udp", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("gb-tcp-active", "gb_tcp_active", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),
     ("gb-tcp-passive", "gb_tcp_passive", "avsync_720p30.flv", ALL_OUTPUTS, [], False, None),

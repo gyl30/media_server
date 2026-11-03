@@ -42,7 +42,7 @@ python3 bench/perf_run.py \
   --min-free-disk-mib 4096 --max-server-pss-mib 4096
 ```
 
-outputs 支持 `rtmp/rtsp/flv/hls/whep/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`。GB TCP 输出和输入从 `--gb-port-base` 起为每个 sender/源占用一个端口；该范围与本机临时端口范围或服务端、上游实例的 RTMP/RTSP/HTTP 端口重叠时，runner 拒绝运行。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
+outputs 支持 `rtmp/rtsp/flv/hls/whep/whep_video/gb_udp/gb_tcp_active/gb_tcp_passive`，格式为逗号分隔的 `协议:数量`；`whep_video` 是只含视频 m-line 的 WHEP 观众（`whep_fanout --video-only`）。`whep_fanout --unsupported-audio` 让 offer 的音频只带服务端不支持的 G.722，用于验证音频被拒绝时的视频播放。GB TCP 输出和输入从 `--gb-port-base` 起为每个 sender/源占用一个端口；该范围与本机临时端口范围或服务端、上游实例的 RTMP/RTSP/HTTP 端口重叠时，runner 拒绝运行。`none` 仍保留每源持续 FLV viewer，仅为 PARTIAL publish-only，不能称零输出。
 
 input 参数包含 RTMP、RTSP TCP/UDP 发布、WHIP、RTSP/RTMP/WHEP 拉流、GB UDP/TCP 和 existing。拉流与 GB 输入先在客户端核上启动一个上游实例，再通过 `POST /pull/create` 或 GB sender/receiver 接口接入被测服务。参见 [`perf_run.py`](../bench/perf_run.py) 与 [`pull_http.cpp`](../media/http/pull_http.cpp)。
 
