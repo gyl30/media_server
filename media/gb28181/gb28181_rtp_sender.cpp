@@ -19,8 +19,13 @@ namespace media_server
 gb28181_rtp_sender::gb28181_rtp_sender(worker_context& worker,
                                        std::shared_ptr<media_stream> stream,
                                        packet_handler on_packet,
-                                       end_handler handle_source_end)
-    : worker_(worker), stream_(std::move(stream)), packet_handler_(std::move(on_packet)), end_handler_(std::move(handle_source_end))
+                                       end_handler handle_source_end,
+                                       frame_handler on_frame_sent)
+    : worker_(worker),
+      stream_(std::move(stream)),
+      packet_handler_(std::move(on_packet)),
+      end_handler_(std::move(handle_source_end)),
+      frame_handler_(std::move(on_frame_sent))
 {
 }
 
@@ -78,6 +83,10 @@ void gb28181_rtp_sender::on_ps_frame(const mpeg_ps_frame& frame)
     }
     const auto timestamp = timestamp_base_ + media_timestamp - first_media_timestamp_;
     const auto result = rtp_payload_encode_input(packetizer_, frame.payload->data(), static_cast<int>(frame.payload->size()), timestamp);
+    if (frame_handler_)
+    {
+        frame_handler_();
+    }
     if (result < 0)
     {
         spdlog::error("gb28181 sender mux failed stream {} result {}", stream_->stream_id(), result);
@@ -103,6 +112,7 @@ void gb28181_rtp_sender::safe_shutdown()
 {
     packet_handler_ = {};
     end_handler_ = {};
+    frame_handler_ = {};
     stream_.reset();
     ps_output_.reset();
     if (packetizer_)

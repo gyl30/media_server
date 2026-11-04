@@ -84,7 +84,11 @@ bool gb28181_udp_sender_session::startup(boost::asio::ip::address bind_address, 
     rtp_transport_->set_error_callback(handle_error);
     rtcp_transport_->set_error_callback(handle_error);
     sender_ = std::make_shared<gb28181_rtp_sender>(
-        worker_, stream_, [self](std::span<const std::uint8_t> packet) { self->send_packet(packet); }, [self]() { self->shutdown(); });
+        worker_,
+        stream_,
+        [self](std::span<const std::uint8_t> packet) { self->send_packet(packet); },
+        [self]() { self->shutdown(); },
+        [self]() { self->rtp_transport_->uncork(); });
     if (!sender_->startup(payload_type, ssrc))
     {
         return false;
@@ -157,6 +161,7 @@ void gb28181_udp_sender_session::send_packet(std::span<const std::uint8_t> packe
     {
         return;
     }
+    rtp_transport_->cork();
     if (!rtp_transport_->write(packet, remote_rtp_endpoint_))
     {
         spdlog::warn("gb28181 udp write queue full stream {} sender {}", stream_->stream_id(), sender_id_);

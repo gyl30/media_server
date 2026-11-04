@@ -178,7 +178,10 @@ void whep_session::on_frame(const media_frame& frame)
         }
         waiting_video_track_.reset();
     }
-    if (!packetizer_->on_frame(frame))
+    udp_transport_->cork();
+    const bool packetized = packetizer_->on_frame(frame);
+    udp_transport_->uncork();
+    if (!packetized)
     {
         shutdown();
     }
