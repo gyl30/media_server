@@ -31,6 +31,7 @@ target_include_directories(ireader_media SYSTEM PUBLIC
 )
 target_compile_definitions(ireader_media PRIVATE
     NDEBUG
+    OS_LINUX
     MPEG_H26X_VERIFY
     MPEG_GUESS_STREAM
     MPEG_ZERO_PAYLOAD_LENGTH

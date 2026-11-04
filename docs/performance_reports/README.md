@@ -37,6 +37,7 @@
 | [20261023-dfe30e6-web-console](../verification_results/20261023-dfe30e6-web-console/results.md) | `dfe30e6`→`e12340d` | Web 控制台验收 | — |
 | [20261023-e12340d-gb-camera](../verification_results/20261023-e12340d-gb-camera/results.md) | `e12340d` | GB 实机摄像机验收 | 摄像机原始记录只在本地 |
 | [20261104-library-review](../reviews/20261104-library-first-review.md) | `e26b4e0` 与工作区 | 库优先审查：撤销 UDP GSO、SRTP profile 改用 libsrtp；SRTP 三 profile 互通、UDP 发送专项、矩阵、Sanitizer、生命周期 | 原始结果只在测试机 `runs9/` |
+| [20261104-port-pool-replay](../verification_results/20261104-port-pool-replay/report.md) | `93bb9eb` 与工作区 | 端口池范围改为编译期常量；WHEP SRTP replay_fail 根因：ireader 未定义 `OS_LINUX`，`rtp_ssrc()` 走全局 `rand()`，被 RTMP 握手的 `srand(time(NULL))` 重置，导致音视频 SSRC/seq 相同；确定性回归、矩阵、Sanitizer、生命周期通过 | 原始结果只在测试机 `runs10/` |
 
 ## AAC afterburner=0 的证据（2026-10-29 复核）
 

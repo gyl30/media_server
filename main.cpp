@@ -17,7 +17,7 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    media_server::media_port_pool::init(media_server::default_media_port_start, media_server::default_media_port_end);
+    media_server::media_port_pool::init();
     media_server::service service(std::move(cfg));
     return service.run();
 }

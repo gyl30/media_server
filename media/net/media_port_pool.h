@@ -13,14 +13,14 @@ namespace media_server
 class media_port_pool final
 {
    public:
-    static void init(int start_port, int end_port);
+    static void init();
     [[nodiscard]] static media_port_pool& instance();
 
     [[nodiscard]] std::optional<std::uint16_t> acquire();
     void release(std::uint16_t port);
 
    private:
-    media_port_pool(int start_port, int end_port);
+    media_port_pool();
 
    private:
     static std::unique_ptr<media_port_pool> instance_;
@@ -30,9 +30,6 @@ class media_port_pool final
     std::vector<std::uint16_t> available_ports_;
     std::vector<std::uint16_t> used_ports_;
 };
-
-inline constexpr std::uint16_t default_media_port_start = 49'152;
-inline constexpr std::uint16_t default_media_port_end = 65'535;
 
 }    // namespace media_server
 

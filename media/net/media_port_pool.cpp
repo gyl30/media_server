@@ -1,6 +1,5 @@
 #include <limits>
 #include <exception>
-#include <stdexcept>
 #include <algorithm>
 
 #include "media/net/media_port_pool.h"
@@ -8,15 +7,26 @@
 namespace media_server
 {
 
+namespace
+{
+
+constexpr int media_port_start = 49'152;
+constexpr int media_port_end = 65'535;
+
+static_assert(media_port_start > 0 && media_port_start % 2 == 0);
+static_assert(media_port_start + 1 <= media_port_end && media_port_end <= std::numeric_limits<std::uint16_t>::max());
+
+}    // namespace
+
 std::unique_ptr<media_port_pool> media_port_pool::instance_;
 
-void media_port_pool::init(int start_port, int end_port)
+void media_port_pool::init()
 {
     if (instance_)
     {
         std::terminate();
     }
-    instance_.reset(new media_port_pool(start_port, end_port));
+    instance_.reset(new media_port_pool());
 }
 
 media_port_pool& media_port_pool::instance()
@@ -28,21 +38,12 @@ media_port_pool& media_port_pool::instance()
     return *instance_;
 }
 
-media_port_pool::media_port_pool(int start_port, int end_port)
+media_port_pool::media_port_pool()
 {
-    if (start_port <= 0 || start_port > end_port || end_port > std::numeric_limits<std::uint16_t>::max())
-    {
-        throw std::invalid_argument("invalid media port range");
-    }
-    start_port += start_port % 2;
-    if (start_port + 1 > end_port)
-    {
-        throw std::invalid_argument("media port range has no complete allocation");
-    }
-    const auto count = static_cast<std::size_t>((end_port - start_port + 1) / 2);
+    constexpr auto count = static_cast<std::size_t>((media_port_end - media_port_start + 1) / 2);
     available_ports_.reserve(count);
     used_ports_.reserve(count);
-    for (int port = (end_port - 1) & ~1; port >= start_port; port -= 2)
+    for (int port = (media_port_end - 1) & ~1; port >= media_port_start; port -= 2)
     {
         available_ports_.push_back(static_cast<std::uint16_t>(port));
     }
