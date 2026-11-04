@@ -178,10 +178,7 @@ void whep_session::on_frame(const media_frame& frame)
         }
         waiting_video_track_.reset();
     }
-    udp_transport_->cork();
-    const bool packetized = packetizer_->on_frame(frame);
-    udp_transport_->uncork();
-    if (!packetized)
+    if (!packetizer_->on_frame(frame))
     {
         shutdown();
     }
@@ -373,7 +370,7 @@ bool whep_session::startup_media()
 
     establishment_timer_.cancel();
     spdlog::info("webrtc srtp started session {}", id_);
-    spdlog::debug("webrtc srtp profile session {} {}", id_, keying_material.profile);
+    spdlog::debug("webrtc srtp profile session {} {}", id_, static_cast<int>(keying_material.profile));
     return true;
 }
 

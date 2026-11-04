@@ -1,5 +1,7 @@
 # UDP 网络路径归因、批量 I/O 优化与固定 8 核验收（2026-11-04，基线 `b131705`）
 
+> 后续状态：GSO 帧内合并曾以 `533a75e` 合入，后按维护性取舍主动撤销，生产代码恢复 `b131705` 的逐包 `send_to` 与 `would_block` 有界队列。收益真实，但它在 transport 中引入线程局部暂存区、跨 transport 的隐式持有者、cork 状态及原始 `sendmsg`/errno 回退，并要求 WHEP、GB 会话配合 cork/uncork。撤销接受的性能回退即下文 base 与 gso2 的差值，见 [20261104 库优先审查](../../reviews/20261104-library-first-review.md)。下文数据与结论保持原样，是当时候选的记录。
+
 结论：**GO（UDP GSO 帧内合并，ACCEPT）**。UDP 发送是 GB UDP 与 WHEP 扇出的首要成本；隔离实验中 GSO 每包 cycles −45%～−69%，`sendmmsg` 只有 −4%～−12%（burst 1 时回退），连接 socket −5%～−11%。生产改动只在一帧的 RTP 包同步产出期间把同目的、等长的数据报合并成一次 `UDP_SEGMENT` 发送，不加定时器、不跨帧、不改 SRTP 粒度。固定 8 核 A/B：GB UDP 4000 路 Gcyc/s −46%，WHEP 1536 路 −12%，混合 D −5.6%、A −3.9%、B −2.4%、C −0.9%；健康容量 D 2.2×→2.4×、B 1.6×→1.7×。协议矩阵、Sanitizer、浏览器、生命周期与 GB 音画检查通过。遗留一个与本改动无关、此前已出现过的 WHEP SRTP `replay_fail`（第 9 节）。
 
 标记口径：PASS / FAIL / XFAIL / BLOCKED / INCONCLUSIVE。未注明的结果均为本轮实测；“推断”单独注明。生产代码未提交，等待统一审查。

@@ -42,28 +42,15 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
                      boost::system::error_code& error);
     void set_error_callback(error_callback callback);
     bool write(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    void cork();
-    void uncork();
     void shutdown();
 
    private:
-    struct held_buffer
-    {
-        udp_transport* owner{};
-        std::vector<std::uint8_t> bytes;
-    };
-
     struct pending_datagram
     {
         std::vector<std::uint8_t> packet;
         boost::asio::ip::udp::endpoint endpoint;
     };
 
-    bool send_now(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    bool enqueue(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint);
-    bool can_hold(std::span<const std::uint8_t> data, const boost::asio::ip::udp::endpoint& endpoint) const;
-    void send_held();
-    void report_error(boost::system::error_code error);
     void start_write();
     void on_write(const std::shared_ptr<pending_datagram>& datagram, boost::system::error_code error);
 
@@ -71,11 +58,6 @@ class udp_transport final : public std::enable_shared_from_this<udp_transport>
     std::deque<std::shared_ptr<pending_datagram>> write_queue_;
     std::size_t queued_write_bytes_{};
     error_callback error_callback_;
-    static thread_local held_buffer held_buffer_;
-    bool corked_{};
-    std::size_t held_segment_size_{};
-    std::size_t held_count_{};
-    boost::asio::ip::udp::endpoint held_endpoint_;
 };
 
 }    // namespace media_server

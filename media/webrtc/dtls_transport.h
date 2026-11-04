@@ -11,6 +11,7 @@
 #include <functional>
 #include <string_view>
 
+#include <srtp.h>
 #include <openssl/ssl.h>
 
 #include "media/webrtc/dtls_certificate.h"
@@ -26,7 +27,7 @@ enum class dtls_role
 
 struct dtls_srtp_keying_material
 {
-    std::string profile;
+    srtp_profile_t profile{};
     std::vector<std::uint8_t> client_write_key;
     std::vector<std::uint8_t> client_write_salt;
     std::vector<std::uint8_t> server_write_key;

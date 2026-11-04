@@ -1,7 +1,6 @@
 #include <climits>
 #include <cstring>
 #include <utility>
-#include <string_view>
 
 #include <srtp.h>
 #include <spdlog/spdlog.h>
@@ -13,32 +12,6 @@ namespace media_server
 namespace
 {
 
-bool set_crypto_policy(std::string_view profile, srtp_policy_t& policy)
-{
-    if (profile == "SRTP_AEAD_AES_128_GCM")
-    {
-        srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtp);
-        srtp_crypto_policy_set_aes_gcm_128_16_auth(&policy.rtcp);
-        return true;
-    }
-
-    if (profile == "SRTP_AEAD_AES_256_GCM")
-    {
-        srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtp);
-        srtp_crypto_policy_set_aes_gcm_256_16_auth(&policy.rtcp);
-        return true;
-    }
-
-    if (profile == "SRTP_AES128_CM_SHA1_80")
-    {
-        srtp_crypto_policy_set_rtp_default(&policy.rtp);
-        srtp_crypto_policy_set_rtcp_default(&policy.rtcp);
-        return true;
-    }
-
-    return false;
-}
-
 std::vector<std::uint8_t> make_master_key(const std::vector<std::uint8_t>& key, const std::vector<std::uint8_t>& salt)
 {
     std::vector<std::uint8_t> result;
@@ -48,10 +21,11 @@ std::vector<std::uint8_t> make_master_key(const std::vector<std::uint8_t>& key, 
     return result;
 }
 
-bool create_session(std::string_view profile, std::vector<std::uint8_t>& master_key, srtp_ssrc_type_t ssrc_type, srtp_t& session)
+bool create_session(srtp_profile_t profile, std::vector<std::uint8_t>& master_key, srtp_ssrc_type_t ssrc_type, srtp_t& session)
 {
     srtp_policy_t policy{};
-    if (!set_crypto_policy(profile, policy) || master_key.empty())
+    if (srtp_crypto_policy_set_from_profile_for_rtp(&policy.rtp, profile) != srtp_err_status_ok ||
+        srtp_crypto_policy_set_from_profile_for_rtcp(&policy.rtcp, profile) != srtp_err_status_ok || master_key.empty())
     {
         return false;
     }
@@ -97,7 +71,7 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material, d
         return false;
     }
 
-    spdlog::debug("webrtc srtp transport startup profile {}", keying_material.profile);
+    spdlog::debug("webrtc srtp transport startup profile {}", static_cast<int>(keying_material.profile));
 
     auto state = std::make_unique<struct context>();
     const bool server = role == dtls_role::server;
@@ -105,7 +79,7 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material, d
                                       : make_master_key(keying_material.client_write_key, keying_material.client_write_salt);
     if (!create_session(keying_material.profile, outbound_master_key, ssrc_any_outbound, state->outbound))
     {
-        spdlog::debug("webrtc srtp outbound context create failed profile {}", keying_material.profile);
+        spdlog::debug("webrtc srtp outbound context create failed profile {}", static_cast<int>(keying_material.profile));
         return false;
     }
 
@@ -113,12 +87,12 @@ bool srtp_transport::startup(const dtls_srtp_keying_material& keying_material, d
                                      : make_master_key(keying_material.server_write_key, keying_material.server_write_salt);
     if (!create_session(keying_material.profile, inbound_master_key, ssrc_any_inbound, state->inbound))
     {
-        spdlog::debug("webrtc srtp inbound context create failed profile {}", keying_material.profile);
+        spdlog::debug("webrtc srtp inbound context create failed profile {}", static_cast<int>(keying_material.profile));
         return false;
     }
 
     context_ = std::move(state);
-    spdlog::debug("webrtc srtp transport started profile {}", keying_material.profile);
+    spdlog::debug("webrtc srtp transport started profile {}", static_cast<int>(keying_material.profile));
     return true;
 }
 

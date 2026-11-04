@@ -230,30 +230,15 @@ std::optional<std::vector<std::vector<std::uint8_t>>> take_dtls_output(SSL* ssl)
 
 std::optional<dtls_srtp_keying_material> make_client_srtp_material(SSL* ssl)
 {
-    const auto* profile = SSL_get_selected_srtp_profile(ssl);
-    if (profile == nullptr || profile->name == nullptr)
+    const auto* selected = SSL_get_selected_srtp_profile(ssl);
+    if (selected == nullptr)
     {
         return std::nullopt;
     }
-    std::size_t key_size = 0;
-    std::size_t salt_size = 0;
-    const std::string_view name(profile->name);
-    if (name == "SRTP_AEAD_AES_128_GCM")
-    {
-        key_size = 16U;
-        salt_size = 12U;
-    }
-    else if (name == "SRTP_AEAD_AES_256_GCM")
-    {
-        key_size = 32U;
-        salt_size = 12U;
-    }
-    else if (name == "SRTP_AES128_CM_SHA1_80")
-    {
-        key_size = 16U;
-        salt_size = 14U;
-    }
-    else
+    const auto profile = static_cast<srtp_profile_t>(selected->id);
+    const std::size_t key_size = srtp_profile_get_master_key_length(profile);
+    const std::size_t salt_size = srtp_profile_get_master_salt_length(profile);
+    if (key_size == 0U || salt_size == 0U)
     {
         return std::nullopt;
     }
@@ -269,7 +254,7 @@ std::optional<dtls_srtp_keying_material> make_client_srtp_material(SSL* ssl)
     const auto client_salt = server_key + static_cast<std::ptrdiff_t>(key_size);
     const auto server_salt = client_salt + static_cast<std::ptrdiff_t>(salt_size);
     return dtls_srtp_keying_material{
-        .profile = std::string(name),
+        .profile = profile,
         .client_write_key = std::vector<std::uint8_t>(client_key, server_key),
         .client_write_salt = std::vector<std::uint8_t>(client_salt, server_salt),
         .server_write_key = std::vector<std::uint8_t>(server_key, client_salt),

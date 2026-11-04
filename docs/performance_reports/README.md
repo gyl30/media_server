@@ -26,7 +26,7 @@
 | [20261031-chrome-opus-passthrough](20261031-chrome-opus-passthrough/report.md) | `aa083a5` 加工作区改动 | GB PS 按完整 pack 核对尾部完整性与截断负向测试；矩阵对 RTSP AAC 锯齿严格 XFAIL/XPASS，30 PASS + 3 XFAIL；Chrome 默认 offer 直通转为生产改动，浏览器、ASan、8 核 1056 源回归通过；TSan 浏览器失败在 HEAD 同样复现 | 原始结果与 sanitizer 日志只在测试机 |
 | [20261101-tsan-video-only-idle-transcoder](20261101-tsan-video-only-idle-transcoder/report.md) | `fc1bcc1` 与实验构建 | TSan 并发证书竞争与 SEGV 均为工具问题（OpenSSL 未插桩、协程栈上符号化溢出）；纯视频 WHEP 触发无人消费的 Opus→AAC，改挂伴随流使其 CPU −66–73%（候选，未合入）；空闲转码器每源约 0.37 MiB，不影响容量，不实施 | 原始结果只在测试机 |
 | [20261103-full-acceptance](20261103-full-acceptance/report.md) | `0eae004` | 全协议验收与 8 核混合负载：WHEP 协商/生命周期、35 场景矩阵与 Sanitizer 通过；A/B/C 与 `3b6c0bd` 一致，纯视频观众混合 D 健康容量 1.8×→2.2×；profiling 无可归因优化，GO | 原始结果与 profile 只在测试机；混合负载 GB 音画探针与负载素材不兼容，报表另行区分 |
-| [20261103-udp-io](20261103-udp-io/report.md) | `b131705` 与工作区候选 | UDP 收发归因；`sendmmsg`/connect REJECT，GSO 帧内合并 ACCEPT：GB UDP −46%、WHEP −12% cycles，D 2.2×→2.4×、B 1.6×→1.7×；avsync 素材消除混合负载 GB 探针缺口；遗留既有 WHEP SRTP replay_fail | 原始结果、profile、bpftrace 与实验二进制只在测试机；收益在 lo 上测得，真实网卡需复测 |
+| [20261103-udp-io](20261103-udp-io/report.md) | `b131705` 与工作区候选 | UDP 收发归因；`sendmmsg`/connect REJECT，GSO 帧内合并 ACCEPT：GB UDP −46%、WHEP −12% cycles，D 2.2×→2.4×、B 1.6×→1.7×；avsync 素材消除混合负载 GB 探针缺口；遗留既有 WHEP SRTP replay_fail | GSO 已按维护性取舍撤销（见 [20261104 库优先审查](../reviews/20261104-library-first-review.md)），当前为逐包 `send_to`；原始结果、profile、bpftrace 只在测试机；收益在 lo 上测得 |
 
 ## 验证记录
 
@@ -36,6 +36,7 @@
 | [20261023-3cbc170-rfc822-race](../verification_results/20261023-3cbc170-rfc822-race/README.md) | `3cbc170` | `gmtime` 数据竞争修复验证 | — |
 | [20261023-dfe30e6-web-console](../verification_results/20261023-dfe30e6-web-console/results.md) | `dfe30e6`→`e12340d` | Web 控制台验收 | — |
 | [20261023-e12340d-gb-camera](../verification_results/20261023-e12340d-gb-camera/results.md) | `e12340d` | GB 实机摄像机验收 | 摄像机原始记录只在本地 |
+| [20261104-library-review](../reviews/20261104-library-first-review.md) | `e26b4e0` 与工作区 | 库优先审查：撤销 UDP GSO、SRTP profile 改用 libsrtp；SRTP 三 profile 互通、UDP 发送专项、矩阵、Sanitizer、生命周期 | 原始结果只在测试机 `runs9/` |
 
 ## AAC afterburner=0 的证据（2026-10-29 复核）
 

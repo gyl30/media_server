@@ -19,13 +19,8 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
    public:
     using packet_handler = std::function<void(std::span<const std::uint8_t>)>;
     using end_handler = std::function<void()>;
-    using frame_handler = std::function<void()>;
 
-    gb28181_rtp_sender(worker_context& worker,
-                       std::shared_ptr<media_stream> stream,
-                       packet_handler on_packet,
-                       end_handler handle_source_end,
-                       frame_handler on_frame_sent = {});
+    gb28181_rtp_sender(worker_context& worker, std::shared_ptr<media_stream> stream, packet_handler on_packet, end_handler handle_source_end);
 
    public:
     [[nodiscard]] bool startup(std::uint8_t payload_type, std::uint32_t ssrc);
@@ -48,7 +43,6 @@ class gb28181_rtp_sender final : public mpeg_ps_sink, public std::enable_shared_
     std::shared_ptr<media_stream> stream_;
     packet_handler packet_handler_;
     end_handler end_handler_;
-    frame_handler frame_handler_;
     std::shared_ptr<mpeg_ps_output> ps_output_;
     void* packetizer_{};
     std::array<std::uint8_t, 2048> packet_buffer_{};

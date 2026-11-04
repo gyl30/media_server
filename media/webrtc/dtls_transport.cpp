@@ -89,29 +89,6 @@ std::optional<std::vector<std::uint8_t>> parse_sha256_fingerprint(std::string_vi
     return digest;
 }
 
-struct srtp_profile_size
-{
-    std::size_t key_size{};
-    std::size_t salt_size{};
-};
-
-std::optional<srtp_profile_size> profile_size(std::string_view profile)
-{
-    if (profile == "SRTP_AES128_CM_SHA1_80")
-    {
-        return srtp_profile_size{.key_size = 16, .salt_size = 14};
-    }
-    if (profile == "SRTP_AEAD_AES_128_GCM")
-    {
-        return srtp_profile_size{.key_size = 16, .salt_size = 12};
-    }
-    if (profile == "SRTP_AEAD_AES_256_GCM")
-    {
-        return srtp_profile_size{.key_size = 32, .salt_size = 12};
-    }
-    return std::nullopt;
-}
-
 }    // namespace
 
 dtls_transport::dtls_transport(std::string remote_fingerprint, send_handler send)
@@ -309,7 +286,7 @@ bool dtls_transport::finish_handshake()
         return false;
     }
 
-    spdlog::debug("webrtc dtls handshake complete srtp profile {}", keying_material->profile);
+    spdlog::debug("webrtc dtls handshake complete srtp profile {}", SSL_get_selected_srtp_profile(ssl_.get())->name);
     srtp_keying_material_ = std::move(keying_material);
     return true;
 }
@@ -341,19 +318,20 @@ bool dtls_transport::verify_peer_fingerprint() const
 std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_material() const
 {
     const auto* selected = SSL_get_selected_srtp_profile(ssl_.get());
-    if (selected == nullptr || selected->name == nullptr)
+    if (selected == nullptr)
     {
         return std::nullopt;
     }
 
-    const std::string profile(selected->name);
-    const auto sizes = profile_size(profile);
-    if (!sizes)
+    const auto profile = static_cast<srtp_profile_t>(selected->id);
+    const std::size_t key_size = srtp_profile_get_master_key_length(profile);
+    const std::size_t salt_size = srtp_profile_get_master_salt_length(profile);
+    if (key_size == 0 || salt_size == 0)
     {
         return std::nullopt;
     }
 
-    const auto total_size = 2U * (sizes->key_size + sizes->salt_size);
+    const auto total_size = 2U * (key_size + salt_size);
     std::vector<std::uint8_t> raw(total_size);
     if (SSL_export_keying_material(
             ssl_.get(), raw.data(), raw.size(), dtls_srtp_exporter_label.data(), dtls_srtp_exporter_label.size(), nullptr, 0, 0) != 1)
@@ -369,13 +347,13 @@ std::optional<dtls_srtp_keying_material> dtls_transport::export_srtp_keying_mate
         .server_write_salt = {},
     };
     const auto* client_key = raw.data();
-    const auto* server_key = client_key + sizes->key_size;
-    const auto* client_salt = server_key + sizes->key_size;
-    const auto* server_salt = client_salt + sizes->salt_size;
+    const auto* server_key = client_key + key_size;
+    const auto* client_salt = server_key + key_size;
+    const auto* server_salt = client_salt + salt_size;
     result.client_write_key.assign(client_key, server_key);
     result.client_write_salt.assign(client_salt, server_salt);
     result.server_write_key.assign(server_key, client_salt);
-    result.server_write_salt.assign(server_salt, server_salt + sizes->salt_size);
+    result.server_write_salt.assign(server_salt, server_salt + salt_size);
     return result;
 }
 
