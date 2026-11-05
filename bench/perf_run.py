@@ -656,6 +656,7 @@ def run(args):
                     process_identities[process.pid] = check_identity(name, process.pid)
             result["process_identities"] = {str(pid): identity for pid, identity in process_identities.items()}
             result["preparation_seconds"] = time.monotonic() - preparation_started
+            clients_ready_ns = time.monotonic_ns()
             start_ns = time.monotonic_ns() + (args.warmup + 1) * 1000000000
             temporary = barrier.with_suffix(".tmp")
             temporary.write_text(str(start_ns) + "\n")
@@ -992,8 +993,19 @@ def run(args):
                 probe["ok"] = process.returncode == 0 and probe.get("ok") is True
                 result.setdefault("av_probe", {})[protocol] = probe
             if (args.output / "whep-0.dump").exists():
+                publisher_ticks = [process_startticks[process.pid] for _, process, _, category in processes if category == "publisher"]
+                publisher_ticks += [process_startticks[pid] for name, pid in external_processes if name.startswith("external-publisher-")]
+                continuous_ns = 0
+                if publisher_ticks and (owned or all("publisher_pid" in source for source in sources)):
+                    fixture_seconds = min(float(subprocess.run([str(args.ffprobe_bin), "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                                                str(path)], capture_output=True, text=True, check=True, timeout=30).stdout)
+                                          for path in (args.fixture, args.whip_fixture) if path.is_file())
+                    boot_offset_ns = time.clock_gettime_ns(time.CLOCK_BOOTTIME) - time.monotonic_ns()
+                    first_publisher_ns = min(publisher_ticks) * 1e9 / os.sysconf("SC_CLK_TCK") - boot_offset_ns
+                    continuous_ns = int(first_publisher_ns + fixture_seconds * 1e9 - clients_ready_ns)
                 process = launch("av-whep", [sys.executable, Path(__file__).with_name("whep_dump_av.py"), args.output / "whep-0.dump",
-                                             "--seconds", args.av_probe + 5, "--output", args.output / "whep-0.mkv", "--ffmpeg-bin", args.ffmpeg_bin],
+                                             "--seconds", args.av_probe + 5, "--output", args.output / "whep-0.mkv", "--ffmpeg-bin", args.ffmpeg_bin,
+                                             "--expect-audio", "--source-continuous-ns", max(0, continuous_ns)],
                                  args.client_cpus, "decode")
                 try:
                     process.wait(timeout=args.av_probe + 120)
@@ -1004,7 +1016,8 @@ def run(args):
                     probe = json.loads(lines[-1])
                 except (IndexError, ValueError):
                     probe = {"exit_code": process.returncode}
-                probe["ok"] = process.returncode == 0 and probe.get("exit_code") == 0 and probe.get("video_frames", 0) > 0 and probe.get("video_pts_backward") == 0
+                probe["source_continuous_seconds"] = continuous_ns / 1e9
+                probe["ok"] = process.returncode == 0 and probe.get("verdict") == "PASS"
                 result.setdefault("av_probe", {})["whep"] = probe
             if source_churn_thread is not None:
                 source_churn_thread.join(timeout=args.source_churn + args.ready_timeout * 4)
@@ -1066,11 +1079,12 @@ def run(args):
                           item["measurement"].get("progressing") == item["requested"] and item["window"]["coverage"] >= 0.99
                           for item in result["groups"])
             success = success and all(probe["ok"] for probe in result.get("decode_probe", {}).values())
-            success = success and all(probe["ok"] for probe in result.get("av_probe", {}).values())
+            inconclusive_probes = [protocol for protocol, probe in result.get("av_probe", {}).items() if probe.get("verdict") == "INCONCLUSIVE"]
+            success = success and all(probe["ok"] or protocol in inconclusive_probes for protocol, probe in result.get("av_probe", {}).items())
             success = success and not result.get("churn", {}).get("failed_rounds")
             success = success and not result.get("source_churn", {}).get("failed_rounds")
-            result["status"] = "PASS" if success else "FAIL"
-            result["capacity_boundary"] = "HEALTHY" if success else "UNCONFIRMED"
+            result["status"] = "PASS" if success and not inconclusive_probes else "INCONCLUSIVE" if success else "FAIL"
+            result["capacity_boundary"] = "HEALTHY" if success and not inconclusive_probes else "UNCONFIRMED"
             if server is not None and server.poll() is not None:
                 result["status"] = "FAIL"
                 result["capacity_boundary"] = "SERVER_UNSTABLE"

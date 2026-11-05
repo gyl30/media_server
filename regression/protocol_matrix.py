@@ -97,7 +97,7 @@ def summarize(result):
         summary["groups"][group["name"]]["failure_category"] = group.get("failure_category")
     for protocol, probe in (result.get("av_probe") or {}).items():
         summary["av_probe"][protocol] = {key: probe.get(key) for key in
-                                         ("ok", "decode_warnings", "video_frames", "audio_frames", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
+                                         ("ok", "verdict", "decode_warnings", "video_frames", "audio_frames", "audio_rtp_packets", "audio_rtp_lost", "video_fps", "video_pts_backward", "video_pts_gaps", "audio_pts_gaps",
                                           "audio_pts_overlaps", "audio_pts_slip_ms_min", "audio_pts_slip_ms_max", "av_markers", "av_offset_ms_min", "av_offset_ms_p50", "av_offset_ms_max", "audio_codec", "audio_samples",
                                           "checks", "reference")}
     for protocol, probe in (result.get("decode_probe") or {}).items():

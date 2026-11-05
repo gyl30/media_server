@@ -7,6 +7,9 @@ backward when it falls more than MAX_REORDER_TICKS below the latest one, and the
 Audio continuity compares each packet's RTP timestamp with the previous packet's timestamp plus its sample count (Opus TOC, G.711 bytes) in
 sequence order; the recording's values are kept as recorded_audio_pts_*, because ffmpeg maps a first audio packet read before that stream's
 RTCP Sender Report on the unsynchronized clock and the next packet on the Sender Report clock.
+--expect-audio requires audio RTP. --source-continuous-ns limits the audio timeline to packets dumped before the earliest moment a source may
+have looped its fixture, since a loop seam is an input discontinuity; with fewer than two audio packets before it the timeline is unjudged
+and the verdict is INCONCLUSIVE unless another check fails.
 G.711 audio is recorded as PCM because Matroska has no copy mapping for it."""
 
 import argparse
@@ -51,24 +54,27 @@ def audio_samples(payload_type, payload):
 def audio_timeline(records, ssrc_kind):
     packets = {}
     last_sequence = None
-    for _, rtcp, packet in records:
+    for nanoseconds, rtcp, packet in records:
         if rtcp or len(packet) < 12 or ssrc_kind.get(struct.unpack_from("!I", packet, 8)[0]) != "audio":
             continue
         sequence = struct.unpack_from("!H", packet, 2)[0]
         extended = sequence if last_sequence is None else last_sequence + ((sequence - last_sequence + 0x8000) & 0xFFFF) - 0x8000
         last_sequence = extended if last_sequence is None else max(last_sequence, extended)
-        packets.setdefault(extended, (packet[1] & 0x7F, struct.unpack_from("!I", packet, 4)[0], rtp_payload(packet)))
+        packets.setdefault(extended, (nanoseconds, packet[1] & 0x7F, struct.unpack_from("!I", packet, 4)[0], rtp_payload(packet)))
     ordered = sorted(packets.items())
     if len(ordered) < 2:
-        return {}
+        return {"audio_timeline_packets": len(ordered)}
     slips = []
     lost = 0
-    for (sequence, (payload_type, timestamp, payload)), (next_sequence, (_, next_timestamp, _)) in zip(ordered, ordered[1:]):
+    for (sequence, (_, payload_type, timestamp, payload)), (next_sequence, (nanoseconds, _, next_timestamp, _)) in zip(ordered, ordered[1:]):
         lost += next_sequence - sequence - 1
         delta = ((next_timestamp - timestamp + 0x80000000) & 0xFFFFFFFF) - 0x80000000
-        slips.append((delta - audio_samples(payload_type, payload)) / AUDIO_CLOCKS[payload_type])
-    return {"audio_pts_overlaps": sum(value < -AUDIO_GAP_SECONDS for value in slips), "audio_pts_gaps": sum(value > AUDIO_GAP_SECONDS for value in slips),
-            "audio_pts_gap_max_ms": max(slips) * 1000, "audio_rtp_lost": lost}
+        slips.append((next_sequence, nanoseconds, (delta - audio_samples(payload_type, payload)) / AUDIO_CLOCKS[payload_type]))
+    first = ordered[0][1][0]
+    return {"audio_timeline_packets": len(ordered), "audio_pts_overlaps": sum(value < -AUDIO_GAP_SECONDS for _, _, value in slips),
+            "audio_pts_gaps": sum(value > AUDIO_GAP_SECONDS for _, _, value in slips), "audio_pts_gap_max_ms": max(value for _, _, value in slips) * 1000,
+            "audio_rtp_lost": lost, "audio_pts_slips": [{"sequence": sequence & 0xFFFF, "seconds": round((nanoseconds - first) / 1e9, 3), "ms": round(value * 1000, 3)}
+                                                        for sequence, nanoseconds, value in slips if abs(value) > AUDIO_GAP_SECONDS][:20]}
 
 
 def read_dump(path):
@@ -106,6 +112,8 @@ def main():
     parser.add_argument("--ffmpeg-bin", default="ffmpeg")
     parser.add_argument("--base-port", type=int, default=0, help="first of four loopback ports; 0 picks a free block below the ephemeral range")
     parser.add_argument("--seconds", type=float, default=0, help="replay only the first SECONDS of the dump; 0 replays all")
+    parser.add_argument("--expect-audio", action="store_true", help="the viewer offered audio and the source has an audio track")
+    parser.add_argument("--source-continuous-ns", type=int, help="dump clock before which every source is known not to have looped its fixture")
     args = parser.parse_args()
 
     records = read_dump(args.dump)
@@ -179,14 +187,29 @@ def main():
     result["video_rtp_reordered"] = rtp_reordered
     result["recorded_video_pts_backward"] = result.get("video_pts_backward")
     result["video_pts_backward"] = rtp_backward
-    if audio_payload_type is not None:
-        for key in ("audio_pts_overlaps", "audio_pts_gaps", "audio_pts_gap_max_ms"):
-            result[f"recorded_{key}"] = result.get(key)
-        result.update(audio_timeline(records, ssrc_kind))
+    audio_packets = sum(not rtcp and len(packet) >= 12 and ssrc_kind.get(struct.unpack_from("!I", packet, 8)[0]) == "audio" for _, rtcp, packet in records)
+    for key in ("audio_pts_overlaps", "audio_pts_gaps", "audio_pts_gap_max_ms"):
+        result[f"recorded_{key}"] = result.pop(key, None)
+    judged = records if args.source_continuous_ns is None else [record for record in records if record[0] < args.source_continuous_ns]
+    result.update(audio_timeline(judged, ssrc_kind))
+    result["audio_rtp_packets"] = audio_packets
     result["replayed_packets"] = sent
     result["recorder_exit"] = recorder.returncode
+    if not audio_packets:
+        timeline = True
+    elif result["audio_timeline_packets"] < 2:
+        timeline = None
+    else:
+        timeline = result["audio_rtp_lost"] == 0 and result["audio_pts_gaps"] == 0 and result["audio_pts_overlaps"] == 0
+    checks = {"recording": "error" not in result and result.get("exit_code") == 0,
+              "video_decoded": result.get("video_frames", 0) > 0, "video_pts_order": rtp_backward == 0,
+              "audio_present": audio_packets > 0 or not args.expect_audio, "audio_timeline": timeline}
+    result["checks"] = checks
+    result["verdict"] = "FAIL" if False in checks.values() else "INCONCLUSIVE" if None in checks.values() else "PASS"
+    result["ok"] = result["verdict"] == "PASS"
     print(json.dumps(result))
+    return 1 if result["verdict"] == "FAIL" else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

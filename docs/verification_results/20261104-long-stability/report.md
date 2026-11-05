@@ -138,4 +138,4 @@ REGISTER/401/200、Keepalive、Catalog、INVITE/ACK/BYE、H.264+PCMA、Chrome WH
 ## 7. 其他
 
 - **SSH Git 认证**：本机 `id_rsa`（SHA256:24Sa…）与 GitHub 账户公开的 key 114462490 指纹一致，主机密钥校验通过，经 SOCKS 代理连接后服务端仍拒绝该 key。原因在 GitHub 侧（例如 key 被停用或需要重新验证），本地无法进一步确认：查询 key 状态需要 `admin:public_key` 权限，当前 token 没有。`https://github.com/gyl30/media_server.git` 可以用已有凭据访问。没有修改全局 SSH 配置。
-- **原始结果**：测试机 `runs11/`（s1-*、s2-*、s3-*），保留了 s3 的 dump 和 mkv 作为探针伪影的证据。
+- **原始结果**：测试机 `runs11/`（s1-*、s2-*、s3-*）。更正（2026-11-05）：s3 的 dump 和 mkv 原本作为探针伪影的证据保留，但在 2026-11-05 09:24 被删除。删除者是之后提交的 `p01` 作业：它引用的旧作业库在启动时会运行 `cleanup.sh runs8`，删掉 `runs*` 下除 `runs8` 以外所有大于 1 MB 的媒体文件。现在只剩各 run 的 JSON、日志和本报告中的数值；剩余 dump 已复制到 `runs*` 之外，见 [20261105-whep-probe](../20261105-whep-probe/report.md)。

@@ -10,7 +10,7 @@
 
 `perf_run.py` 判定 WHEP 探针 `ok` 时不使用音频缺口字段，因此这些运行的 PASS 不受影响；受影响的只是报告中的字段可信度。
 
-## 2. 证据（同一批 dump：测试机 `runs11/s3-whep-gap-r1..r3/run/whep-0.dump`）
+## 2. 证据（同一批 dump：测试机 `runs11/s3-whep-gap-r1..r3/run/whep-0.dump`，已删除，见第 7 节）
 
 | 检查项 | 结果 |
 | --- | --- |
@@ -91,6 +91,69 @@
 
 ## 7. 文件
 
-- `whep_dump_av_check.py`：确定性回归。用法：`whep_dump_av_check.py <whep-0.dump> --tool bench/whep_dump_av.py --ffmpeg-bin <ffmpeg>`。
-- `jobs/p01-whep-probe.sh`：现场定向回归。
-- 原始 dump、运行期间的录制和诊断输出：测试机 `runs11/s3-*`、`runs11/s5-probe/`、`runs11/s6-*`。
+- `whep_dump_av_check.py`：基于真实 dump 的确定性回归，用例见第 8 节。用法：`whep_dump_av_check.py <whep-0.dump> --tool bench/whep_dump_av.py --ffmpeg-bin <ffmpeg> [--legacy]`。
+- `whep_timeline_check.py`：只用合成 RTP 包检查判定逻辑，不需要 dump 或 ffmpeg，CI 运行它。
+- `jobs/p01-whep-probe.sh`：第一轮的现场定向回归。
+- **证据位置更正**：`runs11/s3-*` 的 dump 与录制、`runs11/s5-probe/` 中的变体，已在 2026-11-05 09:24 被删除。删除者是 `p01` 作业：它引用的旧作业库启动时会运行 `cleanup.sh runs8`，删掉 `runs*` 下除 `runs8` 以外所有大于 1 MB 的媒体文件。
+  - 第 2、3、5 节的数值是删除之前测得的，原始文件已经无法复核。
+  - 现存的 dump 只有 `s6-whep-probe-r1..r3` 三份，已复制到测试机 `evidence-whep/s6-r{1,2,3}.dump`（不在 `runs*` 下）。第 8 节的检查都以 `s6-r1.dump` 为源。
+
+## 8. 验收判据（第二轮，2026-11-05）
+
+第一轮只修正了音频字段的取值，`perf_run.py` 判定 `av_probe.whep.ok` 时仍然只看录制退出码、视频帧数和视频时间戳顺序。因此真实的音频丢包、缺口、重叠，乃至整条音轨缺失，都不会让运行失败。
+
+**场景前提（核对源码）**
+
+- 只有 `whep` 组的第一个观众录制 dump。`perf_run.py` 只给 `whep_video` 组加 `--video-only`，所以录制 dump 的这个观众在 offer 中总是请求音频。
+- `whep_fanout` 自身的就绪条件 `expects_audio()` 也要求收到音频包。
+- 自有源模式下，素材必须同时含音频和视频，否则运行判为 UNSUPPORTED。
+
+据此 runner 给 `whep_dump_av.py` 传 `--expect-audio`。纯视频 offer（`--video-only`）或 G.722-only offer（`--unsupported-audio`，服务端拒绝音频）的观众不录制 dump；工具在不带 `--expect-audio` 时，不要求存在音轨。
+
+**判定**（`whep_dump_av.py` 输出 `checks`、`verdict`、`ok`；FAIL 时退出码为 1）
+
+| check | 条件 |
+| --- | --- |
+| `recording` | 回放录制和 av_probe 成功（与旧判据相同） |
+| `video_decoded` | 视频帧数 > 0 |
+| `video_pts_order` | dump 中的视频 RTP 时间戳没有超过 0.5 s 的回退 |
+| `audio_present` | 带 `--expect-audio` 时，必须有音频 RTP |
+| `audio_timeline` | 有音频时：`audio_rtp_lost`、`audio_pts_gaps`、`audio_pts_overlaps` 都为 0，阈值仍是 5 ms；可判定的包少于 2 个时为 null |
+
+- verdict：任一 check 为 false 时是 FAIL；没有 false 但有 null 时是 INCONCLUSIVE；其余为 PASS。
+- `perf_run.py` 的处理：`ok = 退出码 0 且 verdict == PASS`。INCONCLUSIVE 不算失败，但整次运行最多只能是 INCONCLUSIVE/UNCONFIRMED，不会是 PASS。
+
+**合法间断**
+
+推流端用 `-stream_loop -1`，或由 `whip_publisher` 循环播放 120 s 素材。循环处会出现输入侧的音频间断，例如上次 WHIP 素材在约 92 s 处多出 21 ms。runner 按下面的方法计算源保证尚未循环的上界：
+
+- 取最早一个推流进程的 starttick（换算到 monotonic）；
+- 加上素材时长（`--fixture` 与 `--whip-fixture` 取较短的一个）；
+- 减去全部观众就绪的时刻（dump 中首包一定早于这个时刻）；
+- 结果作为 `--source-continuous-ns` 传给工具，记录在 `av_probe.whep.source_continuous_seconds`。
+
+只判定这个上界之前的音频包。外部源（`--input existing`）中有不带 `publisher_pid` 的源时，上界取 0，因此结论是 INCONCLUSIVE。
+
+**RED→GREEN**（源为 `evidence-whep/s6-r1.dump`，每个用例都实际回放到 ffmpeg）
+
+| 用例 | 期望 | 旧判据（HEAD 工具，`--legacy`） | 新工具 |
+| --- | --- | --- | --- |
+| 原样 Opus | PASS | PASS | PASS |
+| SR 在首个音频 RTP 后 50 ms | PASS | PASS | PASS（`recorded_audio_pts_gaps` 1） |
+| SR 在首个音频 RTP 前 1 ms | PASS | PASS | PASS |
+| 第 10 s 起删除 4 个音频包 | FAIL | **PASS（漏报）** | FAIL，lost 4，80 ms |
+| 时间戳 +80 ms | FAIL | **PASS（漏报）** | FAIL，gap 80 ms |
+| 时间戳 −20 ms | FAIL | **PASS（漏报）** | FAIL，overlap 1 |
+| 序号与时间戳回绕 | PASS | PASS | PASS |
+| 回绕后删除 4 包 | FAIL | **PASS（漏报）** | FAIL，lost 4 |
+| G.711 A-law（由同一 dump 改写为 PT 8、8 kHz、160 字节/包） | PASS | PASS | PASS |
+| G.711 删除 4 包 | FAIL | **PASS（漏报）** | FAIL，lost 4 |
+| 期望音频但没有音频 RTP | FAIL | **PASS（漏报）** | FAIL，`audio_present` |
+| 纯视频或音频被拒绝（无音轨，不带 `--expect-audio`） | PASS | PASS | PASS |
+| +80 ms 跳变位于前提上界（5 s）之后 | PASS | PASS | PASS（判定 224 包） |
+| 前提上界为 0 | INCONCLUSIVE | **PASS** | INCONCLUSIVE |
+
+- 旧判据 14 个用例中 7 个与期望不符；新工具 14/14 全部符合。
+- `whep_timeline_check.py` 的 12 个合成用例：新工具全部通过；HEAD 版工具只有 `no-audio` 一例失败（旧实现不输出 `audio_timeline_packets`），其余 11 例的时间线计算两者一致。
+
+**现场回归**：见 [20261105-rc-readiness](../20261105-rc-readiness/report.md) 中用 RC 二进制运行的完整协议矩阵。
