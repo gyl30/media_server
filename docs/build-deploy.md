@@ -39,6 +39,8 @@ cmake --build build-perf -j4
 
 协议矩阵、容量与长稳测试、真实设备和需要专用 netns 的检查不进入公共 CI，仍在专用测试机上运行。
 
+候选版本由 [`package_rc.sh`](verification_results/20261105-rc-readiness/package_rc.sh) 打包。它只接受干净的源码树和 `--version` 与之一致的构建，在包中写入 BUILD-INFO 与 SHA256SUMS，并收录各依赖的许可证文本。
+
 服务端 AAC 编码固定使用 libfdk-aac（关闭 afterburner）。FDK 许可不授予 AAC 专利许可，且要求分发二进制时随附其源码；该组合只用于内部部署，对外分发前需另行评估。
 
 ## Go 信令与模拟器

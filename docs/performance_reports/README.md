@@ -41,6 +41,7 @@
 | [20261104-rtsp-aac-timeline](../verification_results/20261104-rtsp-aac-timeline/report.md) | `830668b` | RTSP AAC 多 AU 包时间戳锯齿的确定性回归（推流/Pull、48k/44.1k、回绕、丢包、跳变、SR）；ireader 不提供 AU 包内序号与帧长，候选方案均需第二套时间线或重复解析，KEEP，保留严格 XFAIL；另记丢包后额外丢弃完整 AU 与 960 样本帧风险 | 无生产改动；后续方向为 ireader 内最小修复 |
 | [20261104-long-stability](../verification_results/20261104-long-stability/report.md) | `830668b` | 长稳验收：D 1.6×、B 1.2× 各 1800 s，WHEP/GB/RTSP/RTMP churn 各 600 s，全部 PASS HEALTHY，PSS/FD 无增长、清理后 FD 回到 32；WHEP 探针 80 ms 音频缺口确认为录制启动伪影；真实摄像机 BLOCKED（无配置授权）；NO CHANGE | 原始结果只在测试机 `runs11/` |
 | [20261105-whep-probe](../verification_results/20261105-whep-probe/report.md) | `830668b` + `bench/whep_dump_av.py` | WHEP 探针 80 ms 音频缺口定位：首个音频 RTP 与 SR 相隔约 20 µs，ffmpeg 先读 RTP 时首帧按未同步时钟映射；音频连续性改按 dump RTP 判定，录制值保留为 `recorded_audio_pts_*`；确定性回归 RED→GREEN，GO | 只改测试工具 |
+| [20261105-rc-readiness](../verification_results/20261105-rc-readiness/report.md) | `2adfaea` 与工作区 | 四项任务与 RC 验收：WHEP 音频接入判定（`--expect-audio`、素材循环前提、INCONCLUSIVE），RED→GREEN 后 RC 二进制完整矩阵 32 PASS / 3 XFAIL；干净构建、打包和隔离冒烟通过；CI 工作流本地重放通过，但未在 GitHub 运行；真实摄像机因缺少账号 BLOCKED；整体 INCONCLUSIVE | 只改工具、CI、文档；许可证阻断项见报告 |
 
 ## AAC afterburner=0 的证据（2026-10-29 复核）
 
