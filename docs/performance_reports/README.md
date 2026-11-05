@@ -40,6 +40,7 @@
 | [20261104-port-pool-replay](../verification_results/20261104-port-pool-replay/report.md) | `93bb9eb` 与工作区 | 端口池范围改为编译期常量；WHEP SRTP replay_fail 根因：ireader 未定义 `OS_LINUX`，`rtp_ssrc()` 走全局 `rand()`，被 RTMP 握手的 `srand(time(NULL))` 重置，导致音视频 SSRC/seq 相同；确定性回归、矩阵、Sanitizer、生命周期通过 | 原始结果只在测试机 `runs10/` |
 | [20261104-rtsp-aac-timeline](../verification_results/20261104-rtsp-aac-timeline/report.md) | `830668b` | RTSP AAC 多 AU 包时间戳锯齿的确定性回归（推流/Pull、48k/44.1k、回绕、丢包、跳变、SR）；ireader 不提供 AU 包内序号与帧长，候选方案均需第二套时间线或重复解析，KEEP，保留严格 XFAIL；另记丢包后额外丢弃完整 AU 与 960 样本帧风险 | 无生产改动；后续方向为 ireader 内最小修复 |
 | [20261104-long-stability](../verification_results/20261104-long-stability/report.md) | `830668b` | 长稳验收：D 1.6×、B 1.2× 各 1800 s，WHEP/GB/RTSP/RTMP churn 各 600 s，全部 PASS HEALTHY，PSS/FD 无增长、清理后 FD 回到 32；WHEP 探针 80 ms 音频缺口确认为录制启动伪影；真实摄像机 BLOCKED（无配置授权）；NO CHANGE | 原始结果只在测试机 `runs11/` |
+| [20261105-whep-probe](../verification_results/20261105-whep-probe/report.md) | `830668b` + `bench/whep_dump_av.py` | WHEP 探针 80 ms 音频缺口定位：首个音频 RTP 与 SR 相隔约 20 µs，ffmpeg 先读 RTP 时首帧按未同步时钟映射；音频连续性改按 dump RTP 判定，录制值保留为 `recorded_audio_pts_*`；确定性回归 RED→GREEN，GO | 只改测试工具 |
 
 ## AAC afterburner=0 的证据（2026-10-29 复核）
 

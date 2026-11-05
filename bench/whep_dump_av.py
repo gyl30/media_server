@@ -4,6 +4,9 @@
 The output timeline is judged from the RTP timestamps in the dump; the recording's own timestamp order is kept as recorded_video_pts_backward,
 because ffmpeg clamps a first frame that maps before the other stream's start. B-frames arrive in decode order, so a video timestamp only counts as
 backward when it falls more than MAX_REORDER_TICKS below the latest one, and the recorder re-encodes such video because RTP carries no DTS.
+Audio continuity compares each packet's RTP timestamp with the previous packet's timestamp plus its sample count (Opus TOC, G.711 bytes) in
+sequence order; the recording's values are kept as recorded_audio_pts_*, because ffmpeg maps a first audio packet read before that stream's
+RTCP Sender Report on the unsynchronized clock and the next packet on the Sender Report clock.
 G.711 audio is recorded as PCM because Matroska has no copy mapping for it."""
 
 import argparse
@@ -16,9 +19,56 @@ import sys
 import time
 from pathlib import Path
 
+from av_probe import AUDIO_GAP_SECONDS
+
 VIDEO_PAYLOAD_TYPES = (102, 104, 106, 108)
 AUDIO_RTPMAPS = {111: "opus/48000/2", 8: "PCMA/8000", 0: "PCMU/8000"}
+AUDIO_CLOCKS = {111: 48000, 8: 8000, 0: 8000}
+OPUS_FRAME_SAMPLES = ((480, 960, 1920, 2880), (480, 960), (120, 240, 480, 960))
 MAX_REORDER_TICKS = 45000
+
+
+def rtp_payload(packet):
+    offset = 12 + 4 * (packet[0] & 0x0F)
+    if packet[0] & 0x10:
+        offset += 4 + 4 * struct.unpack_from("!H", packet, offset + 2)[0]
+    end = len(packet) - (packet[-1] if packet[0] & 0x20 else 0)
+    return packet[offset:end]
+
+
+def audio_samples(payload_type, payload):
+    if payload_type != 111:
+        return len(payload)
+    if not payload:
+        return 0
+    config = payload[0] >> 3
+    sizes = OPUS_FRAME_SAMPLES[0] if config < 12 else OPUS_FRAME_SAMPLES[1] if config < 16 else OPUS_FRAME_SAMPLES[2]
+    code = payload[0] & 0x03
+    frames = 1 if code == 0 else 2 if code < 3 else (payload[1] & 0x3F if len(payload) > 1 else 0)
+    return sizes[config % len(sizes)] * frames
+
+
+def audio_timeline(records, ssrc_kind):
+    packets = {}
+    last_sequence = None
+    for _, rtcp, packet in records:
+        if rtcp or len(packet) < 12 or ssrc_kind.get(struct.unpack_from("!I", packet, 8)[0]) != "audio":
+            continue
+        sequence = struct.unpack_from("!H", packet, 2)[0]
+        extended = sequence if last_sequence is None else last_sequence + ((sequence - last_sequence + 0x8000) & 0xFFFF) - 0x8000
+        last_sequence = extended if last_sequence is None else max(last_sequence, extended)
+        packets.setdefault(extended, (packet[1] & 0x7F, struct.unpack_from("!I", packet, 4)[0], rtp_payload(packet)))
+    ordered = sorted(packets.items())
+    if len(ordered) < 2:
+        return {}
+    slips = []
+    lost = 0
+    for (sequence, (payload_type, timestamp, payload)), (next_sequence, (_, next_timestamp, _)) in zip(ordered, ordered[1:]):
+        lost += next_sequence - sequence - 1
+        delta = ((next_timestamp - timestamp + 0x80000000) & 0xFFFFFFFF) - 0x80000000
+        slips.append((delta - audio_samples(payload_type, payload)) / AUDIO_CLOCKS[payload_type])
+    return {"audio_pts_overlaps": sum(value < -AUDIO_GAP_SECONDS for value in slips), "audio_pts_gaps": sum(value > AUDIO_GAP_SECONDS for value in slips),
+            "audio_pts_gap_max_ms": max(slips) * 1000, "audio_rtp_lost": lost}
 
 
 def read_dump(path):
@@ -129,6 +179,10 @@ def main():
     result["video_rtp_reordered"] = rtp_reordered
     result["recorded_video_pts_backward"] = result.get("video_pts_backward")
     result["video_pts_backward"] = rtp_backward
+    if audio_payload_type is not None:
+        for key in ("audio_pts_overlaps", "audio_pts_gaps", "audio_pts_gap_max_ms"):
+            result[f"recorded_{key}"] = result.get(key)
+        result.update(audio_timeline(records, ssrc_kind))
     result["replayed_packets"] = sent
     result["recorder_exit"] = recorder.returncode
     print(json.dumps(result))
