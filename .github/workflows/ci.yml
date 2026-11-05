@@ -40,7 +40,7 @@ jobs:
           python3 -m pip install --user "clang-format==$CLANG_FORMAT_VERSION"
           diff=$(git clang-format --binary "$HOME/.local/bin/clang-format" --extensions c,h,cpp --diff "$BASE" HEAD -- ':!third')
           case $diff in
-            "no modified files to format"* | "clang-format did not modify any files"*) echo "$diff" ;;
+            "" | "no modified files to format"* | "clang-format did not modify any files"*) echo "$diff" ;;
             *) echo "$diff"; exit 1 ;;
           esac
 
