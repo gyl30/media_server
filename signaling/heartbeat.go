@@ -38,7 +38,7 @@ func (s *sipServer) handleMessage(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 	var message manscdpEnvelope
-	if err := decodeMANSCDP(req.Body(), &message); err != nil || message.SN <= 0 || !validDigits(message.DeviceID, 20) {
+	if err := decodeMANSCDP(req.Body(), &message); err != nil || message.SN < 0 || message.SN == 0 && message.CmdType != "Keepalive" || !validDigits(message.DeviceID, 20) {
 		s.respond(tx, sip.NewResponseFromRequest(req, sip.StatusBadRequest, "Bad Request", nil))
 		return
 	}

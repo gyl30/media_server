@@ -175,7 +175,9 @@ func (s *liveService) runBroadcast(session *broadcastSession, device registeredD
 		<-dialog.answerDone
 		if context.Cause(session.ctx) != errBroadcastRemoteBye && dialog.session.InviteResponse != nil && dialog.session.InviteResponse.IsSuccess() {
 			byeContext, cancel := context.WithTimeout(context.Background(), s.byeTimeout)
-			session.cleanupErr = errors.Join(session.cleanupErr, dialog.session.Bye(byeContext))
+			if err := dialog.session.Bye(byeContext); err != nil {
+				s.logger.Warn("broadcast BYE failed", "source_id", session.sourceID, "error", err)
+			}
 			cancel()
 		}
 		dialog.tx.Terminate()
