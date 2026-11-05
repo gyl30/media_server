@@ -26,6 +26,19 @@ cmake --build build-perf -j4
 
 回归工具在 [`regression/`](../regression)：`control_api.py --server-bin <ELF>` 启动服务端和签名桩，检查控制 API 的 JSON 校验（非法 JSON、缺失/未知/重复字段、数值范围、编码与转义、类型）与状态码；`protocol_matrix.py` 在回环地址上用 `bench/perf_run.py` 跑各输入、编码和输出组合及多源、慢读者、断流与鉴权故障场景，需要带性能客户端的构建目录、`avsync_720p30.flv`/`avsync_bframes.flv`/`avsync_whip.mkv` 夹具，Opus-in-FLV 场景另需支持它的 FFmpeg（已验证 7.1 不支持、9.0.1 支持）。结果写入 `--output` 下的 `summary.json`。
 
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 在 ubuntu-22.04 上运行，GCC 16 与开发机相同，取自 ubuntu-toolchain-r/test PPA。工作流包含三个作业：
+
+- `checks`：空白检查（`third/`、`docs/` 除外）、改动行的 clang-format 20.1.8 检查、Python 编译、WHEP 音频时间线合成用例。
+- `signaling`：gofmt、go vet、go test 和构建。
+- `media-server`：用 `deps/build.sh` 构建依赖，开启 benchmarks 后做 RelWithDebInfo 构建；随后检查 `--version` 与 `git describe` 一致且不带 `-dirty`，动态依赖只有 libc/libm；运行控制 API 回归，以及端口池、SSRC、SRTP profile、UDP 发送顺序四个定向检查。
+
+缓存设置：
+
+- `deps/install` 的缓存键由编译器版本和 `deps/sources.txt`、`deps/build.sh` 的摘要组成。
+- ccache 的缓存键由编译器和构建参数组成，pull request 只读取缓存。
+
+协议矩阵、容量与长稳测试、真实设备和需要专用 netns 的检查不进入公共 CI，仍在专用测试机上运行。
+
 服务端 AAC 编码固定使用 libfdk-aac（关闭 afterburner）。FDK 许可不授予 AAC 专利许可，且要求分发二进制时随附其源码；该组合只用于内部部署，对外分发前需另行评估。
 
 ## Go 信令与模拟器

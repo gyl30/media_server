@@ -1,0 +1,169 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CLANG_FORMAT_VERSION: 20.1.8
+
+jobs:
+  checks:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Whitespace
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':!third' ':!docs'
+
+      - name: Format of changed C/C++ lines
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "$BASE^{commit}" 2> /dev/null; then
+            echo "no base commit to compare"
+            exit 0
+          fi
+          python3 -m pip install --user "clang-format==$CLANG_FORMAT_VERSION"
+          diff=$(git clang-format --binary "$HOME/.local/bin/clang-format" --extensions c,h,cpp --diff "$BASE" HEAD -- ':!third')
+          case $diff in
+            "no modified files to format"* | "clang-format did not modify any files"*) echo "$diff" ;;
+            *) echo "$diff"; exit 1 ;;
+          esac
+
+      - name: Python syntax
+        run: python3 -m compileall -q bench regression docs/verification_results
+
+      - name: WHEP audio timeline
+        run: python3 docs/verification_results/20261105-whep-probe/whep_timeline_check.py
+
+  signaling:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: signaling
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: signaling/go.mod
+          cache-dependency-path: signaling/go.sum
+
+      - name: Format
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: |
+          go build -o ../build-go/signaling .
+          go build -o ../build-go/gb_simulator ./simulator
+
+  media-server:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Toolchain
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-16 g++-16 nasm pkg-config ccache
+          echo "COMPILER=$(g++-16 --version | head -1 | tr -c 'A-Za-z0-9.' '-')" >> "$GITHUB_ENV"
+
+      - name: Restore dependencies
+        id: deps
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deps/install
+          key: deps-ubuntu-22.04-${{ env.COMPILER }}-${{ hashFiles('deps/sources.txt', 'deps/build.sh') }}
+
+      - name: Build dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: CC=gcc-16 CXX=g++-16 deps/build.sh --jobs "$(nproc)"
+
+      - name: Save dependencies
+        if: steps.deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: deps/install
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+
+      - name: Restore compiler cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-22.04-${{ env.COMPILER }}-relwithdebinfo-benchmarks-${{ github.sha }}
+          restore-keys: ccache-ubuntu-22.04-${{ env.COMPILER }}-relwithdebinfo-benchmarks-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-ci -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_C_COMPILER=gcc-16 -DCMAKE_CXX_COMPILER=g++-16 -DMEDIA_SERVER_BUILD_BENCHMARKS=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: |
+          ccache --zero-stats
+          cmake --build build-ci -j "$(nproc)"
+          ccache --show-stats
+
+      - name: Save compiler cache
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ccache
+          key: ccache-ubuntu-22.04-${{ env.COMPILER }}-relwithdebinfo-benchmarks-${{ github.sha }}
+
+      - name: Version and runtime dependencies
+        run: |
+          version=$(build-ci/media_server --version)
+          echo "$version"
+          echo "$version" | grep -F "$(git describe --always --dirty --abbrev=12)"
+          if echo "$version" | grep -q -- -dirty; then exit 1; fi
+          ldd build-ci/media_server
+          unexpected=$(ldd build-ci/media_server | grep -vE 'linux-vdso|libc\.so|libm\.so|ld-linux' || true)
+          test -z "$unexpected"
+
+      - name: Control API regression
+        run: python3 regression/control_api.py --server-bin build-ci/media_server
+
+      - name: C++ targeted checks
+        run: |
+          build_check=docs/verification_results/20261104-library-review/build_check.sh
+          mkdir -p checks
+          for source in docs/verification_results/20261104-port-pool-replay/port_pool_check.cpp \
+                        docs/verification_results/20261104-port-pool-replay/rtp_ssrc_check.cpp \
+                        docs/verification_results/20261104-library-review/srtp_profile_check.cpp \
+                        docs/verification_results/20261104-library-review/udp_transport_check.cpp; do
+            bash "$build_check" build-ci "$source" "checks/$(basename "$source" .cpp)"
+          done
+          checks/port_pool_check
+          checks/rtp_ssrc_check 20000 20
+          checks/srtp_profile_check
+          checks/udp_transport_check ordering 127.0.0.1 5
