@@ -2,7 +2,7 @@
 #include <string>
 
 #include <opus/opus.h>
-#include <srtp2/srtp.h>
+#include <srtp.h>
 #include <boost/version.hpp>
 #include <openssl/crypto.h>
 
